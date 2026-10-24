@@ -1,0 +1,17 @@
+# macOS
+.DS_Store
+Icon?
+
+# Build outputs / packaged releases (regenerate with app/build.sh)
+dist/
+Claude outputs/
+
+# Go / editor / local
+*.exe
+*.test
+*.out
+.idea/
+.vscode/
+.env
+.env.*
+*.log

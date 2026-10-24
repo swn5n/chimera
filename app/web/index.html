@@ -1,0 +1,337 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chimera</title>
+<meta name="theme-color" content="#1b1e21">
+<link rel="icon" type="image/png" sizes="64x64" href="img/favicon-64.png">
+<link rel="icon" type="image/png" sizes="32x32" href="img/favicon-32.png">
+<link rel="apple-touch-icon" href="img/apple-touch-icon.png">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <linearGradient id="g-metal" gradientUnits="userSpaceOnUse" x1="180" y1="150" x2="760" y2="760">
+      <stop offset="0" stop-color="#f6f7f8"/>
+      <stop offset=".45" stop-color="#c9cdd1"/>
+      <stop offset=".72" stop-color="#a6abb0"/>
+      <stop offset="1" stop-color="#868b90"/>
+    </linearGradient>
+    <linearGradient id="g-dim" gradientUnits="userSpaceOnUse" x1="180" y1="150" x2="760" y2="760">
+      <stop offset="0" stop-color="#6b7177"/>
+      <stop offset="1" stop-color="#3c4146"/>
+    </linearGradient>
+    <filter id="f-lift" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="14" stdDeviation="14" flood-color="#000" flood-opacity=".55"/>
+    </filter>
+    <g id="tri-top"><polygon points="387.5,212.5 611.5,212.5 499.5,406.5"/></g>
+    <g id="tri-left"><polygon points="172.5,444.5 172.5,668.5 366.5,556.5"/></g>
+    <g id="tri-right"><polygon points="826.5,444.5 826.5,668.5 632.5,556.5"/></g>
+  </defs>
+</svg>
+
+<header class="bar">
+  <div class="brand">
+    <svg class="brand-mark" viewBox="90 130 820 620" aria-hidden="true">
+      <g fill="url(#g-metal)" stroke="url(#g-metal)" stroke-width="133" stroke-linejoin="round">
+        <use href="#tri-top"/><use href="#tri-left"/><use href="#tri-right"/>
+      </g>
+    </svg>
+    <span class="brand-name">Chimera</span>
+  </div>
+  <nav class="modes" aria-label="Sections">
+    <button class="mode" data-view="network" aria-current="page">Network</button>
+    <button class="mode" data-view="models">Models</button>
+    <button class="mode" data-view="chat">Chat</button>
+    <button class="mode" data-view="library">Library</button>
+    <button class="mode" data-view="activity">Activity</button>
+    <button class="mode" data-view="settings">Settings</button>
+  </nav>
+  <div class="bar-status">
+    <span class="net-label" id="bar-net"><span class="led" id="bar-led"></span><span id="bar-net-name">Not in a network</span></span>
+    <span class="credits" id="bar-credits" hidden><span class="num" id="bar-credit-num">0</span> credits</span>
+  </div>
+</header>
+
+<main>
+
+  <!-- ============ Network ============ -->
+  <section class="view" id="view-network">
+
+    <div class="deck">
+      <div class="deck-switch">
+        <button class="mark-switch" id="switch" data-state="disconnected" aria-label="Connect">
+          <span class="well"></span>
+          <svg viewBox="40 80 920 720" aria-hidden="true">
+            <g filter="url(#f-lift)">
+              <g class="tri tri-top"><g class="dim"><use href="#tri-top"/></g><g class="lit"><use href="#tri-top"/></g></g>
+              <g class="tri tri-left"><g class="dim"><use href="#tri-left"/></g><g class="lit"><use href="#tri-left"/></g></g>
+              <g class="tri tri-right"><g class="dim"><use href="#tri-right"/></g><g class="lit"><use href="#tri-right"/></g></g>
+            </g>
+          </svg>
+          <span class="ring"></span>
+        </button>
+      </div>
+      <div class="deck-main">
+        <h1 class="state-word" id="state-word">Disconnected</h1>
+        <p class="state-line" id="state-line">Your GPU is all yours.</p>
+        <div class="deck-actions">
+          <button class="btn primary" id="btn-connect">Connect</button>
+          <button class="btn" id="btn-stop-now" hidden>Stop now</button>
+        </div>
+        <ul class="running" id="running"></ul>
+      </div>
+      <div class="deck-ollama" id="ollama-box">
+        <h2 class="small-head">Ollama</h2>
+        <div id="ollama-status"><p class="ollama-status"><span class="led off"></span><span>Checking…</span></p></div>
+        <div class="ollama-actions" id="ollama-actions"></div>
+      </div>
+    </div>
+
+    <div class="split">
+      <section class="rack-wrap">
+        <div class="section-head">
+          <h2 class="section-title" id="rack-title">Network</h2>
+          <span class="section-note" id="rack-note"></span>
+        </div>
+        <div id="invite" class="invite" hidden></div>
+        <div class="rack" id="rack"></div>
+      </section>
+
+      <section class="mine">
+        <div class="help" id="help" hidden></div>
+        <div class="section-head">
+          <h2 class="section-title">This computer</h2>
+          <span class="section-note" id="mine-note"></span>
+        </div>
+        <p class="hw" id="mine-hw"></p>
+        <div class="models" id="mine-models"></div>
+        <div class="btn-row"><button class="btn" data-goto="models">Find models that fit</button></div>
+      </section>
+    </div>
+  </section>
+
+  <!-- ============ Models ============ -->
+  <section class="view" id="view-models" hidden>
+    <div class="fit-panel" id="fit-panel"></div>
+    <div class="split models-split">
+      <section>
+        <div class="section-head"><h2 class="section-title">Recommended for this computer</h2><span class="section-note">The biggest model that fits with room to spare, for each job</span></div>
+        <div class="picks" id="picks"></div>
+        <div class="section-head spaced"><h2 class="section-title">All models</h2><span class="section-note" id="catalog-note">Same names and versions on every computer keep the network consistent</span></div>
+        <div class="catalog" id="catalog"></div>
+        <form class="pull" id="pull-form" autocomplete="off">
+          <label for="pull-name" class="pull-label">Not listed? Download any Ollama model by name</label>
+          <div class="pull-row">
+            <input id="pull-name" class="field" placeholder="e.g. mistral-small3.2:24b" spellcheck="false">
+            <button class="btn" type="submit" id="pull-btn">Download</button>
+          </div>
+        </form>
+      </section>
+      <section>
+        <div class="section-head"><h2 class="section-title">Installed</h2><span class="section-note" id="installed-note"></span></div>
+        <div class="installed" id="installed"></div>
+        <div class="section-head spaced"><h2 class="section-title">Tools</h2><button class="btn small quiet" id="btn-rescan">Check again</button></div>
+        <div class="tools" id="tools"></div>
+      </section>
+    </div>
+  </section>
+
+  <!-- ============ Library ============ -->
+  <section class="view" id="view-library" hidden>
+    <div class="lib-top">
+      <div>
+        <h2 class="section-title">Library</h2>
+        <p class="lib-sub" id="lib-sub">Code, Blender scripts and lessons that worked, saved from 4 and 5 star replies. Long tasks reuse them instead of asking a model again.</p>
+      </div>
+      <div class="lib-controls">
+        <input class="field" id="lib-q" type="search" placeholder="Search the library" spellcheck="false">
+        <div class="seg" id="lib-filter" role="group" aria-label="Show">
+          <button data-status="" aria-pressed="true">All</button>
+          <button data-status="verified" aria-pressed="false">Verified</button>
+          <button data-status="unverified" aria-pressed="false">Being checked</button>
+          <button data-status="flagged" aria-pressed="false" id="lib-filter-flagged" hidden>Flagged</button>
+        </div>
+        <a class="btn quiet" id="btn-lib-export" href="/api/library/export" download hidden title="Every rated reply as JSON lines, for fine-tuning a small model on the network's own best answers">Export ratings</a>
+        <button class="btn" id="btn-lib-add">Add an entry</button>
+      </div>
+    </div>
+    <form class="panel lib-add" id="lib-add" hidden autocomplete="off">
+      <h2 class="section-title">Add to the library</h2>
+      <p class="fine">Entries are checked by the network's biggest model before long tasks use them. Python and Blender scripts can also be test-run on the host's computer.</p>
+      <div class="lib-add-grid">
+        <label class="row stack"><span>Kind</span><select class="field" id="la-kind"><option value="snippet">Code snippet</option><option value="blender">Blender script</option><option value="lesson">Lesson</option><option value="prompt">Prompt</option></select></label>
+        <label class="row stack"><span>Language</span><input class="field" id="la-lang" placeholder="python" spellcheck="false"></label>
+        <label class="row stack wide"><span>Title</span><input class="field" id="la-title" placeholder="Short and searchable, like a function name" spellcheck="false"></label>
+        <label class="row stack wide"><span>What it does</span><input class="field" id="la-summary" placeholder="One sentence: what it does and when to use it"></label>
+        <label class="row stack wide"><span>Content</span><textarea class="field mono" id="la-content" rows="8" spellcheck="false"></textarea></label>
+        <label class="row stack wide"><span>Tags</span><input class="field" id="la-tags" placeholder="blender, materials, glass" spellcheck="false"></label>
+      </div>
+      <div class="setup-buttons"><button class="btn" type="button" id="la-cancel">Cancel</button><button class="btn primary" type="submit">Add entry</button></div>
+    </form>
+    <div id="lib-review"></div>
+    <div class="lib-list" id="lib-list"></div>
+  </section>
+
+  <!-- ============ Chat ============ -->
+  <section class="view" id="view-chat" hidden>
+    <div class="chat">
+      <aside class="chat-list">
+        <button class="btn wide" id="btn-new-chat">New chat</button>
+        <ul id="sessions"></ul>
+      </aside>
+      <div class="chat-main">
+        <div class="messages" id="messages">
+          <div class="chat-empty" id="chat-empty">
+            <h2 class="section-title">Test the network</h2>
+            <p>Send a prompt and Chimera runs it on a device that's lending, maybe someone else's. Each reply shows which computer and model wrote it.</p>
+          </div>
+        </div>
+        <form class="composer" id="composer" autocomplete="off">
+          <textarea id="prompt" rows="1" placeholder="Ask something…" spellcheck="true"></textarea>
+          <div class="composer-row">
+            <label class="sel"><span>Model</span><select id="sel-model"></select></label>
+            <label class="sel"><span>Run on</span><select id="sel-device"></select></label>
+            <label class="check"><input type="checkbox" id="chk-private"><span>Only my devices</span></label>
+            <label class="check" title="Hydra splits a bigger task into steps and runs them on several computers at once"><input type="checkbox" id="chk-task"><span>Long task</span></label>
+            <label class="check" id="loop-wrap" hidden title="After each round, the biggest model reviews the result and runs another round to improve it, until it's good enough"><input type="checkbox" id="chk-loop"><span>Keep going until done</span></label>
+            <button class="btn primary send" type="submit" id="btn-send">Send</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ Activity ============ -->
+  <section class="view" id="view-activity" hidden>
+    <div class="split activity">
+      <section>
+        <div class="section-head"><h2 class="section-title">Recent work</h2><span class="section-note">Every step the network ran</span></div>
+        <ol class="ledger" id="ledger"></ol>
+      </section>
+      <section>
+        <div class="section-head"><h2 class="section-title">Credits</h2><span class="section-note">Earned by lending, spent by asking</span></div>
+        <div class="balances" id="balances"></div>
+        <p class="fine">Everyone starts with 100. When your GPU runs a step for someone, credits move from them to you: 1 credit per 1,000 tokens (about 750 words) from an 8B model, more for bigger models. Using your own devices is free.</p>
+      </section>
+    </div>
+  </section>
+
+  <!-- ============ Settings ============ -->
+  <section class="view" id="view-settings" hidden>
+    <div class="settings">
+      <section class="panel">
+        <h2 class="section-title">This computer</h2>
+        <label class="row"><span>Computer name</span><input class="field" data-setting="device_name" spellcheck="false"></label>
+        <label class="row"><span>Your name</span><input class="field" data-setting="owner" spellcheck="false"></label>
+        <p class="fine" id="owner-hint">Friends see this next to your credits.</p>
+      </section>
+
+      <section class="panel">
+        <h2 class="section-title">Lending</h2>
+        <label class="row"><span>Steps at once</span>
+          <select class="field" data-setting="max_slots" data-type="int"><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option></select></label>
+        <label class="row"><span>Largest model to lend</span><span class="unit-field"><input class="field" data-setting="max_model_gb" data-type="float" type="number" min="0" step="1"><em>GB</em></span></label>
+        <p class="fine">Bigger models leave less memory for you while you're connected. 0 means no limit.</p>
+        <label class="row toggle"><span>Open Ollama when I connect</span><input type="checkbox" data-setting="auto_start_ollama"></label>
+        <label class="row toggle"><span>Free model memory when I disconnect</span><input type="checkbox" data-setting="free_memory_on_disconnect"></label>
+        <label class="row toggle"><span>Connect when Chimera opens</span><input type="checkbox" data-setting="connect_on_launch"></label>
+        <label class="row toggle"><span>Let my devices help my long tasks</span><input type="checkbox" data-setting="auto_help"></label>
+        <p class="fine">When you start a long task, your other devices connect to pitch in, then stand down when it's done.</p>
+      </section>
+
+      <section class="panel" id="settings-network"></section>
+
+      <section class="panel" id="settings-library"></section>
+
+      <section class="panel">
+        <h2 class="section-title">Ollama</h2>
+        <label class="row"><span>Address</span><input class="field mono" data-setting="ollama_url" spellcheck="false"></label>
+        <p class="fine">Leave this alone unless you run Ollama somewhere unusual.</p>
+      </section>
+
+      <section class="panel">
+        <h2 class="section-title">App</h2>
+        <label class="row toggle"><span>Open in its own window</span><input type="checkbox" data-setting="app_window"></label>
+        <p class="fine">Uses Chrome or Edge when installed, otherwise your browser.</p>
+        <div class="row" id="dock-row"><span>Show in the Dock</span><button class="btn" data-act="install-dock">Add to Dock</button></div>
+        <p class="fine" id="dock-hint">Installs Chimera as its own app with the Chimera icon in the Dock, in its own window with no browser tabs.</p>
+        <div class="row"><span>Data folder</span><button class="btn" id="btn-open-folder">Open folder</button></div>
+        <p class="fine mono" id="data-dir"></p>
+        <div class="row"><span id="version"></span><button class="btn danger" id="btn-quit">Quit Chimera</button></div>
+      </section>
+    </div>
+  </section>
+</main>
+
+<!-- ============ First run / join ============ -->
+<div class="overlay" id="setup" hidden>
+  <div class="setup-card" role="dialog" aria-modal="true" aria-labelledby="setup-title">
+    <svg class="setup-mark" viewBox="90 130 820 620" aria-hidden="true">
+      <g fill="url(#g-metal)" stroke="url(#g-metal)" stroke-width="133" stroke-linejoin="round">
+        <g class="s-top"><use href="#tri-top"/></g><g class="s-left"><use href="#tri-left"/></g><g class="s-right"><use href="#tri-right"/></g>
+      </g>
+    </svg>
+    <div id="setup-step-1">
+      <h1 class="setup-title" id="setup-title">Set up this computer</h1>
+      <label class="row stack"><span>Your name</span><input class="field" id="su-owner" placeholder="What friends call you" spellcheck="false"></label>
+      <label class="row stack"><span>This computer</span><input class="field" id="su-device" spellcheck="false"></label>
+      <div class="choices">
+        <button class="choice" id="su-host"><strong>Host a network</strong><span>Start one on this computer and invite friends.</span></button>
+        <button class="choice" id="su-join"><strong>Join a network</strong><span>Use an address and invite code from a friend.</span></button>
+      </div>
+      <p class="setup-ollama" id="su-ollama"></p>
+      <button class="link" id="su-skip">Skip for now</button>
+      <p class="setup-error" id="su-error" role="alert"></p>
+    </div>
+    <div id="setup-join" hidden>
+      <h1 class="setup-title">Join a network</h1>
+      <div class="found" id="su-found"></div>
+      <p class="setup-text">Or ask the host for the address and invite code shown in their Chimera.</p>
+      <label class="row stack"><span>Address</span><input class="field mono" id="su-address" placeholder="192.168.1.20:7480" spellcheck="false"></label>
+      <label class="row stack"><span>Invite code</span><input class="field mono" id="su-invite" placeholder="ABCD-EFGH" spellcheck="false"></label>
+      <div class="setup-buttons">
+        <button class="btn" id="su-back">Back</button>
+        <button class="btn primary" id="su-join-go">Join</button>
+      </div>
+      <p class="setup-error" id="su-join-error" role="alert"></p>
+    </div>
+    <div id="setup-hosted" hidden>
+      <h1 class="setup-title">Your network is up</h1>
+      <p class="setup-text">Send friends the address and invite code. On their computer: open Chimera, choose Join a network.</p>
+      <div id="su-hosted-details"></div>
+      <div class="setup-buttons"><button class="btn primary" id="su-done">Done</button></div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ Disconnect choice ============ -->
+<div class="overlay" id="dlg-disconnect" hidden>
+  <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="dd-title">
+    <h2 class="dialog-title" id="dd-title">A step is still running</h2>
+    <p id="dd-text">Your GPU is in the middle of a step for someone.</p>
+    <div class="dialog-buttons">
+      <button class="btn primary" id="dd-finish">Finish it, then disconnect</button>
+      <button class="btn" id="dd-now">Stop now</button>
+      <button class="btn quiet" id="dd-cancel">Keep lending</button>
+    </div>
+    <p class="fine">Stop now hands the step to another device that has the same model.</p>
+  </div>
+</div>
+
+<div class="overlay" id="gone" hidden>
+  <div class="dialog">
+    <h2 class="dialog-title">Chimera isn't running</h2>
+    <p>Open the Chimera app again, then this window will reconnect.</p>
+  </div>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
