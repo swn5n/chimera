@@ -312,6 +312,99 @@
   </div>
 </div>
 
+<!-- ============ Head maker ============ -->
+<div class="overlay" id="head-maker" hidden>
+  <div class="setup-card maker-card" role="dialog" aria-modal="true" aria-labelledby="hm-title">
+    <form id="hm-form" autocomplete="off" novalidate>
+      <div class="maker-top">
+        <h2 class="dialog-title" id="hm-title">Make a Head</h2>
+        <label class="maker-example" id="hm-example-row"><span>Start from</span><select class="field" id="hm-example"></select></label>
+      </div>
+      <p class="fine">A Head lets the whole pool use a program or a server on this computer. Fill this in instead of writing code: Chimera saves it as an ordinary Head folder, sandboxed like any other.</p>
+
+      <h3 class="maker-step">1 · What it is</h3>
+      <label class="row stack"><span>Name</span><input class="field" id="hm-name" maxlength="60" placeholder="Background remover"></label>
+      <label class="row stack"><span>What it makes or does</span><input class="field" id="hm-summary" maxlength="300" placeholder="Cuts the subject out of a picture and makes the background transparent."></label>
+      <label class="row stack"><span>When the pool should use it</span><textarea class="field" id="hm-when" rows="2" maxlength="600" placeholder="Someone attaches a picture and asks to remove the background, cut out the subject, or make it transparent."></textarea></label>
+      <p class="fine">Write it in the words people would use. A model reads this to decide which requests go to your Head.</p>
+      <div class="maker-grid">
+        <label class="row stack"><span>Not for <em>(optional)</em></span><input class="field" id="hm-not" maxlength="300" placeholder="Changing what's in the picture"></label>
+        <label class="row stack"><span>Keywords</span><input class="field" id="hm-tags" placeholder="background, cutout, transparent"></label>
+      </div>
+
+      <h3 class="maker-step">2 · What goes in and comes out</h3>
+      <div class="maker-grid">
+        <label class="row stack"><span>It works on</span><select class="field" id="hm-input">
+          <option value="picture">A picture (and the words with it)</option>
+          <option value="words">Words only</option>
+          <option value="either">A picture, or words alone</option></select></label>
+        <div class="row stack"><span>It gives back</span><div class="pills" id="hm-output">
+          <button type="button" class="pill" data-out="picture" aria-pressed="false">Pictures</button>
+          <button type="button" class="pill" data-out="model" aria-pressed="false">3D models</button>
+          <button type="button" class="pill" data-out="video" aria-pressed="false">Video</button>
+          <button type="button" class="pill" data-out="sound" aria-pressed="false">Sound</button>
+          <button type="button" class="pill" data-out="text" aria-pressed="false">Text</button>
+          <button type="button" class="pill" data-out="file" aria-pressed="false">Any file</button>
+        </div></div>
+      </div>
+
+      <h3 class="maker-step">3 · How it runs</h3>
+      <div class="choices maker-kinds">
+        <button type="button" class="choice" data-kind="program"><strong>A program</strong><span>A command you could type in Terminal: a script, Blender, ffmpeg, rembg…</span></button>
+        <button type="button" class="choice" data-kind="server"><strong>A server</strong><span>Something already running on this computer with a web API: A1111, a 3D model server…</span></button>
+      </div>
+      <div id="hm-program" hidden>
+        <label class="row stack"><span>Command</span><textarea class="field mono" id="hm-command" rows="2" spellcheck="false" data-template placeholder="rembg i {{input}} {{out}}/{{name}}_cutout.png"></textarea></label>
+        <label class="row stack" id="hm-noinput-row" hidden><span>Command when there's no picture</span><textarea class="field mono" id="hm-command-noinput" rows="2" spellcheck="false" data-template></textarea></label>
+        <p class="fine">Start with the program (its full path if Terminal needs one) and put the placeholders where the request's parts go. The program saves its result in {{out}}.</p>
+      </div>
+      <div id="hm-server" hidden>
+        <div class="maker-grid narrow-first">
+          <label class="row stack"><span>Method</span><select class="field" id="hm-method"><option>POST</option><option>GET</option><option>PUT</option></select></label>
+          <label class="row stack"><span>Address</span><input class="field mono" id="hm-url" spellcheck="false" data-template placeholder="http://127.0.0.1:8080/generate"></label>
+        </div>
+        <label class="row stack" id="hm-body-row"><span>JSON to send</span><textarea class="field mono" id="hm-body" rows="6" spellcheck="false" data-template placeholder='{"image": "{{input_base64}}", "steps": "{{steps}}"}'></textarea></label>
+        <p class="fine">Put each placeholder in quotes. A value that is only a placeholder keeps its type: "{{steps}}" sends the number 30.</p>
+        <div class="maker-grid">
+          <label class="row stack"><span>Upload the picture as a file named <em>(optional)</em></span><input class="field mono" id="hm-upload" spellcheck="false" placeholder="image"></label>
+          <label class="row stack"><span>Where the result is <em>(optional)</em></span><input class="field mono" id="hm-result" spellcheck="false" placeholder="found by itself, or e.g. images.0"></label>
+        </div>
+        <label class="row stack"><span>Address that answers when the server is up <em>(optional)</em></span><input class="field mono" id="hm-health" spellcheck="false" placeholder="http://127.0.0.1:8080/health"></label>
+      </div>
+      <div id="hm-common" hidden>
+        <div class="placeholders" id="hm-chips"></div>
+        <label class="row stack"><span>Folders it reads <em>(optional, one per line)</em></span><textarea class="field mono" id="hm-reads" rows="2" spellcheck="false" placeholder="~/.u2net"></textarea></label>
+        <p class="fine" id="hm-reads-hint"></p>
+      </div>
+
+      <h3 class="maker-step">4 · Settings people can ask for <em>(optional)</em></h3>
+      <p class="fine">The fastest model on this computer reads them from each request ("make it darker" sets strength to 0.8). Use each one as {{its_name}}.</p>
+      <div id="hm-options"></div>
+      <div class="btn-row tight"><button type="button" class="btn small" id="hm-add-option">Add a setting</button></div>
+
+      <h3 class="maker-step">5 · Timing</h3>
+      <div class="maker-grid">
+        <label class="row stack"><span>One run usually takes</span><span class="unit-field"><input class="field" id="hm-typical" type="number" min="1" max="7200" value="60"><em>seconds</em></span></label>
+        <label class="row stack"><span>Give up after</span><span class="unit-field"><input class="field" id="hm-timeout" type="number" min="1" max="120" value="30"><em>minutes</em></span></label>
+      </div>
+
+      <p class="setup-error" id="hm-error" role="alert"></p>
+      <div class="setup-buttons"><button class="btn" type="button" id="hm-cancel">Cancel</button><button class="btn primary" type="submit" id="hm-save">Save and try it</button></div>
+    </form>
+
+    <div id="hm-try" hidden>
+      <h2 class="dialog-title" id="ht-title">Try it</h2>
+      <p class="fine" id="ht-state"></p>
+      <label class="row stack"><span>Ask it something</span><input class="field" id="ht-request" placeholder="What someone in the pool would type"></label>
+      <div class="row stack" id="ht-pic-row"><span>Picture</span>
+        <div class="ht-pic"><button type="button" class="btn small" id="ht-pick">Choose a picture</button><span class="fine" id="ht-pic-name"></span><input type="file" id="ht-file" accept="image/*" hidden></div></div>
+      <div class="btn-row tight"><button class="btn primary" type="button" id="ht-run">Run it here</button></div>
+      <div class="ht-out" id="ht-out"></div>
+      <div class="setup-buttons"><button class="btn quiet" type="button" id="ht-folder">Open its folder</button><button class="btn" type="button" id="ht-edit">Change it</button><button class="btn primary" type="button" id="ht-done">Done</button></div>
+    </div>
+  </div>
+</div>
+
 <!-- ============ Disconnect choice ============ -->
 <div class="overlay" id="dlg-disconnect" hidden>
   <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="dd-title">

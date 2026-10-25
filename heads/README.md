@@ -14,6 +14,10 @@ someone else, plus 1 credit each time someone else rates the result 4 or 5 stars
 (Technically a Head is a *plugin*: its folder holds a `plugin.json`, and the code and API say
 `plugin`. Same thing.)
 
+**Make one without code:** Settings → Heads → **Make a Head** turns a program or a server on your computer
+into a Head from a form, and **Try** runs it there before the pool sees it. The step-by-step guide, with
+examples and fixes for common problems, is [MAKE-A-HEAD.md](MAKE-A-HEAD.md).
+
 ## Install one
 
 1. Settings → **Heads** → **Open heads folder** (`~/Library/Application Support/Chimera/plugins/` on a
@@ -38,7 +42,7 @@ ComfyUI for the pool.
 
 | Folder | What it does | Needs on that computer | Input |
 |---|---|---|---|
-| `TEMPLATE/` | A skeleton to copy for a new Head | — | either |
+| `TEMPLATE/` | A skeleton to copy for a Head written by hand (it returns a text file until you change it) | — | either |
 | `comfyui-image/` | Pictures from words via ComfyUI's API (SD 1.5 / SDXL / Flux, any checkpoint you have; or your own exported `workflow_api.json`) | ComfyUI running (default `http://127.0.0.1:8188`) with a checkpoint | words |
 | `hunyuan3d-mesh/` | A 3D mesh (GLB/OBJ) from one picture via Hunyuan3D 2's API server, optionally textured | `python api_server.py --port 8080` from the Hunyuan3D-2 repo (`--enable_tex` for textures) | picture |
 | *(on the laptop)* `perspective-shadow/` | Studio shadows for pictures of machines (Perspective in Blender) — see the laptop's handoff | Blender 5 + Perspective | picture |
@@ -72,7 +76,9 @@ python3 -c 'import base64,json,sys; print(json.dumps({"image":{"name":"chair.png
 
 ## Write one
 
-Copy `TEMPLATE/`, rename the folder to your id, edit `plugin.json` and fill in `run()` in `run.py`.
+Most Heads don't need code: see [MAKE-A-HEAD.md](MAKE-A-HEAD.md). Write one by hand when the tool needs
+logic between calls. Copy `TEMPLATE/`, rename the folder to your id, edit `plugin.json` and fill in
+`run()` in `run.py`. Settings → Heads → **Try** runs it there once.
 
 `plugin.json`:
 
@@ -84,7 +90,7 @@ Copy `TEMPLATE/`, rename the folder to your id, edit `plugin.json` and fill in `
 | `when_not_to_use` | Shown in the Library ("Not for: …") |
 | `accepts` | MIME types of a picture the Head takes (`image/*` works). **Empty = words only**, no file needed |
 | `optional_input` | `true`: works both with a picture and from words alone |
-| `produces` | MIME types it returns — the asker keeps only these (`image/png`, `model/gltf-binary`, `model/obj`, …) |
+| `produces` | MIME types it returns; the asker keeps only these (`image/png`, `image/*`, `model/gltf-binary`, `model/*`, `audio/*`, `text/plain`, …) |
 | `entry`, `interpreter` | the script inside the folder; `python3` (default) or `sh` |
 | `network` | leave out, or `"localhost"` to reach servers on the same computer |
 | `options` | a JSON-schema object: the fastest shared model on the Head's computer fills it from the request's words, Chimera checks the values |
@@ -121,7 +127,7 @@ when the Head is installed on it: then it's the person's own Head.
   `"optional_input": true`, upload the picture with `POST /upload/image`, and use a LoadImage node.
 - **TRELLIS / other image-to-3D** servers: same shape as `hunyuan3d-mesh`.
 - **Video**: Wan / CogVideo in ComfyUI, `produces: ["video/mp4"]` (files download; no inline player yet).
-- **Audio**: music or speech generation (ACE-Step, a TTS server) — `produces: ["audio/wav"]`.
+- **Audio**: music or speech generation (ACE-Step, a TTS server) — `produces: ["audio/*"]` (a WAV sniffs as `audio/wave`).
 - **Blender**: anything a headless `blender -b --python` can do; `CHIMERA_BLENDER` has the path.
 - **Deterministic utilities**: ffmpeg conversions, OCR, mesh repair, photogrammetry. These are exactly
   the "regular pre-deterministic techniques" worth more than a model's guess.

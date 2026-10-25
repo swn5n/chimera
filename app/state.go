@@ -90,6 +90,8 @@ type UIState struct {
 	Profile  DeviceProfile `json:"profile"`
 	Catalog  CatalogView   `json:"catalog"`
 	Help     []HelpItem    `json:"help"`
+	// MadeHeads are the Heads installed here that the Head maker made (it can open them again).
+	MadeHeads []string `json:"made_heads"`
 }
 
 func (a *App) buildState() UIState {
@@ -110,9 +112,10 @@ func (a *App) buildState() UIState {
 			SetupDone: cfg.SetupDone, RunTests: cfg.RunTests, AutoHelp: cfg.AutoHelp, AutoJoin: cfg.AutoJoin, PoolAddr: cfg.PoolAddr,
 			LendPlugins: cfg.LendPlugins, UnsandboxedHeads: cfg.UnsandboxedHeads,
 		},
-		DataDir: a.dataDir,
-		Profile: a.profile(),
-		Help:    []HelpItem{},
+		DataDir:   a.dataDir,
+		Profile:   a.profile(),
+		Help:      []HelpItem{},
+		MadeHeads: a.tools.MadeHeads(),
 	}
 	s.Ollama.Models = a.annotate(s.Ollama.Models)
 	items, best := a.catalogFor()

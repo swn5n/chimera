@@ -188,17 +188,34 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("POST /api/open-folder", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			Which string `json:"which"`
+			ID    string `json:"id"`
 		}
 		_ = readJSON(r, &req, 1<<10)
 		dir := a.dataDir
-		if req.Which == "plugins" { // where plugins get installed
+		switch req.Which {
+		case "plugins": // where plugins get installed
 			dir = filepath.Join(a.dataDir, "plugins")
 			_ = os.MkdirAll(dir, 0o755)
+		case "plugin", "head-try": // one Head's folder, or what trying it made
+			p := a.tools.Plugin(req.ID)
+			if p == nil {
+				writeErr(w, 404, "That Head isn't installed on this computer.")
+				return
+			}
+			dir = p.Dir
+			if req.Which == "head-try" {
+				dir = filepath.Join(a.dataDir, "head-tries", p.Manifest.ID)
+			}
+			if !fileExists(dir) {
+				writeErr(w, 404, "Nothing there yet.")
+				return
+			}
 		}
 		openFolder(dir)
 		writeJSON(w, 200, map[string]bool{"ok": true})
 	})
 	a.fileRoutes(mux)
+	a.headRoutes(mux)
 	mux.HandleFunc("POST /api/quit", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]bool{"ok": true})
 		go func() {

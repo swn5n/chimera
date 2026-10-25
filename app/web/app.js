@@ -703,14 +703,14 @@ function renderLibrarySettings() {
   } else {
     html += `<p class="fine">${esc(n.host || "The host")} hosts this network and reviews the library on the hosting computer. Rate replies 4 or 5 stars and say what worked to add to it.</p>`;
   }
-  const plugins = (S.profile && S.profile.plugins) || [];
+  const plugins = (S.profile && S.profile.plugins) || [], made = S.made_heads || [];
   html += `<h2 class="section-title spaced">Heads</h2>
     <label class="row toggle"><span>Let the pool use my Heads</span><input type="checkbox" data-setting="lend_plugins"></label>
-    <p class="fine">A Head is a tool installed on this computer that the whole pool can call — Perspective's studio shadows, an image generator in ComfyUI, a 3D-mesh maker. Drop a Head's folder (it has a <code>plugin.json</code>) into Chimera's heads folder and it shows up here when it can run. When someone asks for what a Head makes — with a picture, or just in words — it runs here in a sandbox: no internet (a Head may talk to a server on this computer if it says so), your home folder hidden except the Head's own folders. Their star ratings decide which Head the pool picks when several could do a job, and you earn bonus credits every time your Head does a job for someone else, plus more when they rate it 4 or 5 stars.</p>
-    ${plugins.length ? `<ul class="plugin-list">${plugins.map((p) => `<li><span class="led ${p.have ? "ice" : "off"}"></span><span><b>${esc(p.name)}</b> ${esc(p.version || "")}<span class="detail">${esc(p.have ? p.summary : "Can't run here: " + (p.note || ""))}</span></span></li>`).join("")}</ul>` : `<p class="fine">No Heads installed yet. The <b>heads</b> folder next to the app has a template and two reference Heads (ComfyUI image generation, Hunyuan3D meshes).</p>`}
+    <p class="fine">A Head is a tool installed on this computer that the whole pool can call — Perspective's studio shadows, an image generator in ComfyUI, a 3D-mesh maker. <b>Make a Head</b> turns a program or a server on this computer into one, no code needed; or drop a Head's folder (it has a <code>plugin.json</code>) into Chimera's heads folder. It shows up here when it can run. When someone asks for what a Head makes — with a picture, or just in words — it runs here in a sandbox: no internet (a Head may talk to a server on this computer if it says so), your home folder hidden except the Head's own folders. Their star ratings decide which Head the pool picks when several could do a job, and you earn bonus credits every time your Head does a job for someone else, plus more when they rate it 4 or 5 stars.</p>
+    ${plugins.length ? `<ul class="plugin-list">${plugins.map((p) => `<li><span class="led ${p.have ? "ice" : "off"}"></span><span class="grow"><b>${esc(p.name)}</b> ${esc(p.version || "")}<span class="detail">${esc(p.have ? p.summary : "Can't run here: " + (p.note || ""))}</span></span><span class="head-btns">${made.includes(p.id) ? `<button class="btn small quiet" data-head-edit="${esc(p.id)}">Change</button>` : ""}<button class="btn small quiet" data-head-try="${esc(p.id)}">Try</button></span></li>`).join("")}</ul>` : `<p class="fine">No Heads installed yet.</p>`}
     ${(S.profile && S.profile.can_test === false) ? `<label class="row toggle"><span>Run Heads without a sandbox on this computer</span><input type="checkbox" data-setting="unsandboxed_heads" ${S.settings.unsandboxed_heads ? "checked" : ""}></label>
     <p class="fine warn">This computer (Windows) has no sandbox Chimera trusts, so Heads are off here unless you allow this. With it on, a Head runs with your normal permissions — only install Heads you trust, from people you trust. The Head's code is always yours, installed by hand; what arrives from the pool is just the picture or words it works on.</p>` : ""}
-    <div class="btn-row"><button class="btn" data-act="open-plugins">Open heads folder</button></div>`;
+    <div class="btn-row"><button class="btn" data-act="make-head">Make a Head</button><button class="btn" data-act="open-plugins">Open heads folder</button></div>`;
   setHTML(box, html);
 }
 
@@ -1518,6 +1518,374 @@ async function addLibraryEntry() {
   } catch (e) { toast(e.message, true); }
 }
 
+// ---------- Head maker ----------
+// Settings → Heads → Make a Head: a form that turns a program or a server on
+// this computer into a Head, with no code. "Try it" then runs any Head installed
+// here once, in its sandbox, the way the pool would.
+const hm = { editing: null, kind: "", options: [], lastField: null, tryId: null, tryInfo: null, tryImage: null, tryAbort: null };
+
+const HM_PLACEHOLDERS = {
+  program: [["prompt", "the words"], ["input", "the picture's file"], ["out", "folder for results"], ["name", "the picture's name"], ["cache", "folder kept between runs"], ["blender", "Blender"], ["seed", "a random number"]],
+  server: [["prompt", "the words"], ["input_base64", "the picture, base64"], ["input_data_url", "the picture, data: URL"], ["name", "the picture's name"], ["seed", "a random number"]],
+};
+
+const HM_BLANK = { name: "", summary: "", when_to_use: "", when_not_to_use: "", tags: [], timeout_s: 1800, maker: { kind: "", input: "picture", output: [], options: [], typical_s: 60 } };
+
+// Starting points: each fills the whole form, to change from there.
+const HM_EXAMPLES = [
+  { label: "Remove a picture's background (rembg)", name: "Background remover", summary: "Cuts the subject out of a picture and makes the background transparent, with rembg.",
+    when_to_use: "Someone attaches a picture and asks to remove or delete the background, cut out the subject, isolate it, or make it transparent.",
+    when_not_to_use: "Changing what's in the picture, or requests without a picture.", tags: ["background", "remove background", "cutout", "transparent"], timeout_s: 600,
+    maker: { kind: "program", input: "picture", output: ["picture"], command: "rembg i {{input}} {{out}}/{{name}}_cutout.png", reads: ["~/.u2net"], typical_s: 15, options: [] } },
+  { label: "Run my Blender script on a picture", name: "Blender picture script", summary: "Runs my Blender script on a picture and returns what it renders.",
+    when_to_use: "Someone attaches a picture and asks for the effect my script makes.", when_not_to_use: "", tags: ["blender", "render"], timeout_s: 1800,
+    maker: { kind: "program", input: "picture", output: ["picture"], command: "{{blender}} -b --python /path/to/your_script.py -- {{input}} {{out}}/{{name}}_render.png {{prompt}}", typical_s: 90, options: [] } },
+  { label: "Turn a picture into a short video (ffmpeg)", name: "Picture to video clip", summary: "Makes a short MP4 clip from a picture, with ffmpeg.",
+    when_to_use: "Someone attaches a picture and asks to turn it into a video or a clip of a few seconds.", when_not_to_use: "Animating what's in the picture.", tags: ["video", "mp4", "clip", "ffmpeg"], timeout_s: 600,
+    maker: { kind: "program", input: "picture", output: ["video"], command: "ffmpeg -y -loop 1 -i {{input}} -t {{seconds}} -vf scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p {{out}}/{{name}}.mp4", typical_s: 10,
+      options: [{ name: "seconds", type: "integer", description: "how long the clip is, in seconds", default: 5, min: 1, max: 60 }] } },
+  { label: "Read words out loud (Mac's say)", name: "Read it out loud", summary: "Reads the words out loud with the Mac's built-in voice and returns a sound file.",
+    when_to_use: "Someone asks to read text out loud, say something, or turn words into speech or a voice recording.", when_not_to_use: "Questions about speech.", tags: ["speech", "voice", "read aloud", "tts"], timeout_s: 300,
+    maker: { kind: "program", input: "words", output: ["sound"], command: "/usr/bin/say -o {{out}}/speech.aiff {{prompt}}", typical_s: 5, options: [] } },
+  { label: "Pictures from words (AUTOMATIC1111 or Forge)", name: "Stable Diffusion pictures", summary: "Makes pictures from a description with the Stable Diffusion web UI running on this computer.",
+    when_to_use: "Someone asks to generate, draw, paint or make a picture, image or illustration of something.", when_not_to_use: "Questions about images; editing an attached picture.", tags: ["image", "picture", "generate", "draw", "stable diffusion"], timeout_s: 900,
+    maker: { kind: "server", input: "words", output: ["picture"], method: "POST", url: "http://127.0.0.1:7860/sdapi/v1/txt2img", result_field: "images", typical_s: 30,
+      body: { prompt: "{{prompt}}", negative_prompt: "{{negative}}", steps: "{{steps}}", width: "{{width}}", height: "{{height}}", seed: "{{seed}}", cfg_scale: 7 },
+      options: [
+        { name: "steps", type: "integer", description: "sampling steps; more is slower and finer", default: 25, min: 10, max: 60 },
+        { name: "width", type: "integer", description: "width in pixels", default: 768, min: 256, max: 2048 },
+        { name: "height", type: "integer", description: "height in pixels", default: 768, min: 256, max: 2048 },
+        { name: "negative", type: "text", description: "what the picture should not have", default: "blurry, low quality" }] } },
+  { label: "3D mesh from a picture (Hunyuan3D server)", name: "3D mesh from a picture", summary: "Turns a picture of one object into a 3D mesh (GLB) with the Hunyuan3D server running on this computer.",
+    when_to_use: "Someone attaches a picture of a single object and asks for a 3D model, mesh, GLB or asset of it.", when_not_to_use: "Pictures of whole scenes; 2D edits.", tags: ["3d", "mesh", "model", "glb", "hunyuan3d"], timeout_s: 3600,
+    maker: { kind: "server", input: "picture", output: ["model"], method: "POST", url: "http://127.0.0.1:8080/generate", health_url: "http://127.0.0.1:8080/health", typical_s: 120,
+      body: { image: "{{input_base64}}", seed: "{{seed}}", octree_resolution: "{{detail}}", num_inference_steps: "{{steps}}", guidance_scale: 5, texture: "{{texture}}", type: "glb" },
+      options: [
+        { name: "detail", type: "integer", description: "mesh detail: 256 is quick, 384 to 512 is finer and slower", default: 256, min: 128, max: 512 },
+        { name: "steps", type: "integer", description: "diffusion steps", default: 30, min: 5, max: 50 },
+        { name: "texture", type: "boolean", description: "also paint a texture (slower)", default: false }] } },
+];
+
+const fmtSize = (n) => n >= 1e6 ? `${(n / 1e6).toFixed(1)} MB` : n >= 1e3 ? `${Math.round(n / 1e3)} KB` : `${n} bytes`;
+
+function hmFill(f) {
+  const m = f.maker || {};
+  $("#hm-name").value = f.name || "";
+  $("#hm-summary").value = f.summary || "";
+  $("#hm-when").value = f.when_to_use || "";
+  $("#hm-not").value = f.when_not_to_use || "";
+  $("#hm-tags").value = (f.tags || []).join(", ");
+  $("#hm-input").value = m.input || "picture";
+  $$("#hm-output .pill").forEach((c) => c.setAttribute("aria-pressed", String((m.output || []).includes(c.dataset.out))));
+  $("#hm-command").value = m.command || "";
+  $("#hm-command-noinput").value = m.command_no_input || "";
+  $("#hm-url").value = m.url || "";
+  $("#hm-method").value = m.method || "POST";
+  $("#hm-body").value = m.body == null ? "" : typeof m.body === "string" ? m.body : JSON.stringify(m.body, null, 2);
+  $("#hm-upload").value = m.upload_field || "";
+  $("#hm-result").value = m.result_field || "";
+  $("#hm-health").value = m.health_url || "";
+  $("#hm-reads").value = (m.reads || []).join("\n");
+  $("#hm-typical").value = m.typical_s || 60;
+  $("#hm-timeout").value = Math.max(1, Math.round((f.timeout_s || 1800) / 60));
+  hm.options = (m.options || []).map((o) => ({ ...o, choices: o.choices || [] }));
+  setHMKind(m.kind || "");
+}
+
+function setHMKind(kind) {
+  hm.kind = kind;
+  $$(".maker-kinds .choice").forEach((c) => c.classList.toggle("on", c.dataset.kind === kind));
+  $("#hm-program").hidden = kind !== "program";
+  $("#hm-server").hidden = kind !== "server";
+  $("#hm-common").hidden = !kind;
+  $("#hm-reads").placeholder = kind === "server" ? "/Users/you/server/outputs" : "~/.u2net";
+  $("#hm-reads-hint").textContent = kind === "server"
+    ? "Only needed when the server answers with where it saved the file instead of the file itself: list that folder. Heads can't see your home folder otherwise."
+    : "Heads can't see your home folder. The program's own folder and the paths written in the command are allowed already; list anything else it needs, like a folder of models.";
+  syncHMInput();
+  renderHMOptions();
+}
+
+function syncHMInput() {
+  $("#hm-noinput-row").hidden = !(hm.kind === "program" && $("#hm-input").value === "either");
+}
+
+function renderHMChips() {
+  const words = $("#hm-input").value === "words";
+  const list = (HM_PLACEHOLDERS[hm.kind] || []).filter(([n]) => !(words && n.startsWith("input")));
+  const opts = hm.options.map((o) => (o.name || "").trim()).filter((n) => /^[a-z][a-z0-9_]*$/.test(n)).map((n) => [n, "setting"]);
+  const all = list.concat(opts);
+  $("#hm-chips").innerHTML = all.length ? `<span class="lead">Click to insert:</span>` +
+    all.map(([n, d]) => `<button type="button" class="pill" data-ph="${esc(n)}">{{${esc(n)}}}<span>${esc(d)}</span></button>`).join("") : "";
+}
+
+function renderHMOptions() {
+  const types = [["number", "Number"], ["integer", "Whole number"], ["boolean", "Yes or no"], ["choice", "Choice"], ["text", "Text"]];
+  $("#hm-options").innerHTML = hm.options.map((o, i) => {
+    const t = o.type || "number";
+    let extra = "";
+    if (t === "number" || t === "integer") {
+      extra = `<div class="pair"><label><span>Lowest <em>(optional)</em></span><input class="field" data-o="min" type="number" step="any" value="${esc(o.min ?? "")}"></label>
+        <label><span>Highest <em>(optional)</em></span><input class="field" data-o="max" type="number" step="any" value="${esc(o.max ?? "")}"></label></div>`;
+    } else if (t === "choice") {
+      extra = `<label class="full"><span>Choices, separated by commas</span><input class="field" data-o="choices" value="${esc((o.choices || []).join(", "))}" placeholder="soft, hard, none"></label>`;
+    } else if (t === "boolean" && hm.kind === "program") {
+      extra = `<div class="pair"><label><span>When yes, the command gets</span><input class="field mono" data-o="yes" value="${esc(o.yes ?? "true")}" placeholder="(nothing)" spellcheck="false"></label>
+        <label><span>When no, it gets</span><input class="field mono" data-o="no" value="${esc(o.no ?? "false")}" placeholder="(nothing)" spellcheck="false"></label></div>`;
+    }
+    const def = t === "boolean"
+      ? `<select class="field" data-o="default"><option value="false"${o.default === true ? "" : " selected"}>Default: no</option><option value="true"${o.default === true ? " selected" : ""}>Default: yes</option></select>`
+      : `<input class="field" data-o="default" value="${esc(o.default ?? "")}" placeholder="Default">`;
+    return `<div class="opt" data-i="${i}">
+      <input class="field mono" data-o="name" value="${esc(o.name || "")}" placeholder="name, like strength" spellcheck="false">
+      <select class="field" data-o="type">${types.map(([v, l]) => `<option value="${v}"${v === t ? " selected" : ""}>${l}</option>`).join("")}</select>
+      ${def}
+      <button type="button" class="btn small quiet" data-o-rm="${i}">Remove</button>
+      <input class="field full" data-o="description" value="${esc(o.description || "")}" placeholder="What it means, so the model knows when a request asks for it">
+      ${extra}</div>`;
+  }).join("");
+  renderHMChips();
+}
+
+function hmOptionInput(e) {
+  const el = e.target, box = el.closest(".opt");
+  if (!box || !el.dataset.o) return;
+  const o = hm.options[Number(box.dataset.i)];
+  const k = el.dataset.o;
+  if (k === "choices") o.choices = el.value.split(",").map((s) => s.trim()).filter(Boolean);
+  else if (k === "default" && o.type === "boolean") o.default = el.value === "true";
+  else o[k] = el.value;
+  if (k === "type") {
+    o.default = o.type === "boolean" ? false : "";
+    renderHMOptions();
+  } else if (k === "name") renderHMChips();
+}
+
+function hmInsert(name) {
+  let el = hm.lastField;
+  if (!el || el.closest("[hidden]")) el = hm.kind === "server" ? $("#hm-body") : $("#hm-command");
+  const s = el.selectionStart ?? el.value.length, end = el.selectionEnd ?? el.value.length;
+  // In the JSON, a placeholder goes in quotes unless the cursor is already inside some.
+  const quote = el.id === "hm-body" && el.value[s - 1] !== '"';
+  const text = quote ? `"{{${name}}}"` : `{{${name}}}`;
+  el.value = el.value.slice(0, s) + text + el.value.slice(end);
+  el.focus();
+  el.selectionStart = el.selectionEnd = s + text.length;
+}
+
+function hmForm() {
+  const v = (id) => $(id).value.trim();
+  const num = (x) => (x === "" || x == null ? undefined : Number(x));
+  const options = hm.options.map((o) => {
+    const x = { name: (o.name || "").trim(), type: o.type || "number", description: (o.description || "").trim() };
+    if (x.type === "number" || x.type === "integer") {
+      const d = String(o.default ?? "").trim();
+      x.default = d === "" ? null : Number.isNaN(Number(d)) ? d : Number(d);
+      x.min = num(o.min);
+      x.max = num(o.max);
+    } else if (x.type === "boolean") {
+      x.default = o.default === true;
+      if (hm.kind === "program") { x.yes = o.yes ?? "true"; x.no = o.no ?? "false"; }
+    } else if (x.type === "choice") {
+      x.choices = o.choices || [];
+      x.default = String(o.default ?? "");
+    } else x.default = String(o.default ?? "");
+    return x;
+  });
+  return {
+    id: hm.editing || "", replace: !!hm.editing,
+    name: v("#hm-name"), summary: v("#hm-summary"), when_to_use: v("#hm-when"), when_not_to_use: v("#hm-not"),
+    tags: v("#hm-tags").split(",").map((s) => s.trim()).filter(Boolean),
+    timeout_s: Math.round((Number($("#hm-timeout").value) || 30) * 60),
+    body_text: $("#hm-body").value,
+    maker: {
+      kind: hm.kind, input: $("#hm-input").value,
+      output: $$("#hm-output .pill").filter((c) => c.getAttribute("aria-pressed") === "true").map((c) => c.dataset.out),
+      command: $("#hm-command").value, command_no_input: $("#hm-command-noinput").value,
+      url: v("#hm-url"), method: $("#hm-method").value, upload_field: v("#hm-upload"), result_field: v("#hm-result"), health_url: v("#hm-health"),
+      reads: $("#hm-reads").value.split("\n").map((s) => s.trim()).filter(Boolean),
+      options, typical_s: Math.round(Number($("#hm-typical").value) || 60),
+    },
+  };
+}
+
+async function openMaker(id) {
+  stopTry();
+  hm.editing = null;
+  $("#hm-error").textContent = "";
+  if (id) {
+    let h;
+    try { h = await api("GET", `/api/heads/${encodeURIComponent(id)}`); } catch (e) { toast(e.message, true); return; }
+    if (!h.editable) { toast(`${h.name} wasn't made here, so change its plugin.json by hand.`, true); return; }
+    hm.editing = h.id;
+    hmFill(h);
+    $("#hm-title").textContent = `Change ${h.name}`;
+  } else {
+    hmFill(HM_BLANK);
+    $("#hm-title").textContent = "Make a Head";
+  }
+  $("#hm-example-row").hidden = !!id;
+  $("#hm-example").innerHTML = `<option value="">Nothing, I'll fill it in</option>` + HM_EXAMPLES.map((x, i) => `<option value="${i}">${esc(x.label)}</option>`).join("");
+  showMakerForm();
+  $("#hm-name").focus();
+}
+
+function showMakerForm() {
+  $("#hm-form").hidden = false;
+  $("#hm-try").hidden = true;
+  $("#head-maker").hidden = false;
+  $(".maker-card").scrollTop = 0;
+}
+
+async function saveHMHead() {
+  const body = hmForm(), btn = $("#hm-save");
+  $("#hm-error").textContent = "";
+  btn.disabled = true;
+  try {
+    const r = await api("POST", "/api/heads", body);
+    hm.editing = r.id; // saving again changes this Head
+    $("#hm-title").textContent = `Change ${body.name}`;
+    $("#hm-example-row").hidden = true;
+    toast(`Saved ${body.name}${r.version ? " " + r.version : ""}. It's listed under Heads.`);
+    openTry(r.id);
+  } catch (e) {
+    $("#hm-error").textContent = e.message;
+  }
+  btn.disabled = false;
+}
+
+async function openTry(id) {
+  stopTry();
+  hm.tryId = id;
+  hm.tryImage = null;
+  hm.tryInfo = null;
+  $("#hm-form").hidden = true;
+  $("#hm-try").hidden = false;
+  $("#head-maker").hidden = false;
+  $("#ht-out").innerHTML = "";
+  $("#ht-pic-name").textContent = "";
+  $("#ht-run").textContent = "Run it here";
+  $("#ht-state").textContent = "Checking it…";
+  let h;
+  try { h = await api("GET", `/api/heads/${encodeURIComponent(id)}`); } catch (e) { $("#ht-state").textContent = e.message; return; }
+  hm.tryInfo = h;
+  $("#ht-title").textContent = `Try ${h.name}`;
+  $("#ht-edit").hidden = !h.editable;
+  const pic = (h.accepts || []).length > 0;
+  $("#ht-pic-row").hidden = !pic;
+  $("#ht-pic-row > span").textContent = h.optional_input ? "Picture (optional)" : "Picture";
+  $("#ht-state").innerHTML = h.have
+    ? "It runs here, in its sandbox, exactly as it would for someone in the pool. Only you see this try."
+    : `<span class="bad">Can't run here yet: ${esc(h.note || "")}</span> Fix that and run it again; Chimera checks each time.`;
+  $("#ht-request").focus();
+}
+
+function stopTry() {
+  if (hm.tryAbort) hm.tryAbort.abort();
+  hm.tryAbort = null;
+}
+
+async function runTry() {
+  if (hm.tryAbort) { stopTry(); return; } // the button is Stop while it runs
+  const h = hm.tryInfo;
+  if (!h) return;
+  if ((h.accepts || []).length && !h.optional_input && !hm.tryImage) { toast("Choose a picture for it to work on.", true); return; }
+  const body = { request: $("#ht-request").value.trim() };
+  if (hm.tryImage) body.image = hm.tryImage;
+  const out = $("#ht-out");
+  out.innerHTML = `<p class="said" id="ht-msg">Starting…</p><div class="plugin-progress"><span id="ht-bar" style="width:0%"></span></div>`;
+  const ctl = new AbortController();
+  hm.tryAbort = ctl;
+  $("#ht-run").textContent = "Stop";
+  let done = null, note = "";
+  try {
+    const res = await fetch(`/api/heads/${encodeURIComponent(hm.tryId)}/try`, {
+      method: "POST", headers: { "X-Chimera": "1", "Content-Type": "application/json" }, body: JSON.stringify(body), signal: ctl.signal,
+    });
+    if (!res.ok) {
+      let msg = `Something went wrong (${res.status}).`;
+      try { msg = (await res.json()).error || msg; } catch { /* no body */ }
+      throw new Error(msg);
+    }
+    await readSSE(res, (ev) => {
+      if (ev.type === "status") {
+        const m = $("#ht-msg"), bar = $("#ht-bar");
+        if (m) m.textContent = ev.message;
+        if (bar && ev.fraction >= 0) bar.style.width = `${Math.round(ev.fraction * 100)}%`;
+      } else if (ev.type === "note") note = ev.message;
+      else if (ev.type === "done") done = ev;
+    });
+    if (!done) throw new Error("It stopped without an answer.");
+    out.innerHTML = tryResultHTML(done, note);
+  } catch (e) {
+    out.innerHTML = e.name === "AbortError" ? `<p class="said">Stopped.</p>` : `<p class="result bad">${esc(e.message)}</p>`;
+  }
+  if (hm.tryAbort === ctl) hm.tryAbort = null;
+  $("#ht-run").textContent = "Run it again";
+}
+
+function tryResultHTML(d, note) {
+  let html = note ? `<p class="said">${esc(note)}</p>` : "";
+  if (!d.ok) return html + `<p class="result bad">${esc(d.error || "It didn't work.")}</p>`;
+  html += `<p class="result">${esc(d.summary || "Done.")}</p>`;
+  for (const f of d.files || []) {
+    if (f.data_base64 && f.kept) html += `<img alt="${esc(f.name)}" src="data:${esc(f.mime)};base64,${f.data_base64}">`;
+    const why = f.kept ? fmtSize(f.bytes) : `Left out: the Head says it makes ${(d.produces || []).join(", ")}, not ${f.mime}`;
+    html += `<div class="tfile${f.kept ? "" : " dropped"}"><span>${esc(f.name)}</span><span>${esc(why)}</span></div>`;
+  }
+  if ((d.files || []).length) html += `<div><button type="button" class="btn small" data-act="head-try-files">Show the files</button></div>`;
+  return html;
+}
+
+function closeMaker() {
+  stopTry();
+  $("#head-maker").hidden = true;
+}
+
+$("#hm-form").addEventListener("submit", (e) => { e.preventDefault(); saveHMHead(); });
+$("#hm-form").addEventListener("keydown", (e) => { // Enter in a one-line box shouldn't save a half-filled Head
+  if (e.key === "Enter" && e.target.tagName === "INPUT") e.preventDefault();
+});
+$("#hm-cancel").addEventListener("click", closeMaker);
+$("#hm-add-option").addEventListener("click", () => {
+  hm.options.push({ name: "", type: "number", description: "", default: "" });
+  renderHMOptions();
+  const last = $$("#hm-options .opt").pop();
+  if (last) $('[data-o="name"]', last).focus();
+});
+$("#hm-options").addEventListener("input", hmOptionInput);
+$("#hm-options").addEventListener("change", (e) => { if (e.target.tagName === "SELECT") hmOptionInput(e); });
+$("#hm-input").addEventListener("change", () => { syncHMInput(); renderHMChips(); });
+$("#hm-example").addEventListener("change", (e) => {
+  const x = HM_EXAMPLES[Number(e.target.value)];
+  if (e.target.value === "" || !x) return;
+  if (($("#hm-name").value.trim() || $("#hm-command").value.trim() || $("#hm-url").value.trim()) && !confirm("Replace what you've filled in with this example?")) return;
+  hmFill(x);
+});
+$("#head-maker").addEventListener("focusin", (e) => { if (e.target.matches("[data-template]")) hm.lastField = e.target; });
+$("#ht-run").addEventListener("click", runTry);
+$("#ht-request").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); if (!hm.tryAbort) runTry(); } });
+$("#ht-pick").addEventListener("click", () => $("#ht-file").click());
+$("#ht-file").addEventListener("change", (e) => {
+  const f = e.target.files[0];
+  e.target.value = "";
+  if (!f) return;
+  if (f.size > 40e6) { toast("That picture is too large (40 MB at most).", true); return; }
+  const r = new FileReader();
+  r.onload = () => {
+    hm.tryImage = { name: f.name, data_base64: String(r.result).split(",")[1] || "" };
+    $("#ht-pic-name").textContent = f.name;
+  };
+  r.readAsDataURL(f);
+});
+$("#ht-edit").addEventListener("click", () => {
+  stopTry();
+  if (hm.editing && hm.editing === hm.tryId && $("#hm-name").value) showMakerForm(); // the form still has it
+  else openMaker(hm.tryId);
+});
+$("#ht-done").addEventListener("click", closeMaker);
+$("#ht-folder").addEventListener("click", () => api("POST", "/api/open-folder", { which: "plugin", id: hm.tryId }).catch((e) => toast(e.message, true)));
+
 // ---------- wiring ----------
 document.addEventListener("click", async (e) => {
   const t = e.target.closest("button, a");
@@ -1546,6 +1914,12 @@ document.addEventListener("click", async (e) => {
   }
   if (t.dataset.star) { const el = t.closest(".msg"); if (el) rateMessage(el, Number(t.dataset.star)); return; }
   if (t.dataset.rateSkip !== undefined) { const el = t.closest(".msg"); if (el) sendRateNote(el, ""); return; }
+  if (t.dataset.headTry) { openTry(t.dataset.headTry); return; }
+  if (t.dataset.headEdit) { openMaker(t.dataset.headEdit); return; }
+  if (t.dataset.ph) { hmInsert(t.dataset.ph); return; }
+  if (t.dataset.out) { t.setAttribute("aria-pressed", String(t.getAttribute("aria-pressed") !== "true")); return; }
+  if (t.dataset.kind && t.closest(".maker-kinds")) { setHMKind(t.dataset.kind); return; }
+  if (t.dataset.oRm !== undefined) { hm.options.splice(Number(t.dataset.oRm), 1); renderHMOptions(); return; }
   switch (t.dataset.act) {
     case "open-ollama":
       t.disabled = true;
@@ -1567,6 +1941,10 @@ document.addEventListener("click", async (e) => {
       return;
     case "open-plugins":
       try { await api("POST", "/api/open-folder", { which: "plugins" }); } catch (err) { toast(err.message, true); }
+      return;
+    case "make-head": openMaker(); return;
+    case "head-try-files":
+      try { await api("POST", "/api/open-folder", { which: "head-try", id: hm.tryId }); } catch (err) { toast(err.message, true); }
       return;
     case "remove-attachment":
       chat.images.splice(Number(t.dataset.n), 1).forEach((i) => URL.revokeObjectURL(i.url));
@@ -1710,6 +2088,7 @@ $("#btn-quit").addEventListener("click", async () => {
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
   if (!$("#dlg-disconnect").hidden) $("#dlg-disconnect").hidden = true;
+  else if (!$("#head-maker").hidden && !$("#hm-try").hidden) closeMaker(); // not from the form: it would lose what's typed
   else if (!$("#setup").hidden && setupStep !== "hosted") closeSetup();
 });
 

@@ -39,7 +39,7 @@ def run(req, out_dir):
     progress(0.1, "Starting")
     if image:
         data = base64.b64decode(image["data_base64"])  # the picture they attached
-    # ... do the work, writing results into out_dir ...
+    # ... do the work, writing results into out_dir (and say their types in plugin.json's "produces") ...
     name = "result.txt"
     with open(os.path.join(out_dir, name), "w") as f:
         f.write("replace me\n")
