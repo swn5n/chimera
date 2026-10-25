@@ -174,6 +174,36 @@ func (c *HubClient) Complete(ctx context.Context, id string, stats ChatStats) er
 	return err
 }
 
+// Status reports what a plugin step is doing; the answer says whether the
+// requester wants it stopped.
+func (c *HubClient) Status(ctx context.Context, id, status string, fraction float64) (bool, error) {
+	var out struct {
+		Cancel bool `json:"cancel"`
+	}
+	_, err := c.call(ctx, "POST", "/v1/steps/"+id+"/progress", progressReq{Status: status, Fraction: fraction}, &out)
+	return out.Cancel, err
+}
+
+// CompleteWithFiles finishes a plugin step with what it made.
+func (c *HubClient) CompleteWithFiles(ctx context.Context, id string, stats ChatStats, files []StepFile) error {
+	_, err := c.call(ctx, "POST", "/v1/steps/"+id+"/complete", completeReq{Stats: stats, Files: files}, nil)
+	return err
+}
+
+// Plugins asks the hub which plugins could handle a request, best first.
+func (c *HubClient) Plugins(ctx context.Context, query, accepts string) ([]PluginCandidate, error) {
+	v := url.Values{}
+	v.Set("q", query)
+	if accepts != "" {
+		v.Set("accepts", accepts)
+	}
+	var out struct {
+		Plugins []PluginCandidate `json:"plugins"`
+	}
+	_, err := c.call(ctx, "GET", "/v1/plugins?"+v.Encode(), nil, &out)
+	return out.Plugins, err
+}
+
 func (c *HubClient) Fail(ctx context.Context, id string, f failReq) error {
 	_, err := c.call(ctx, "POST", "/v1/steps/"+id+"/fail", f, nil)
 	return err

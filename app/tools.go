@@ -33,15 +33,16 @@ type ToolInfo struct {
 }
 
 type ToolScanner struct {
-	app  *App
-	mu   sync.Mutex
-	ext  map[string]ToolInfo // apps found on disk / running
-	last time.Time
-	kick chan struct{}
+	app     *App
+	mu      sync.Mutex
+	ext     map[string]ToolInfo         // apps found on disk / running
+	plugins map[string]*installedPlugin // plugins installed here (see plugins.go)
+	last    time.Time
+	kick    chan struct{}
 }
 
 func NewToolScanner(app *App) *ToolScanner {
-	return &ToolScanner{app: app, ext: map[string]ToolInfo{}, kick: make(chan struct{}, 1)}
+	return &ToolScanner{app: app, ext: map[string]ToolInfo{}, plugins: map[string]*installedPlugin{}, kick: make(chan struct{}, 1)}
 }
 
 func (t *ToolScanner) Kick() {
@@ -92,6 +93,19 @@ func (t *ToolScanner) scan() {
 	}
 	t.ext = found
 	t.last = time.Now()
+	t.mu.Unlock()
+	// Plugins last: their probes use the Python and Blender found above.
+	plugins := t.scanPlugins()
+	t.mu.Lock()
+	if len(plugins) != len(t.plugins) {
+		changed = true
+	}
+	for id, p := range plugins {
+		if old, ok := t.plugins[id]; !ok || old.Probe.Have != p.Probe.Have || old.Manifest.Version != p.Manifest.Version || old.Err != p.Err {
+			changed = true
+		}
+	}
+	t.plugins = plugins
 	t.mu.Unlock()
 	if changed {
 		t.app.notify()
@@ -188,6 +202,17 @@ func (t *ToolScanner) List() []ToolInfo {
 			out = append(out, ti)
 		}
 	}
+	lend := t.app.config().LendPlugins
+	for _, p := range t.PluginInfos() {
+		ti := ToolInfo{ID: "plugin:" + p.ID, Name: p.Name, Label: "Head", Have: p.Have, Lendable: lend, Note: p.Summary}
+		if p.Version != "" {
+			ti.Via = "Head " + p.Version
+		}
+		if !p.Have {
+			ti.Note = "Can't run here: " + p.Note
+		}
+		out = append(out, ti)
+	}
 	return out
 }
 
@@ -217,7 +242,16 @@ func findBlender() (path, version string) {
 	var cands []string
 	switch runtime.GOOS {
 	case "darwin":
-		cands = []string{"/Applications/Blender.app/Contents/MacOS/Blender", filepath.Join(homeDir(), "Applications/Blender.app/Contents/MacOS/Blender")}
+		// Versions can sit side by side ("Blender.app", "Blender 2.app", "Blender 4.2.app"): newest first.
+		var apps []string
+		for _, root := range []string{"/Applications", filepath.Join(homeDir(), "Applications")} {
+			m, _ := filepath.Glob(filepath.Join(root, "Blender*.app"))
+			apps = append(apps, m...)
+		}
+		sort.SliceStable(apps, func(i, j int) bool { return versionLess(bundleVersion(apps[j]), bundleVersion(apps[i])) })
+		for _, app := range apps {
+			cands = append(cands, filepath.Join(app, "Contents/MacOS/Blender"))
+		}
 	case "windows":
 		matches, _ := filepath.Glob(filepath.Join(os.Getenv("ProgramFiles"), "Blender Foundation", "Blender*", "blender.exe"))
 		sort.Sort(sort.Reverse(sort.StringSlice(matches)))
@@ -239,6 +273,20 @@ func findBlender() (path, version string) {
 		return p, "Blender"
 	}
 	return "", ""
+}
+
+var bundleVersionRe = regexp.MustCompile(`<key>CFBundleShortVersionString</key>\s*<string>([0-9.]+)</string>`)
+
+// bundleVersion reads a macOS app's version from its Info.plist without starting it ("" if unknown).
+func bundleVersion(app string) string {
+	b, err := os.ReadFile(filepath.Join(app, "Contents", "Info.plist"))
+	if err != nil {
+		return ""
+	}
+	if m := bundleVersionRe.FindSubmatch(b); m != nil {
+		return string(m[1])
+	}
+	return ""
 }
 
 // findPython returns a Python 3 that actually works (not a store/installer stub).

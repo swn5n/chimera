@@ -74,6 +74,8 @@ type SettingsView struct {
 	AutoHelp               bool     `json:"auto_help"`
 	AutoJoin               bool     `json:"auto_join"`
 	PoolAddr               string   `json:"pool_addr"`
+	LendPlugins            bool     `json:"lend_plugins"`
+	UnsandboxedHeads       bool     `json:"unsandboxed_heads"`
 }
 
 type UIState struct {
@@ -106,6 +108,7 @@ func (a *App) buildState() UIState {
 			AutoStartOllama: cfg.AutoStartOllama, FreeMemoryOnDisconnect: cfg.FreeMemoryOnDisconnect,
 			ConnectOnLaunch: cfg.ConnectOnLaunch, AppWindow: cfg.AppWindow, HostPort: cfg.HostPort,
 			SetupDone: cfg.SetupDone, RunTests: cfg.RunTests, AutoHelp: cfg.AutoHelp, AutoJoin: cfg.AutoJoin, PoolAddr: cfg.PoolAddr,
+			LendPlugins: cfg.LendPlugins, UnsandboxedHeads: cfg.UnsandboxedHeads,
 		},
 		DataDir: a.dataDir,
 		Profile: a.profile(),

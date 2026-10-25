@@ -251,7 +251,7 @@ func (a *App) librarySearch(q string, limit int) []LibEntry {
 	// instructions aimed at AI workers.
 	var out []LibEntry
 	for _, e := range res.Entries {
-		if e.Status == "verified" {
+		if e.Status == "verified" && e.Kind != "plugin" { // plugins run as steps, not as text for models
 			out = append(out, e)
 		}
 	}

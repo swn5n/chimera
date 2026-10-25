@@ -16,15 +16,17 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
 )
 
-const Version = "0.4.1"
+const Version = "0.6.0"
 
 const (
 	defaultUIPort  = 7470
@@ -50,6 +52,8 @@ func main() {
 	hubPort := flags.Int("hub-port", 0, fmt.Sprintf("port for hosting a hub (default %d)", defaultHubPort))
 	ollamaURL := flags.String("ollama", "", "Ollama address (default $OLLAMA_HOST or http://127.0.0.1:11434)")
 	showVersion := flags.Bool("version", false, "print the version and exit")
+	pluginTest := flags.String("plugin-test", "", "run the plugin in this folder once, the way the network does (input JSON on stdin), and exit")
+	pluginOut := flags.String("plugin-out", "", "with --plugin-test: where to save the files it makes (default ./plugin-test-out)")
 	_ = flags.Parse(args)
 
 	if *showVersion {
@@ -65,11 +69,20 @@ func main() {
 		fmt.Fprintln(os.Stderr, "cannot create data folder:", err)
 		os.Exit(1)
 	}
+	if *pluginTest != "" {
+		os.Exit(runPluginTest(dir, *pluginTest, *pluginOut))
+	}
 	setupLogging(dir)
 	log.Printf("Chimera %s starting (data folder: %s)", Version, dir)
 
 	if *hubOnly {
 		runHubOnly(dir, *hubPort)
+		return
+	}
+	// On a Mac, the process Launch Services started hands over to a detached copy
+	// of itself and exits, so that opening Chimera again brings its window back
+	// (see handOverOnMac). Terminal use with --no-open stays in the foreground.
+	if !*noOpen && handOverOnMac(args) {
 		return
 	}
 
@@ -170,6 +183,38 @@ func isChimera(port int) bool {
 	defer resp.Body.Close()
 	b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 	return strings.Contains(string(b), `"app":"chimera"`)
+}
+
+// handOverOnMac makes "open Chimera again" work on a Mac.
+//
+// Launch Services treats an app as running for as long as the process it
+// launched is alive, and a second double-click only sends that process a
+// "reopen" Apple event — which a windowless program with no AppKit run loop
+// never sees. So before this, opening Chimera while it was running did nothing
+// at all, and people took that for "it's already running" with no way back to
+// the window. Now the process Launch Services started spawns a detached copy of
+// itself (marked CHIMERA_DAEMON) and exits at once. macOS then sees Chimera as
+// not running, so the next double-click runs main again: it finds the daemon on
+// the interface port, opens its window, and exits. Returns true when this
+// process should exit because the daemon is up. CHIMERA_NO_DAEMON=1 disables it.
+func handOverOnMac(args []string) bool {
+	mac := runtime.GOOS == "darwin" || os.Getenv("CHIMERA_HANDOVER_TEST") != "" // the override lets Linux tests exercise this path
+	if !mac || os.Getenv("CHIMERA_DAEMON") != "" || os.Getenv("CHIMERA_NO_DAEMON") != "" {
+		return false
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return false
+	}
+	cmd := exec.Command(exe, args...)
+	cmd.Env = append(os.Environ(), "CHIMERA_DAEMON=1")
+	detach(cmd)
+	if err := cmd.Start(); err != nil {
+		log.Printf("couldn't start the background copy (%v); running in this process instead", err)
+		return false
+	}
+	log.Printf("Handed over to the background Chimera (pid %d)", cmd.Process.Pid)
+	return true
 }
 
 // runningVersion asks the Chimera on port which version it is ("" if it's too

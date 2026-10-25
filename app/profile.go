@@ -22,14 +22,15 @@ const (
 )
 
 type DeviceProfile struct {
-	UsableGB     float64    `json:"usable_gb"`
-	ComfortGB    float64    `json:"comfort_gb"`
-	MaxGB        float64    `json:"max_gb"`
-	BandwidthGBs float64    `json:"bandwidth_gbs,omitempty"`
-	Accel        string     `json:"accel"`
-	BestFor      []string   `json:"best_for"`
-	Tools        []ToolInfo `json:"tools"`
-	CanTest      bool       `json:"can_test"` // can safely sandbox library test runs
+	UsableGB     float64      `json:"usable_gb"`
+	ComfortGB    float64      `json:"comfort_gb"`
+	MaxGB        float64      `json:"max_gb"`
+	BandwidthGBs float64      `json:"bandwidth_gbs,omitempty"`
+	Accel        string       `json:"accel"`
+	BestFor      []string     `json:"best_for"`
+	Tools        []ToolInfo   `json:"tools"`
+	CanTest      bool         `json:"can_test"`          // can safely sandbox library test runs
+	Plugins      []PluginInfo `json:"plugins,omitempty"` // plugins installed here
 }
 
 // usableMemory is how much memory a model can use on this computer.
@@ -273,6 +274,7 @@ func (a *App) profile() DeviceProfile {
 		Accel:        accel,
 		Tools:        a.tools.List(),
 		CanTest:      canSandbox(),
+		Plugins:      a.tools.PluginInfos(),
 	}
 	if sys.OS == "" {
 		p.Accel = "Checking…"

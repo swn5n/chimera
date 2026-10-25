@@ -1,0 +1,50 @@
+{
+  "chimera_plugin": 1,
+  "id": "demo-shadow-b",
+  "name": "Drop shadow lite",
+  "version": "1.0.0",
+  "summary": "A plain drop shadow under a cut-out.",
+  "when_to_use": "",
+  "tags": [
+    "shadow"
+  ],
+  "accepts": [
+    "image/png"
+  ],
+  "produces": [
+    "image/png"
+  ],
+  "entry": "run.py",
+  "interpreter": "python3",
+  "env": [
+    "IT_SECRET_FILE",
+    "DEMO_READ"
+  ],
+  "timeout_s": 120,
+  "options": {
+    "type": "object",
+    "properties": {
+      "style": {
+        "type": "string",
+        "enum": [
+          "soft",
+          "left",
+          "right"
+        ],
+        "description": "where the light comes from"
+      },
+      "darkness": {
+        "type": "number",
+        "minimum": 0.1,
+        "maximum": 1,
+        "description": "how dark the shadow is"
+      },
+      "delay_s": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 60,
+        "description": "wait this long first (testing)"
+      }
+    }
+  }
+}

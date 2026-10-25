@@ -41,7 +41,10 @@ type Config struct {
 	RunTests               bool     `json:"run_tests"` // test-run library scripts here (host's devices only)
 	AutoHelp               bool     `json:"auto_help"` // let my devices auto-connect to help my long tasks
 	AutoHelpInit           bool     `json:"auto_help_init"`
-	AutoJoin               bool     `json:"auto_join"` // when hosting, let devices on this Wi-Fi join without a code
+	AutoJoin               bool     `json:"auto_join"`         // when hosting, let devices on this Wi-Fi join without a code
+	LendPlugins            bool     `json:"lend_plugins"`      // let the network run the plugins installed here
+	UnsandboxedHeads       bool     `json:"unsandboxed_heads"` // Windows: run Heads with no sandbox (owner's explicit choice)
+	PluginsInit            bool     `json:"plugins_init"`
 	DefaultsApplied        bool     `json:"defaults_applied"`
 	SetupDone              bool     `json:"setup_done"`
 }
@@ -80,6 +83,10 @@ func loadConfig(dir string) Config {
 	}
 	if c.HostPort == 0 {
 		c.HostPort = defaultHubPort
+	}
+	if !c.PluginsInit { // lending plugins is on by default, like lending models
+		c.LendPlugins = true
+		c.PluginsInit = true
 	}
 	if !c.AutoHelpInit { // default on, once, for new and existing installs
 		c.AutoHelp = true

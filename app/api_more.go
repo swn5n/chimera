@@ -224,13 +224,19 @@ func (a *App) sendFeedback(sessionID string, idx int) (queued, sent bool, err er
 	if m.Task != nil && m.Task.Kind != "" {
 		kind = m.Task.Kind
 	}
+	if m.Plugin != "" {
+		kind = "plugin"
+		if m.StepID == "" { // ran on this computer, not through the network: nothing to count there
+			return false, false, nil
+		}
+	}
 	c, err := a.node.client()
 	if err != nil {
 		return false, false, err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	queued, err = c.Feedback(ctx, feedbackReq{Rating: m.Rating, Note: m.RatingNote, Prompt: prompt, Response: m.Content, Model: m.Model, Kind: kind})
+	queued, err = c.Feedback(ctx, feedbackReq{Rating: m.Rating, Note: m.RatingNote, Prompt: prompt, Response: m.Content, Model: m.Model, Kind: kind, Plugin: m.Plugin, StepID: m.StepID})
 	if err != nil {
 		log.Printf("sending a rating: %v", err)
 		return false, false, errors.New(friendlyNetErr(err, "the hub"))

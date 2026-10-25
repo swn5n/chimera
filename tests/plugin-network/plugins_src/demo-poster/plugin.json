@@ -1,0 +1,24 @@
+{
+  "chimera_plugin": 1,
+  "id": "demo-poster",
+  "name": "Demo poster maker",
+  "version": "1.0.0",
+  "summary": "Makes a simple poster picture from words: a coloured card with the requested colour.",
+  "when_to_use": "Someone asks to make, generate or draw a poster, card or picture from a description.",
+  "when_not_to_use": "Questions about posters, or anything that wants text back.",
+  "tags": ["poster", "generate", "image", "picture", "draw", "card"],
+  "accepts": [],
+  "produces": ["image/png"],
+  "entry": "run.py",
+  "interpreter": "python3",
+  "network": "localhost",
+  "env": ["DEMO_LOCAL_PORT"],
+  "timeout_s": 120,
+  "options": {
+    "type": "object",
+    "properties": {
+      "colour": {"type": "string", "enum": ["red", "green", "blue", "grey"], "description": "the card's colour"},
+      "size_px": {"type": "integer", "minimum": 16, "maximum": 512, "description": "width and height in pixels"}
+    }
+  }
+}

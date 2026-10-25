@@ -5,8 +5,11 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
+	"fmt"
 	"log"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -30,6 +33,12 @@ type genEvent struct {
 	Credits      float64 `json:"credits,omitempty"`
 	Free         bool    `json:"free,omitempty"`
 	Local        bool    `json:"local,omitempty"`
+	// Plugin replies: which plugin, how far along it is, and the files it made.
+	Plugin   string       `json:"plugin,omitempty"`
+	Fraction float64      `json:"fraction,omitempty"`
+	File     *SessionFile `json:"file,omitempty"`
+
+	raw *StepFile // a file as it came from the hub, before it's saved with the chat
 }
 
 type generation struct {
@@ -46,6 +55,12 @@ type generation struct {
 	stepID    string
 	cancelFn  func()
 	cancelled bool
+
+	plugin     string // the plugin making this reply, if any
+	pluginName string
+	statusMsg  string // what the plugin is doing now
+	fraction   float64
+	files      []SessionFile // what it made
 }
 
 type GenManager struct {
@@ -65,18 +80,55 @@ func (g *GenManager) Get(id string) *generation {
 }
 
 type chatReq struct {
-	SessionID string `json:"session_id"`
-	Message   string `json:"message"`
-	Model     string `json:"model"`
-	Target    string `json:"target"`
-	Private   bool   `json:"private"`
+	SessionID string      `json:"session_id"`
+	Message   string      `json:"message"`
+	Model     string      `json:"model"`
+	Target    string      `json:"target"`
+	Private   bool        `json:"private"`
+	Images    []chatImage `json:"images,omitempty"` // a picture for a plugin to work on
+}
+
+type chatImage struct {
+	Name string `json:"name"`
+	Data string `json:"data"` // base64
+}
+
+const chatImageMax = 25 << 20
+
+// decodeChatImage checks a picture sent with a message.
+func decodeChatImage(img chatImage) ([]byte, string, error) {
+	data, err := base64.StdEncoding.DecodeString(img.Data)
+	if err != nil {
+		return nil, "", errors.New("that picture didn't arrive in one piece")
+	}
+	if len(data) > chatImageMax {
+		return nil, "", fmt.Errorf("pictures can be up to %d MB", chatImageMax>>20)
+	}
+	mime := http.DetectContentType(data)
+	switch mime {
+	case "image/png", "image/jpeg", "image/webp":
+	default:
+		return nil, "", errors.New("send a PNG, JPEG or WebP picture")
+	}
+	return data, mime, nil
 }
 
 // Start adds the message to the chat and begins writing a reply.
 func (g *GenManager) Start(req chatReq) (*generation, error) {
 	text := strings.TrimSpace(req.Message)
-	if text == "" {
+	if text == "" && len(req.Images) == 0 {
 		return nil, errors.New("type a message first")
+	}
+	if len(req.Images) > 1 {
+		return nil, errors.New("send one picture at a time for now")
+	}
+	var imgData []byte
+	var imgMIME string
+	if len(req.Images) == 1 {
+		var err error
+		if imgData, imgMIME, err = decodeChatImage(req.Images[0]); err != nil {
+			return nil, err
+		}
 	}
 	store := g.app.sessions
 	var sess *Session
@@ -96,12 +148,25 @@ func (g *GenManager) Start(req chatReq) (*generation, error) {
 	gen := &generation{id: randomID(6), sessionID: sess.ID, status: "running", subs: map[chan genEvent]struct{}{}}
 	if len(sess.Messages) == 0 || sess.Title == "New chat" {
 		sess.Title = titleFrom(text)
+		if text == "" && len(req.Images) == 1 {
+			sess.Title = titleFrom(req.Images[0].Name)
+		}
 	}
 	now := time.Now()
 	history := buildHistory(sess.Messages)
 	history = append(history, ChatMessage{Role: "user", Content: text})
+	user := SessionMessage{Role: "user", Content: text, At: now}
+	var img *SessionFile
+	if imgData != nil {
+		f, err := store.SaveFile(sess.ID, req.Images[0].Name, imgMIME, imgData)
+		if err != nil {
+			return nil, err
+		}
+		user.Files = []SessionFile{f}
+		img = &f
+	}
 	sess.Messages = append(sess.Messages,
-		SessionMessage{Role: "user", Content: text, At: now},
+		user,
 		SessionMessage{Role: "assistant", At: now, Status: "pending", GenID: gen.id, Model: req.Model},
 	)
 	if err := store.Save(sess); err != nil {
@@ -110,7 +175,14 @@ func (g *GenManager) Start(req chatReq) (*generation, error) {
 	g.mu.Lock()
 	g.gens[gen.id] = gen
 	g.mu.Unlock()
-	go g.run(gen, req, history)
+	switch {
+	case img != nil:
+		go g.runPlugin(gen, req, text, img, imgData, nil)
+	case req.Model == "": // "Best available": a Head may be the best available
+		go g.runWordsOrHead(gen, req, text, history)
+	default:
+		go g.run(gen, req, history)
+	}
 	return gen, nil
 }
 
@@ -149,6 +221,15 @@ func (gen *generation) emit(ev genEvent) {
 		gen.content.Reset()
 		gen.thinking.Reset()
 		gen.meta = genEvent{}
+		gen.statusMsg, gen.fraction = "", 0
+	case "plugin":
+		gen.plugin, gen.pluginName = ev.Plugin, ev.Model
+	case "status":
+		gen.statusMsg, gen.fraction = ev.Reason, ev.Fraction
+	case "file":
+		if ev.File != nil {
+			gen.files = append(gen.files, *ev.File)
+		}
 	case "done", "error", "cancelled":
 		e := ev
 		gen.final = &e
@@ -176,11 +257,20 @@ func (gen *generation) Subscribe() ([]genEvent, chan genEvent) {
 	gen.mu.Lock()
 	defer gen.mu.Unlock()
 	replay := []genEvent{{Type: "started", GenID: gen.id, SessionID: gen.sessionID}}
+	if gen.plugin != "" {
+		replay = append(replay, genEvent{Type: "plugin", GenID: gen.id, Plugin: gen.plugin, Model: gen.pluginName})
+	}
 	if gen.note != "" {
 		replay = append(replay, genEvent{Type: "note", GenID: gen.id, Reason: gen.note})
 	}
 	if gen.meta.Type != "" {
 		replay = append(replay, gen.meta)
+	}
+	if gen.statusMsg != "" && gen.final == nil {
+		replay = append(replay, genEvent{Type: "status", GenID: gen.id, Reason: gen.statusMsg, Fraction: gen.fraction})
+	}
+	for i := range gen.files {
+		replay = append(replay, genEvent{Type: "file", GenID: gen.id, File: &gen.files[i]})
 	}
 	if gen.content.Len() > 0 || gen.thinking.Len() > 0 {
 		replay = append(replay, genEvent{Type: "delta", GenID: gen.id, Content: gen.content.String(), Thinking: gen.thinking.String()})
@@ -255,6 +345,7 @@ func (g *GenManager) run(gen *generation, req chatReq, history []ChatMessage) {
 func (g *GenManager) saveResult(gen *generation) {
 	gen.mu.Lock()
 	content, thinking, meta, note := gen.content.String(), gen.thinking.String(), gen.meta, gen.note
+	files, plugin, stepID := append([]SessionFile(nil), gen.files...), gen.plugin, gen.stepID
 	final := genEvent{Type: "error", Error: "stopped"}
 	if gen.final != nil {
 		final = *gen.final
@@ -268,6 +359,10 @@ func (g *GenManager) saveResult(gen *generation) {
 			}
 			m.Content = content
 			m.Thinking = thinking
+			m.Files, m.Plugin = files, plugin
+			if plugin != "" {
+				m.StepID = stepID
+			}
 			if meta.Model != "" {
 				m.Model = meta.Model
 			}
@@ -289,4 +384,23 @@ func (g *GenManager) saveResult(gen *generation) {
 		log.Printf("saving chat %s: %v", gen.sessionID, err)
 	}
 	g.app.notify()
+}
+
+// runWordsOrHead answers a message made of words: with a Head when one is the
+// right tool for it (see headForText), otherwise with a model as usual.
+func (g *GenManager) runWordsOrHead(gen *generation, req chatReq, text string, history []ChatMessage) {
+	ctx, cancel := context.WithCancel(context.Background())
+	gen.mu.Lock()
+	gen.cancelFn = cancel
+	gen.mu.Unlock()
+	choice, why := g.app.headForText(ctx, text)
+	cancel()
+	if choice == nil {
+		g.run(gen, req, history)
+		return
+	}
+	if why != "" {
+		gen.emit(genEvent{Type: "note", Reason: why})
+	}
+	g.runPlugin(gen, req, text, nil, nil, choice)
 }

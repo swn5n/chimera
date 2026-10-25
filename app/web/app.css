@@ -364,6 +364,28 @@ input[type="checkbox"]:checked::after { transform: translateX(15px); background:
 .check { display: flex; align-items: center; gap: 8px; color: var(--pewter); font-size: 12.5px; cursor: pointer; }
 .send { margin-left: auto; min-width: 84px; }
 
+/* ---------- pictures and plugins ---------- */
+.composer.drop textarea { border-color: var(--ice); box-shadow: 0 0 0 3px var(--ice-dim); }
+.attachments { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.attachment { display: inline-flex; align-items: center; gap: 8px; padding: 4px 6px 4px 4px; border-radius: var(--r-ctl); background: var(--panel-2); border: 1px solid var(--edge-soft); color: var(--pewter); font-size: 12.5px; max-width: 320px; }
+.attachment img { width: 34px; height: 34px; object-fit: cover; border-radius: 6px; background: var(--well); }
+.attachment span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attachment button { font-size: 16px; line-height: 1; padding: 0 4px; color: var(--lead); }
+.attach { color: var(--pewter); }
+.files { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 10px; white-space: normal; }
+.files figure { margin: 0; max-width: 100%; }
+.files img { display: block; max-width: min(100%, 520px); max-height: 520px; border-radius: 10px; border: 1px solid var(--edge-soft); background: repeating-conic-gradient(#2a2e33 0% 25%, #24282c 0% 50%) 50% / 16px 16px; }
+.files.sent img { max-width: 220px; max-height: 220px; }
+.files figcaption { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 6px; color: var(--lead); font-size: 12px; }
+.file-link { color: var(--ice); }
+.plugin-progress { height: 4px; border-radius: 2px; background: var(--well); overflow: hidden; margin-top: 8px; max-width: 320px; }
+.plugin-progress span { display: block; height: 100%; background: var(--ice); transition: width .4s ease; }
+.entry-head .kind.stars { color: var(--amber); }
+.plugin-list { list-style: none; margin: 8px 0 12px; padding: 0; display: grid; gap: 8px; }
+.plugin-list li { display: flex; gap: 10px; align-items: baseline; }
+.plugin-list .detail { display: block; color: var(--pewter); font-size: 12.5px; }
+.section-title.spaced { margin-top: 22px; }
+
 /* ---------- activity ---------- */
 .ledger { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
 .ledger li {
@@ -697,3 +719,6 @@ input[type="checkbox"]:checked::after { transform: translateX(15px); background:
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* a settings note that warns */
+.fine.warn { color: var(--amber); }

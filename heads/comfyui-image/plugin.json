@@ -1,0 +1,34 @@
+{
+  "chimera_plugin": 1,
+  "id": "comfyui-image",
+  "name": "ComfyUI image generation",
+  "version": "0.1.0",
+  "summary": "Generates a picture from a text description with the Stable Diffusion / SDXL / Flux checkpoint loaded in ComfyUI on this computer.",
+  "when_to_use": "Someone asks to generate, make, draw, render or create an image, picture, illustration, concept art, wallpaper or photo of something from a description.",
+  "when_not_to_use": "Editing a picture they attached, questions about images, or anything that wants words back.",
+  "tags": ["generate", "image", "picture", "draw", "render", "illustration", "concept art", "text to image", "stable diffusion", "sdxl", "flux"],
+  "task_kinds": ["image-generation"],
+
+  "accepts": [],
+  "produces": ["image/png"],
+
+  "entry": "run.py",
+  "interpreter": "python3",
+  "network": "localhost",
+  "env": ["COMFYUI_URL", "COMFYUI_CHECKPOINT"],
+  "timeout_s": 1800,
+
+  "options": {
+    "type": "object",
+    "properties": {
+      "negative": {"type": "string", "description": "what to avoid in the picture"},
+      "width": {"type": "integer", "minimum": 256, "maximum": 2048, "description": "width in pixels (multiple of 8)"},
+      "height": {"type": "integer", "minimum": 256, "maximum": 2048, "description": "height in pixels (multiple of 8)"},
+      "steps": {"type": "integer", "minimum": 4, "maximum": 80, "description": "sampling steps; more is slower and finer"},
+      "cfg": {"type": "number", "minimum": 1, "maximum": 15, "description": "how strictly to follow the words"},
+      "seed": {"type": "integer", "minimum": 0, "maximum": 4294967295, "description": "a fixed seed to repeat a result"},
+      "count": {"type": "integer", "minimum": 1, "maximum": 4, "description": "how many pictures"},
+      "checkpoint": {"type": "string", "description": "a specific checkpoint file name ComfyUI has"}
+    }
+  }
+}

@@ -55,6 +55,11 @@ type LibEntry struct {
 	Uses     int        `json:"uses"`
 	Votes    int        `json:"votes"`           // 4 and 5 star ratings that led here
 	Score    float64    `json:"score,omitempty"` // search relevance, 0..1
+	// Plugins (kind "plugin"): which one, and every star rating its results got.
+	Plugin  string `json:"plugin,omitempty"`
+	Version string `json:"version,omitempty"`
+	Stars   int    `json:"stars,omitempty"` // sum of the ratings
+	Rated   int    `json:"rated,omitempty"` // how many ratings
 }
 
 type Feedback struct {
@@ -96,8 +101,10 @@ type library struct {
 	Entries  map[string]*LibEntry `json:"entries"`
 	Feedback []*Feedback          `json:"feedback"`
 	Jobs     []*libJob            `json:"jobs"`
-	dirty    bool
-	lastIdle time.Time
+	// Finished plugin steps that can still be rated, once each, by whoever asked for them.
+	PluginRuns map[string]*pluginRun `json:"plugin_runs,omitempty"`
+	dirty      bool
+	lastIdle   time.Time
 }
 
 func loadLibrary(path string) *library {
@@ -107,6 +114,9 @@ func loadLibrary(path string) *library {
 	}
 	if l.Entries == nil {
 		l.Entries = map[string]*LibEntry{}
+	}
+	if l.PluginRuns == nil {
+		l.PluginRuns = map[string]*pluginRun{}
 	}
 	for _, j := range l.Jobs { // steps don't survive a restart
 		j.StepID = ""
@@ -336,6 +346,8 @@ func normalizeKind(kind, language, content string) string {
 	kind = strings.ToLower(strings.TrimSpace(kind))
 	switch kind {
 	case "snippet", "blender", "lesson", "prompt":
+	case "plugin":
+		kind = "lesson" // plugin entries are made by the hub from installed plugins, never added by hand
 	case "code", "script":
 		kind = "snippet"
 	default:
@@ -404,7 +416,11 @@ func (h *Hub) handleLibReview(w http.ResponseWriter, r *http.Request, d *hubDevi
 		return
 	case "recheck":
 		e.Status, e.Flag, e.Waiting = "unverified", "", ""
-		h.queueJobLocked(&libJob{Kind: "review", EntryID: e.ID})
+		if e.Kind == "plugin" { // a plugin proves itself by running for someone, not by review
+			e.Waiting = "its next run for someone"
+		} else {
+			h.queueJobLocked(&libJob{Kind: "review", EntryID: e.ID})
+		}
 	default:
 		writeErr(w, 400, "unknown action")
 		return
@@ -431,6 +447,8 @@ type feedbackReq struct {
 	Response string `json:"response"`
 	Model    string `json:"model"`
 	Kind     string `json:"kind"`
+	Plugin   string `json:"plugin,omitempty"`  // the reply came from this plugin: rate the plugin
+	StepID   string `json:"step_id,omitempty"` // the plugin step it rates (one rating per step)
 }
 
 func truncate(s string, n int) string {
@@ -455,7 +473,24 @@ func (h *Hub) handleFeedback(w http.ResponseWriter, r *http.Request, d *hubDevic
 		Note: truncate(strings.TrimSpace(req.Note), 2000), Prompt: truncate(req.Prompt, 8000), Response: truncate(req.Response, 12000),
 		Model: req.Model, Kind: req.Kind, Status: "skipped"}
 	queued := false
-	if req.Rating >= 4 && strings.TrimSpace(req.Response) != "" {
+	if req.Plugin != "" {
+		// A plugin's result: the stars go to the plugin, which is how the network
+		// picks between plugins that could all do a job. Nothing to curate.
+		// Only a run this person asked for counts, once: ratings decide which plugin the network
+		// picks, so they can't be posted for plugins someone never used.
+		fb.Status = "plugin_ignored"
+		if run := h.lib.PluginRuns[req.StepID]; req.StepID != "" && run != nil && run.Plugin == req.Plugin && sameOwner(run.Owner, d.Owner) {
+			delete(h.lib.PluginRuns, req.StepID)
+			fb.Status = "plugin"
+			fb.EntryID = h.ratePluginLocked(req.Plugin, req.Rating)
+			if req.Rating >= 4 && run.Worker != "" && !sameOwner(run.Worker, d.Owner) {
+				// Someone else found the Head's result good: its owner earns a star bonus, minted by the network.
+				h.st.Balances[ownerKey(run.Worker)] += pluginStarBonus
+				h.addTxLocked(LedgerTx{At: time.Now(), From: "network", To: run.Worker, Amount: pluginStarBonus,
+					Note: fmt.Sprintf("Head star bonus: %s rated %d★", req.Plugin, req.Rating), StepID: req.StepID})
+			}
+		}
+	} else if req.Rating >= 4 && strings.TrimSpace(req.Response) != "" {
 		fb.Status = "queued"
 		h.queueJobLocked(&libJob{Kind: "curate", FeedbackID: fb.ID})
 		queued = true
@@ -587,6 +622,9 @@ func (h *Hub) libraryTickLocked(now time.Time) {
 	}
 	var pick *LibEntry
 	for _, e := range h.lib.Entries {
+		if e.Kind == "plugin" { // checked by running them for people, not by review
+			continue
+		}
 		due := false
 		switch e.Status {
 		case "unverified":

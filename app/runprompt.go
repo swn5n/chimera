@@ -130,7 +130,7 @@ func (a *App) followStep(ctx context.Context, c *HubClient, id string, emit func
 		lastErr = c.Events(context.WithoutCancel(ctx), id, func(ev hubEvent) bool {
 			ge := genEvent{Type: ev.Type, Content: ev.Content, Thinking: ev.Thinking, Device: ev.Device,
 				DeviceName: ev.DeviceName, Owner: ev.Owner, Model: ev.Model, Reason: ev.Reason, Error: ev.Error,
-				Credits: ev.Credits, Free: ev.Free}
+				Credits: ev.Credits, Free: ev.Free, Fraction: ev.Fraction, raw: ev.File}
 			if ev.Stats != nil {
 				ge.Tokens, ge.PromptTokens, ge.TokPerSec = ev.Stats.EvalCount, ev.Stats.PromptEvalCount, ev.Stats.TokPerSec()
 			}

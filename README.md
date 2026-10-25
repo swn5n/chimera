@@ -1,6 +1,23 @@
-# Chimera 0.4.1
+# Chimera 0.6
 
-Share idle GPUs with friends through Ollama, SheepIt style. One person hosts the pool; everyone else's Chimera finds it and joins on its own — on the same Wi-Fi automatically, and across the internet once you point it at the host's address. Press Connect to lend your GPU: prompts from the pool run on your models, and you earn credits for the work.
+Share idle GPUs — and the tools on them — with friends through Ollama, SheepIt style. One person hosts the pool; everyone else's Chimera finds it and joins on its own — on the same Wi-Fi automatically, and across the internet once you point it at the host's address. Press Connect to lend your GPU: prompts from the pool run on your models, and you earn credits for the work.
+
+## New in 0.6
+
+- **Heads: your tools, callable by the whole pool.** Chimera has many heads. A *Head* is a tool installed on one computer — Perspective's studio shadows on the laptop, image generation in ComfyUI on the Nvidia PC, Hunyuan3D meshes on the Studio — that anyone in the pool can use without installing anything. Ask in Chat the way you'd ask a person: attach a picture and say *"put this on white with a soft studio shadow"*, or just type *"generate an image of a red pickup on a dirt road"* or attach a chair and ask for *"a 3D model of this"*. Chimera prefers a Head over an AI model when a Head does that job, because a real render beats a model's guess. Results come back into your chat with a Save link (meshes download as GLB; open them in Blender with File → Import → glTF).
+  - **Words alone work now.** Before, a tool was only considered when a picture was attached. Now a request in plain words goes to a Head when it's clearly asking for what that Head makes — the pool's fastest model double-checks, so *"how does image generation work?"* stays a conversation and *"generate an image of…"* becomes one. Picking a specific model in the composer always uses that model.
+  - **Ratings decide, and Heads earn.** When several Heads could do a job, the best-rated one is picked — so rate results. The Head's owner earns **bonus credits** every time their Head does a job for someone else (half the run's charge again, at least 0.1), **plus 1 credit** each time someone else rates the result 4 or 5 stars. That's the reward for bridging a gap with a real tool instead of a model.
+  - **Heads that wrap a local server** (ComfyUI, a 3D model server) can reach it from inside the sandbox when they say so; the internet stays blocked on a Mac.
+  - **Ready to install:** the `heads/` folder next to the app has `comfyui-image` (text → picture, any checkpoint you have; your own exported workflow for Flux), `hunyuan3d-mesh` (picture → GLB), a `TEMPLATE` to copy, and `heads/README.md` on how to write one. These two were tested against fake servers that speak the real API, not yet against real ComfyUI/Hunyuan3D — tell me what trips. `perspective-shadow` lives on the laptop (see its handoff).
+- **Quit really quits, and opening Chimera again brings the window back (Mac).** Chimera lives in the background with no Dock icon; closing its window never quit it. On a Mac, double-clicking the app while it was running did *nothing* — macOS won't start a second copy and the running one couldn't hear the "show yourself" signal — which looked like "it says it's already running" with no way back in. Now opening Chimera again always brings the window back, and **Settings → Quit Chimera** ends it for real (it did before too; the confusing part was the reopen).
+- **Bigger model list.** More curated models in **Models** — small fast ones, coders for 16 GB cards, vision, reasoning, big ones for 48–96 GB — and a note on what an Nvidia/CUDA PC adds. Picture and 3D generation aren't Ollama models; they're Heads (above).
+
+## New in 0.5 (built on the laptop, merged here)
+
+- **Plugins: tools the network can call.** Install one on your computer (Settings → Heads → Open heads folder, then drop its folder in) and anyone in the pool can use it: attach a picture in Chat (**+ Picture**, or paste or drop it), say what you want, and the result comes back into your chat with a Save link. The first one is **Perspective studio shadow**: send a picture of a machine and get it back on white with a realistic shadow, rendered in Blender on the computer that has Perspective.
+- **Ratings pick the plugin.** If several could do a job, Chimera uses the best-rated one. Rate the result and your stars count toward it.
+- **Plugins run sandboxed.** No network, your home folder and Chimera's own data hidden except the plugin's own folders, writes only to a throwaway folder (on Linux, install bubblewrap for that). Turn lending them off under Settings → Heads.
+- Chimera now uses the newest Blender on a Mac with more than one installed.
 
 ## New in 0.4.1
 
@@ -45,7 +62,7 @@ Everyone in a pool should run the same version. Device cards show a warning next
   - **Firewall on?** macOS's firewall is off by default, but if you turned it on (System Settings → Network → Firewall), click Allow when it asks whether Chimera can accept incoming connections, or add Chimera under Options. With "Block all incoming connections" on, nobody can reach your hub.
   - Still says "damaged"? In Terminal: `xattr -dr com.apple.quarantine /Applications/Chimera.app` (use the folder you put it in), then open it again.
 - **Windows:** SmartScreen may say "Windows protected your PC". Click More info, then Run anyway. The host computer may also get a firewall prompt; allow it on private networks.
-- Chimera runs in the background with no Dock icon. Its window opens in Chrome or Edge as an app window if one is installed, otherwise in your browser. Open Chimera again to bring the window back, and quit from Settings.
+- Chimera runs in the background with no Dock icon. Its window opens in Chrome or Edge as an app window if one is installed, otherwise in your browser. **Closing the window doesn't quit Chimera** — it keeps lending. Open Chimera again (double-click the app, or click its Dock icon if you added one) to bring the window back. To really stop it: **Settings → Quit Chimera**. (Disconnect only stops lending; with a step running it offers to finish it first.)
 
 ## First test: your two Macs
 
@@ -92,7 +109,11 @@ Never port-forward 7480 straight from your router: that exposes the hub with no 
 - Long tasks only reuse entries that passed the checks, so a new entry can't slip instructions to the AI workers.
 - Test-run output is only shown on the host.
 
-## Not in 0.4 yet
+## Not in 0.6 yet
+
+- **A real sandbox for Heads on Windows.** Macs and Linux run Heads sandboxed. Windows has no sandbox Chimera trusts, so Heads are off there by default — but you can switch them on under Settings → Heads → **Run Heads without a sandbox on this computer**. That's how the Nvidia PC hosts ComfyUI for the pool today: the Head runs with your normal permissions, so only install Heads you trust. (Head code is always installed by hand; the pool only sends it pictures and words.)
+- **One picture per message; long tasks don't call Heads yet; no video/audio player inline** (those files download).
+- The reference Heads haven't met a real ComfyUI / Hunyuan3D yet.
 
 - **Privacy.** The pool is open and unencrypted: the host can see prompts, and anyone you let in can too. Fine for friends; not for anything sensitive. Encrypting traffic and hiding prompts from the host is a later job.
 - The window is still a web app (in a Chrome/Edge window, or the Dock app once you install it). A fully native Mac window would need a separate build on the Mac — say the word if you want it.

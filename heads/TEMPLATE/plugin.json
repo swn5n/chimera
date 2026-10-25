@@ -1,0 +1,29 @@
+{
+  "chimera_plugin": 1,
+  "id": "my-head",
+  "name": "My Head",
+  "version": "0.1.0",
+  "summary": "One sentence: what it makes or does. This and the name are matched against what people ask for.",
+  "when_to_use": "Concrete cases, in the words people would use. The pool's fastest model reads this to decide whether to hand a request to this Head.",
+  "when_not_to_use": "Shown in the Library as 'Not for: …'.",
+  "tags": ["keyword", "another", "verb-people-use"],
+  "task_kinds": [],
+
+  "accepts": ["image/png", "image/jpeg", "image/webp"],
+  "optional_input": false,
+  "produces": ["image/png"],
+
+  "entry": "run.py",
+  "interpreter": "python3",
+  "network": "",
+  "env": [],
+  "timeout_s": 1800,
+
+  "options": {
+    "type": "object",
+    "properties": {
+      "strength": {"type": "number", "minimum": 0, "maximum": 1, "description": "an example numeric option"},
+      "style": {"type": "string", "enum": ["a", "b"], "description": "an example choice"}
+    }
+  }
+}

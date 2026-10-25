@@ -192,8 +192,11 @@
           </div>
         </div>
         <form class="composer" id="composer" autocomplete="off">
+          <div class="attachments" id="attachments" hidden></div>
           <textarea id="prompt" rows="1" placeholder="Ask something…" spellcheck="true"></textarea>
           <div class="composer-row">
+            <button class="btn small quiet attach" type="button" id="btn-attach" title="Add a picture for a Head to work on (you can also paste or drop one)">+ Picture</button>
+            <input type="file" id="file-attach" accept="image/png,image/jpeg,image/webp" hidden>
             <label class="sel"><span>Model</span><select id="sel-model"></select></label>
             <label class="sel"><span>Run on</span><select id="sel-device"></select></label>
             <label class="check"><input type="checkbox" id="chk-private"><span>Only my devices</span></label>

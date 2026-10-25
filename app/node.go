@@ -8,6 +8,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"strings"
 	"sync"
@@ -151,6 +152,7 @@ func (n *Node) heartbeat() {
 		OllamaVersion: ost.Version,
 		AppVersion:    Version,
 		RunTests:      cfg.RunTests && canSandbox(),
+		LendPlugins:   cfg.LendPlugins,
 	}
 	n.mu.Unlock()
 	hb.Models = n.sharedModels()
@@ -497,10 +499,13 @@ func (n *Node) runStep(c *HubClient, a *Assignment) {
 	if a.Kind == "run_python" || a.Kind == "run_blender" {
 		label = "a library test run"
 	}
+	if a.Kind == "run_plugin" {
+		label = "the " + a.Plugin + " plugin"
+	}
 	rs := &runningStep{ID: a.StepID, Model: label, Purpose: a.Purpose, Requester: a.Requester, RequesterDevice: a.RequesterDevice, Started: time.Now(), cancel: cancel}
 	n.mu.Lock()
 	n.running[a.StepID] = rs
-	if a.Model != "" {
+	if a.Model != "" && (a.Kind == "" || a.Kind == "chat") {
 		n.usedModels[normModel(a.Model)] = true
 	}
 	n.mu.Unlock()
@@ -542,6 +547,11 @@ func (n *Node) runStep(c *HubClient, a *Assignment) {
 				return false
 			}
 			return cancelReq
+		}
+
+		if a.Kind == "run_plugin" {
+			n.runPluginStep(ctx, cancel, c, a, rs)
+			return
 		}
 
 		if a.Kind == "run_python" || a.Kind == "run_blender" {
@@ -650,6 +660,91 @@ func (n *Node) runStep(c *HubClient, a *Assignment) {
 			_ = c.Fail(fctx, a.StepID, failReq{Error: n.app.config().DeviceName + ": " + err.Error(), Retryable: true})
 		}
 	}()
+}
+
+// runPluginStep runs a plugin for someone in the network: its progress goes
+// back as status lines (every few seconds even when it says nothing, so the hub
+// never thinks it stalled), and what it made goes back as files.
+func (n *Node) runPluginStep(ctx context.Context, cancel context.CancelFunc, c *HubClient, a *Assignment, rs *runningStep) {
+	var smu sync.Mutex
+	status, frac, dirty := "Starting the "+a.Plugin+" plugin", 0.0, true
+	post := func() {
+		smu.Lock()
+		msg, f := status, frac
+		dirty = false
+		smu.Unlock()
+		pctx, pc := context.WithTimeout(context.Background(), 8*time.Second)
+		defer pc()
+		if stop, err := c.Status(pctx, a.StepID, msg, f); err == nil && stop {
+			n.mu.Lock()
+			rs.stopReason = "requester"
+			n.mu.Unlock()
+			cancel()
+		}
+	}
+	stop := make(chan struct{})
+	ticker := make(chan struct{})
+	go func() {
+		defer close(ticker)
+		last := time.Time{}
+		tk := time.NewTicker(time.Second)
+		defer tk.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-tk.C:
+			}
+			smu.Lock()
+			d := dirty
+			smu.Unlock()
+			if (d && time.Since(last) > time.Second) || time.Since(last) > 5*time.Second {
+				last = time.Now()
+				post()
+			}
+		}
+	}()
+	res := n.app.runPlugin(ctx, a.StepID, a.Plugin, a.Input, func(msg string, f float64) {
+		smu.Lock()
+		if msg != "" {
+			status = msg
+		}
+		if f >= 0 {
+			frac = f
+		}
+		dirty = true
+		smu.Unlock()
+	})
+	close(stop)
+	<-ticker
+
+	n.mu.Lock()
+	reason := rs.stopReason
+	n.mu.Unlock()
+	fctx, fc := context.WithTimeout(context.Background(), 60*time.Second)
+	defer fc()
+	switch {
+	case res.OK:
+		if res.Summary == "" {
+			res.Summary = fmt.Sprintf("The %s plugin made %s.", a.Plugin, plural(len(res.Files), "file"))
+		}
+		pctx, pc := context.WithTimeout(context.Background(), 8*time.Second)
+		_, _ = c.Progress(pctx, a.StepID, res.Summary, "")
+		pc()
+		stats := ChatStats{TotalDuration: int64(res.Seconds * 1e9)}
+		if err := c.CompleteWithFiles(fctx, a.StepID, stats, res.Files); err != nil {
+			log.Printf("step %s: reporting the plugin's result: %v", a.StepID, err)
+			return
+		}
+		log.Printf("Finished the %s plugin for %s in %.0fs (%d file(s))", a.Plugin, a.Requester, res.Seconds, len(res.Files))
+	case reason == "requester" || res.Cancelled && reason != "disconnect":
+		_ = c.Fail(fctx, a.StepID, failReq{Error: "cancelled", Cancelled: true})
+	case reason == "disconnect":
+		_ = c.Fail(fctx, a.StepID, failReq{Error: n.app.config().DeviceName + " disconnected", Retryable: true})
+	default:
+		log.Printf("step %s: the %s plugin failed: %s", a.StepID, a.Plugin, res.Error)
+		_ = c.Fail(fctx, a.StepID, failReq{Error: res.Error, Retryable: res.Retryable})
+	}
 }
 
 // ---------- state for the interface ----------

@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"net"
 	"net/http"
 	"os"
@@ -52,18 +53,19 @@ type hubDevice struct {
 	// reviews the library and only it may test-run library scripts.
 	Local bool `json:"local"`
 
-	lastSeen  time.Time
-	online    bool
-	lending   bool
-	draining  bool
-	slots     int
-	ollamaOK  bool
-	ollamaVer string
-	models    []ModelInfo
-	appVer    string
-	profile   DeviceProfile
-	runTests  bool
-	lastWork  time.Time
+	lastSeen    time.Time
+	online      bool
+	lending     bool
+	draining    bool
+	slots       int
+	ollamaOK    bool
+	ollamaVer   string
+	models      []ModelInfo
+	appVer      string
+	profile     DeviceProfile
+	runTests    bool
+	lendPlugins bool // its owner lets the network run its plugins
+	lastWork    time.Time
 }
 
 func (d *hubDevice) hasTool(id string) bool {
@@ -73,6 +75,16 @@ func (d *hubDevice) hasTool(id string) bool {
 		}
 	}
 	return false
+}
+
+// plugin returns what the device says about one of its plugins.
+func (d *hubDevice) plugin(id string) (PluginInfo, bool) {
+	for _, p := range d.profile.Plugins {
+		if p.ID == id {
+			return p, p.Have
+		}
+	}
+	return PluginInfo{}, false
 }
 
 type LedgerTx struct {
@@ -138,6 +150,8 @@ type hubEvent struct {
 	Credits    float64    `json:"credits,omitempty"`
 	Free       bool       `json:"free,omitempty"`
 	Position   int        `json:"position,omitempty"`
+	Fraction   float64    `json:"fraction,omitempty"` // status: how far a plugin step is, 0..1
+	File       *StepFile  `json:"file,omitempty"`     // file: something a plugin step made
 }
 
 type hubStep struct {
@@ -155,8 +169,13 @@ type hubStep struct {
 	NeedCaps       []string // e.g. vision
 	NeedCtx        int      // tokens of context the step needs
 	Format         json.RawMessage
-	Kind           string // chat (default), run_python, run_blender
+	Kind           string // chat (default), run_python, run_blender, run_plugin
 	Script         string
+	Plugin         string          // run_plugin: which plugin
+	Input          json.RawMessage // run_plugin: its input
+	Files          []StepFile      // run_plugin: what it made
+	StatusMsg      string          // run_plugin: what it's doing now
+	Fraction       float64
 	Purpose        string // shown to the worker
 	Internal       bool   // made by the hub itself (library jobs); free
 	HostOnly       bool   // only the hosting computer may run it (library review)
@@ -417,6 +436,7 @@ func (h *Hub) routes() http.Handler {
 	mux.HandleFunc("POST /v1/steps/{id}/complete", h.auth(h.handleComplete))
 	mux.HandleFunc("POST /v1/steps/{id}/fail", h.auth(h.handleFail))
 	mux.HandleFunc("POST /v1/admin/settings", h.auth(h.handleAdminSettings))
+	mux.HandleFunc("GET /v1/plugins", h.auth(h.handlePlugins))
 	h.libraryRoutes(mux)
 	return mux
 }
@@ -575,6 +595,7 @@ type heartbeatReq struct {
 	Info          *SysInfo      `json:"info,omitempty"`
 	Profile       DeviceProfile `json:"profile"`
 	RunTests      bool          `json:"run_tests"`
+	LendPlugins   bool          `json:"lend_plugins"`
 	AppVersion    string        `json:"app_version"`
 }
 
@@ -600,8 +621,13 @@ func (h *Hub) handleHeartbeat(w http.ResponseWriter, r *http.Request, d *hubDevi
 	d.ollamaVer = hb.OllamaVersion
 	d.models = hb.Models
 	d.appVer = hb.AppVersion
+	if len(hb.Profile.Plugins) > maxPluginsPerDevice {
+		hb.Profile.Plugins = hb.Profile.Plugins[:maxPluginsPerDevice]
+	}
 	d.profile = hb.Profile
 	d.runTests = hb.RunTests
+	d.lendPlugins = hb.LendPlugins
+	h.syncPluginEntriesLocked(d)
 	if hb.Info != nil && hb.Info.OS != "" {
 		d.Info = *hb.Info
 	}
@@ -876,6 +902,30 @@ func (h *Hub) fits(d *hubDevice, st *hubStep) (model string, score float64, ok b
 		return "", 0, false
 	}
 	switch st.Kind {
+	case "run_plugin":
+		// Only devices with the plugin installed, and whose owner lends their
+		// plugins (or that belong to the person asking).
+		pi, ok := d.plugin(st.Plugin)
+		if !ok || !d.hasTool("plugin:"+st.Plugin) {
+			return "", 0, false
+		}
+		own := sameOwner(d.Owner, st.RequesterOwner)
+		if !d.lendPlugins && !own {
+			return "", 0, false
+		}
+		for _, c := range st.NeedCaps {
+			if !contains(pi.Caps, c) {
+				return "", 0, false
+			}
+		}
+		score := 1.0
+		if own {
+			score += 0.5 // free, and the person's own computer
+		}
+		if h.activeLocked(d.ID) == 0 {
+			score += 0.25
+		}
+		return "", score, true
 	case "run_python", "run_blender":
 		// Only the hosting computer, when its owner opted in, ever runs library scripts.
 		if !d.runTests || !h.isAdminLocked(d) {
@@ -1004,11 +1054,18 @@ func (h *Hub) assignLocked(st *hubStep, d *hubDevice, model string) {
 	st.Status = "assigned"
 	st.Assigned = d.ID
 	st.RunModel = model
+	if st.Kind == "run_plugin" {
+		model = st.Plugin + " plugin"
+		if pi, ok := d.plugin(st.Plugin); ok && pi.Name != "" {
+			model = pi.Name
+		}
+		st.RunModel = model
+	}
 	st.Attempts++
 	st.AssignedAt = time.Now()
 	st.LastProgress = time.Now()
 	d.lastWork = time.Now()
-	if !st.Internal && st.Attempts == 1 {
+	if !st.Internal && st.Attempts == 1 && st.Kind != "run_plugin" {
 		h.noteDemandLocked(demandEvent{Model: st.Model, Caps: st.NeedCaps, Wait: time.Since(st.Created).Seconds()})
 	}
 	st.emit(hubEvent{Type: "assigned", Device: d.ID, DeviceName: d.Name, Owner: d.Owner, Model: model})
@@ -1060,6 +1117,8 @@ type Assignment struct {
 	Format          json.RawMessage `json:"format,omitempty"`
 	NumCtx          int             `json:"num_ctx,omitempty"`
 	Script          string          `json:"script,omitempty"`
+	Plugin          string          `json:"plugin,omitempty"`
+	Input           json.RawMessage `json:"input,omitempty"`
 	Purpose         string          `json:"purpose,omitempty"`
 	Requester       string          `json:"requester"`
 	RequesterDevice string          `json:"requester_device"`
@@ -1085,7 +1144,8 @@ func ctxBucket(need, max int) int {
 
 func (h *Hub) assignmentFor(st *hubStep, d *hubDevice) Assignment {
 	a := Assignment{StepID: st.ID, Kind: st.Kind, Model: st.RunModel, Messages: st.Messages, Options: st.Options,
-		Format: st.Format, Script: st.Script, Purpose: st.Purpose, Requester: st.RequesterOwner, RequesterDevice: st.RequesterName}
+		Format: st.Format, Script: st.Script, Plugin: st.Plugin, Input: st.Input, Purpose: st.Purpose,
+		Requester: st.RequesterOwner, RequesterDevice: st.RequesterName}
 	if st.Internal {
 		a.Requester, a.RequesterDevice = "the network", "library"
 	}
@@ -1169,8 +1229,10 @@ func (h *Hub) handleWork(w http.ResponseWriter, r *http.Request, d *hubDevice) {
 }
 
 type progressReq struct {
-	Content  string `json:"content"`
-	Thinking string `json:"thinking"`
+	Content  string  `json:"content"`
+	Thinking string  `json:"thinking"`
+	Status   string  `json:"status,omitempty"`   // a plugin step: what it's doing now
+	Fraction float64 `json:"fraction,omitempty"` // and how far along, 0..1
 }
 
 func (h *Hub) handleProgress(w http.ResponseWriter, r *http.Request, d *hubDevice) {
@@ -1197,16 +1259,21 @@ func (h *Hub) handleProgress(w http.ResponseWriter, r *http.Request, d *hubDevic
 		st.Thinking.WriteString(req.Thinking)
 		st.emit(hubEvent{Type: "delta", Content: req.Content, Thinking: req.Thinking})
 	}
+	if req.Status != "" && (req.Status != st.StatusMsg || req.Fraction != st.Fraction) {
+		st.StatusMsg, st.Fraction = truncate(req.Status, 200), clampFloat(req.Fraction, 0, 1)
+		st.emit(hubEvent{Type: "status", Reason: st.StatusMsg, Fraction: st.Fraction})
+	}
 	writeJSON(w, 200, map[string]bool{"cancel": st.CancelReq})
 }
 
 type completeReq struct {
-	Stats ChatStats `json:"stats"`
+	Stats ChatStats  `json:"stats"`
+	Files []StepFile `json:"files,omitempty"` // what a plugin step made
 }
 
 func (h *Hub) handleComplete(w http.ResponseWriter, r *http.Request, d *hubDevice) {
 	var req completeReq
-	if err := readJSON(r, &req, 1<<20); err != nil {
+	if err := readJSON(r, &req, pluginFilesMax*4/3+(1<<20)); err != nil {
 		writeErr(w, 400, "bad request")
 		return
 	}
@@ -1216,6 +1283,30 @@ func (h *Hub) handleComplete(w http.ResponseWriter, r *http.Request, d *hubDevic
 	if st == nil || st.Assigned != d.ID || (st.Status != "assigned" && st.Status != "running") {
 		writeErr(w, 409, "step isn't assigned to this device")
 		return
+	}
+	if len(req.Files) > 0 {
+		if st.Kind != "run_plugin" {
+			writeErr(w, 400, "only plugin steps return files")
+			return
+		}
+		total := 0
+		for i := range req.Files {
+			f := &req.Files[i]
+			total += len(f.Data)
+			f.Bytes = len(f.Data)
+			f.Name = filepath.Base(strings.ReplaceAll(f.Name, "\\", "/"))
+			if f.Name == "." || f.Name == "/" || f.Name == "" {
+				f.Name = fmt.Sprintf("file-%d", i+1)
+			}
+		}
+		if total > pluginFilesMax {
+			writeErr(w, 413, "files too large")
+			return
+		}
+		st.Files = req.Files
+		for i := range st.Files {
+			st.emit(hubEvent{Type: "file", File: &st.Files[i]})
+		}
 	}
 	st.Stats = req.Stats
 	d.lastWork = time.Now()
@@ -1270,6 +1361,9 @@ type submitReq struct {
 	Format   json.RawMessage `json:"format,omitempty"`
 	Purpose  string          `json:"purpose,omitempty"`
 	TaskWork bool            `json:"task_work,omitempty"` // part of a Hydra long task
+	Kind     string          `json:"kind,omitempty"`      // "" (chat) or run_plugin
+	Plugin   string          `json:"plugin,omitempty"`    // run_plugin: which plugin
+	Input    json.RawMessage `json:"input,omitempty"`     // run_plugin: its input
 }
 
 // usesOthers reports whether a step would run on someone else's device (and so
@@ -1288,12 +1382,29 @@ func (h *Hub) usesOthers(st *hubStep) bool {
 
 func (h *Hub) handleSubmit(w http.ResponseWriter, r *http.Request, d *hubDevice) {
 	var req submitReq
-	if err := readJSON(r, &req, 16<<20); err != nil {
+	if err := readJSON(r, &req, pluginInputMax+(1<<20)); err != nil {
 		writeErr(w, 400, "bad request")
 		return
 	}
-	if len(req.Messages) == 0 {
-		writeErr(w, 400, "nothing to send")
+	switch req.Kind {
+	case "", "chat":
+		req.Kind = ""
+		if len(req.Messages) == 0 {
+			writeErr(w, 400, "nothing to send")
+			return
+		}
+	case "run_plugin":
+		if !pluginIDRe.MatchString(req.Plugin) || len(req.Input) == 0 {
+			writeErr(w, 400, "which plugin, with what input?")
+			return
+		}
+		if len(req.Input) > pluginInputMax {
+			writeErr(w, 413, "That's too large for a plugin.")
+			return
+		}
+		req.Model, req.Messages, req.NeedCtx, req.Format = "", nil, 0, nil
+	default:
+		writeErr(w, 400, "unknown kind of step")
 		return
 	}
 	model := strings.TrimSpace(req.Model)
@@ -1307,21 +1418,27 @@ func (h *Hub) handleSubmit(w http.ResponseWriter, r *http.Request, d *hubDevice)
 		Model: model, Target: req.Target, Private: req.Private,
 		Messages: req.Messages, Options: req.Options, Prefer: req.Prefer, NeedCaps: req.NeedCaps,
 		NeedCtx: req.NeedCtx, Format: req.Format, Purpose: req.Purpose, TaskWork: req.TaskWork,
+		Kind: req.Kind, Plugin: req.Plugin, Input: req.Input,
 		Status: "queued", Created: time.Now(), Exclude: map[string]bool{},
 		subs: map[chan hubEvent]struct{}{},
 	}
+	demand := func(e demandEvent) { // plugin steps aren't demand for models
+		if st.Kind != "run_plugin" {
+			h.noteDemandLocked(e)
+		}
+	}
 	// Out of credits: you can still use your own devices (free), but not others'.
 	if h.usesOthers(st) && h.balanceLocked(d.Owner) < 0 {
-		h.noteDemandLocked(demandEvent{Model: model, Caps: req.NeedCaps, Unmet: true, Wait: -1})
+		demand(demandEvent{Model: model, Caps: req.NeedCaps, Unmet: true, Wait: -1})
 		writeErr(w, 402, "You're out of credits. Lend your GPU to earn more, or switch on \"Only my devices\" to use your own for free.")
 		return
 	}
 	if msg := h.runnableLocked(st); msg != "" {
-		h.noteDemandLocked(demandEvent{Model: model, Caps: req.NeedCaps, Unmet: true, Wait: -1})
+		demand(demandEvent{Model: model, Caps: req.NeedCaps, Unmet: true, Wait: -1})
 		writeErr(w, 409, msg)
 		return
 	}
-	h.noteDemandLocked(demandEvent{Model: model, Caps: req.NeedCaps, Wait: -1})
+	demand(demandEvent{Model: model, Caps: req.NeedCaps, Wait: -1})
 	h.steps[st.ID] = st
 	h.queue = append(h.queue, st)
 	h.dispatchLocked()
@@ -1345,6 +1462,25 @@ func (h *Hub) submitInternalLocked(st *hubStep) bool {
 }
 
 func (h *Hub) runnableLocked(st *hubStep) string {
+	if st.Kind == "run_plugin" {
+		if st.Target != "" {
+			t := h.st.Devices[st.Target]
+			if t == nil || !h.onlineLocked(t) || !t.lending {
+				return "That device isn't lending right now."
+			}
+			if _, _, ok := h.fits(t, st); !ok {
+				return t.Name + " can't run the " + st.Plugin + " plugin."
+			}
+			return ""
+		}
+		if !h.possibleLocked(st) {
+			if st.Private {
+				return "None of your own devices with the " + st.Plugin + " plugin is lending right now."
+			}
+			return "No device with the " + st.Plugin + " plugin is lending right now."
+		}
+		return ""
+	}
 	what := st.Model
 	if what == "" {
 		what = "a model"
@@ -1482,6 +1618,12 @@ func (h *Hub) replayLocked(st *hubStep) []hubEvent {
 	if st.Text.Len() > 0 || st.Thinking.Len() > 0 {
 		out = append(out, hubEvent{Type: "delta", Content: st.Text.String(), Thinking: st.Thinking.String()})
 	}
+	if st.StatusMsg != "" && !isTerminal(st.Status) {
+		out = append(out, hubEvent{Type: "status", Reason: st.StatusMsg, Fraction: st.Fraction})
+	}
+	for i := range st.Files {
+		out = append(out, hubEvent{Type: "file", File: &st.Files[i]})
+	}
 	switch st.Status {
 	case "queued":
 		out = append(out, hubEvent{Type: "queued"})
@@ -1531,6 +1673,7 @@ func (h *Hub) requeueLocked(st *hubStep, reason string, exclude bool) {
 	st.Assigned = ""
 	st.Text.Reset()
 	st.Thinking.Reset()
+	st.StatusMsg, st.Fraction, st.Files = "", 0, nil
 	st.unrunnable = time.Time{}
 	h.queue = append(h.queue, st)
 	st.emit(hubEvent{Type: "requeued", Reason: reason})
@@ -1576,7 +1719,12 @@ func (h *Hub) finishLocked(st *hubStep, worker *hubDevice, status, errMsg string
 	if sum.Model == "" {
 		sum.Model = st.Model
 	}
-	if sum.Model == "" && st.Kind != "" && st.Kind != "chat" {
+	if st.Kind == "run_plugin" {
+		if sum.Model == "" {
+			sum.Model = st.Plugin + " plugin"
+		}
+		h.pluginStepDoneLocked(st, worker, status)
+	} else if sum.Model == "" && st.Kind != "" && st.Kind != "chat" {
 		sum.Model = strings.Replace(st.Kind, "run_", "test run: ", 1)
 	}
 	if worker != nil {
@@ -1605,16 +1753,39 @@ func (h *Hub) chargeLocked(st *hubStep, worker *hubDevice) (float64, bool) {
 		}
 	}
 	credits := round2((float64(st.Stats.EvalCount) + 0.1*float64(st.Stats.PromptEvalCount)) / 1000 * modelWeight(params))
+	note := fmt.Sprintf("%s on %s", st.RunModel, worker.Name)
+	if st.Kind == "run_plugin" {
+		// Plugins are priced by the time they hold the device: 2 credits a minute, never more
+		// than the hub itself saw pass between handing the step out and its end.
+		secs := float64(st.Stats.TotalDuration) / 1e9
+		if wall := time.Since(st.AssignedAt).Seconds(); secs < 0 || secs > wall {
+			secs = wall
+		}
+		credits = round2(secs / 30)
+		note = fmt.Sprintf("%s plugin on %s", st.Plugin, worker.Name)
+	}
 	if sameOwner(worker.Owner, st.RequesterOwner) {
 		return 0, true // your own devices are free
+	}
+	if credits > 0 {
+		h.st.Balances[ownerKey(st.RequesterOwner)] -= credits
+		h.st.Balances[ownerKey(worker.Owner)] += credits
+		h.addTxLocked(LedgerTx{At: time.Now(), From: st.RequesterOwner, To: worker.Owner, Amount: credits,
+			Note: note, StepID: st.ID})
+	}
+	if st.Kind == "run_plugin" {
+		// A Head bridges what models can't do well with a deterministic tool, so its owner
+		// earns extra whenever it runs for someone else: half the time charge again, and never
+		// less than a small flat amount (a tool that finishes in a second still did the job).
+		// The network mints the bonus; the asker pays only the normal charge.
+		bonus := round2(math.Max(pluginBonusMin, credits*pluginBonusShare))
+		h.st.Balances[ownerKey(worker.Owner)] += bonus
+		h.addTxLocked(LedgerTx{At: time.Now(), From: "network", To: worker.Owner, Amount: bonus,
+			Note: "Head bonus: " + st.Plugin, StepID: st.ID})
 	}
 	if credits <= 0 {
 		return 0, false
 	}
-	h.st.Balances[ownerKey(st.RequesterOwner)] -= credits
-	h.st.Balances[ownerKey(worker.Owner)] += credits
-	h.addTxLocked(LedgerTx{At: time.Now(), From: st.RequesterOwner, To: worker.Owner, Amount: credits,
-		Note: fmt.Sprintf("%s on %s", st.RunModel, worker.Name), StepID: st.ID})
 	return credits, false
 }
 

@@ -1,0 +1,23 @@
+{
+  "chimera_plugin": 1,
+  "id": "demo-shadow",
+  "name": "Demo studio shadow",
+  "version": "1.0.0",
+  "summary": "Adds a soft studio shadow under a cut-out picture of a machine.",
+  "when_to_use": "A transparent cut-out that needs a shadow on white.",
+  "tags": ["shadow", "studio", "cutout"],
+  "accepts": ["image/png"],
+  "produces": ["image/png"],
+  "entry": "run.py",
+  "interpreter": "python3",
+  "env": ["IT_SECRET_FILE", "DEMO_READ"],
+  "timeout_s": 120,
+  "options": {
+    "type": "object",
+    "properties": {
+      "style": {"type": "string", "enum": ["soft", "left", "right"], "description": "where the light comes from"},
+      "darkness": {"type": "number", "minimum": 0.1, "maximum": 1, "description": "how dark the shadow is"},
+      "delay_s": {"type": "integer", "minimum": 0, "maximum": 60, "description": "wait this long first (testing)"}
+    }
+  }
+}

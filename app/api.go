@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -185,9 +186,19 @@ func (a *App) routes() http.Handler {
 	a.moreRoutes(mux)
 
 	mux.HandleFunc("POST /api/open-folder", func(w http.ResponseWriter, r *http.Request) {
-		openFolder(a.dataDir)
+		var req struct {
+			Which string `json:"which"`
+		}
+		_ = readJSON(r, &req, 1<<10)
+		dir := a.dataDir
+		if req.Which == "plugins" { // where plugins get installed
+			dir = filepath.Join(a.dataDir, "plugins")
+			_ = os.MkdirAll(dir, 0o755)
+		}
+		openFolder(dir)
 		writeJSON(w, 200, map[string]bool{"ok": true})
 	})
+	a.fileRoutes(mux)
 	mux.HandleFunc("POST /api/quit", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]bool{"ok": true})
 		go func() {
@@ -285,6 +296,8 @@ func (a *App) handleSettings(w http.ResponseWriter, r *http.Request) {
 		AutoHelp               *bool     `json:"auto_help"`
 		AutoJoin               *bool     `json:"auto_join"`
 		PoolAddr               *string   `json:"pool_addr"`
+		LendPlugins            *bool     `json:"lend_plugins"`
+		UnsandboxedHeads       *bool     `json:"unsandboxed_heads"`
 	}
 	if err := readJSON(r, &req, 1<<16); err != nil {
 		writeErr(w, 400, "bad request")
@@ -345,6 +358,12 @@ func (a *App) handleSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		if req.PoolAddr != nil {
 			c.PoolAddr = strings.TrimSpace(*req.PoolAddr)
+		}
+		if req.UnsandboxedHeads != nil {
+			c.UnsandboxedHeads = *req.UnsandboxedHeads
+		}
+		if req.LendPlugins != nil {
+			c.LendPlugins = *req.LendPlugins
 		}
 	})
 	if req.AutoJoin != nil {
@@ -452,7 +471,7 @@ func (a *App) handleGetSession(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) handleChat(w http.ResponseWriter, r *http.Request) {
 	var req chatReq
-	if err := readJSON(r, &req, 4<<20); err != nil {
+	if err := readJSON(r, &req, chatImageMax*4/3+(4<<20)); err != nil {
 		writeErr(w, 400, "bad request")
 		return
 	}
@@ -524,3 +543,30 @@ func openFolder(p string) {
 }
 
 var _ = os.Getenv
+
+// fileRoutes serves the files kept with chats.
+func (a *App) fileRoutes(mux *http.ServeMux) {
+	// Files kept with a chat: pictures sent with a message, or made by a plugin.
+	mux.HandleFunc("GET /api/files/{session}/{file}", func(w http.ResponseWriter, r *http.Request) {
+		p := a.sessions.FilePath(r.PathValue("session"), r.PathValue("file"))
+		data, err := os.ReadFile(p)
+		if p == "" || err != nil {
+			writeErr(w, 404, "no such file")
+			return
+		}
+		// These bytes may come from another computer's plugin: only raster images are shown
+		// inline, anything else downloads, and nothing can run as a page on this origin.
+		mime := http.DetectContentType(data)
+		switch mime {
+		case "image/png", "image/jpeg", "image/webp", "image/gif":
+		default:
+			mime = "application/octet-stream"
+			w.Header().Set("Content-Disposition", "attachment")
+		}
+		w.Header().Set("Content-Type", mime)
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
+		w.Header().Set("Cache-Control", "private, max-age=86400")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		_, _ = w.Write(data)
+	})
+}

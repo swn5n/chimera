@@ -1,0 +1,33 @@
+{
+  "chimera_plugin": 1,
+  "id": "hunyuan3d-mesh",
+  "name": "Hunyuan3D mesh from a picture",
+  "version": "0.1.0",
+  "summary": "Turns one picture of an object into a 3D mesh (GLB) with the Hunyuan3D 2 model server running on this computer; optionally textured.",
+  "when_to_use": "Someone attaches a picture of a single object and asks for a 3D model, mesh, GLB or asset of it — for Blender, a game, printing.",
+  "when_not_to_use": "Pictures of whole scenes or several objects, anything without a picture, or 2D edits like shadows and backgrounds.",
+  "tags": ["3d", "mesh", "model", "glb", "hunyuan3d", "image to 3d", "asset", "blender"],
+  "task_kinds": ["mesh-generation"],
+
+  "accepts": ["image/png", "image/jpeg", "image/webp"],
+  "optional_input": false,
+  "produces": ["model/gltf-binary", "model/obj", "image/png"],
+
+  "entry": "run.py",
+  "interpreter": "python3",
+  "network": "localhost",
+  "env": ["HUNYUAN3D_URL"],
+  "timeout_s": 3600,
+
+  "options": {
+    "type": "object",
+    "properties": {
+      "texture": {"type": "boolean", "description": "also paint a texture (slower; the server must be started with textures on)"},
+      "octree_resolution": {"type": "integer", "minimum": 128, "maximum": 512, "description": "mesh detail; 256 is quick, 384–512 is finer and slower"},
+      "steps": {"type": "integer", "minimum": 5, "maximum": 50, "description": "diffusion steps"},
+      "guidance": {"type": "number", "minimum": 1, "maximum": 15, "description": "how closely to follow the picture"},
+      "seed": {"type": "integer", "minimum": 0, "maximum": 4294967295, "description": "a fixed seed to repeat a result"},
+      "format": {"type": "string", "enum": ["glb", "obj"], "description": "file type of the mesh"}
+    }
+  }
+}

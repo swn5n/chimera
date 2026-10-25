@@ -70,7 +70,7 @@ const FIT = {
   comfortable: { word: "Fits well", led: "ice" },
   tight: { word: "Tight fit", led: "amber" },
   too_big: { word: "Too big", led: "brick" },
-  unsupported: { word: "Mac only", led: "off" },
+  unsupported: { word: "Not on this computer", led: "off" },
   unknown: { word: "Checking…", led: "off" },
 };
 const fitOf = (f) => FIT[f] || FIT.unknown;
@@ -542,7 +542,7 @@ function renderPicks() {
   setHTML(box, (S.catalog.roles || []).map((r) => {
     const c = items.find((x) => x.tag === r.tag);
     if (!c) {
-      const why = r.role === "images" && !isMac ? "Mac only for now. On Windows or Linux, run ComfyUI (see Tools)."
+      const why = r.role === "images" && !isMac ? "Ollama's image models are Mac only for now. On an Nvidia PC, install the comfyui-image Head (Settings → Heads) and the whole pool can use it."
         : r.role === "planner" ? "Planning needs a big model. Long tasks plan on the biggest one in the network."
         : "Nothing in the list fits well here.";
       return `<div class="pick none"><span class="role">${esc(r.name)}</span><span class="pname">${esc(why)}</span></div>`;
@@ -569,7 +569,7 @@ function renderCatalog() {
     }
     let act;
     if (c.installed) act = c.net_mixed ? downloadButton(c.tag, "Update") : `<span class="have"><span class="led ice"></span>Installed</span>`;
-    else if (c.fit === "unsupported") act = `<span class="fine">Mac only</span>`;
+    else if (c.fit === "unsupported") act = `<span class="fine">${c.no_mac ? "Nvidia/AMD only" : "Mac only"}</span>`;
     else if (c.fit === "too_big") act = `<span class="fine">Too big here</span>`;
     else act = downloadButton(c.tag);
     const roles = listWords((c.roles || []).map((r) => ROLE_WORDS[r] || r));
@@ -703,6 +703,14 @@ function renderLibrarySettings() {
   } else {
     html += `<p class="fine">${esc(n.host || "The host")} hosts this network and reviews the library on the hosting computer. Rate replies 4 or 5 stars and say what worked to add to it.</p>`;
   }
+  const plugins = (S.profile && S.profile.plugins) || [];
+  html += `<h2 class="section-title spaced">Heads</h2>
+    <label class="row toggle"><span>Let the pool use my Heads</span><input type="checkbox" data-setting="lend_plugins"></label>
+    <p class="fine">A Head is a tool installed on this computer that the whole pool can call — Perspective's studio shadows, an image generator in ComfyUI, a 3D-mesh maker. Drop a Head's folder (it has a <code>plugin.json</code>) into Chimera's heads folder and it shows up here when it can run. When someone asks for what a Head makes — with a picture, or just in words — it runs here in a sandbox: no internet (a Head may talk to a server on this computer if it says so), your home folder hidden except the Head's own folders. Their star ratings decide which Head the pool picks when several could do a job, and you earn bonus credits every time your Head does a job for someone else, plus more when they rate it 4 or 5 stars.</p>
+    ${plugins.length ? `<ul class="plugin-list">${plugins.map((p) => `<li><span class="led ${p.have ? "ice" : "off"}"></span><span><b>${esc(p.name)}</b> ${esc(p.version || "")}<span class="detail">${esc(p.have ? p.summary : "Can't run here: " + (p.note || ""))}</span></span></li>`).join("")}</ul>` : `<p class="fine">No Heads installed yet. The <b>heads</b> folder next to the app has a template and two reference Heads (ComfyUI image generation, Hunyuan3D meshes).</p>`}
+    ${(S.profile && S.profile.can_test === false) ? `<label class="row toggle"><span>Run Heads without a sandbox on this computer</span><input type="checkbox" data-setting="unsandboxed_heads" ${S.settings.unsandboxed_heads ? "checked" : ""}></label>
+    <p class="fine warn">This computer (Windows) has no sandbox Chimera trusts, so Heads are off here unless you allow this. With it on, a Head runs with your normal permissions — only install Heads you trust, from people you trust. The Head's code is always yours, installed by hand; what arrives from the pool is just the picture or words it works on.</p>` : ""}
+    <div class="btn-row"><button class="btn" data-act="open-plugins">Open heads folder</button></div>`;
   setHTML(box, html);
 }
 
@@ -858,7 +866,47 @@ async function joinNetwork() {
 }
 
 // ---------- chat ----------
-const chat = { sessions: [], current: null, busy: null, count: 0 };
+const chat = { sessions: [], current: null, busy: null, count: 0, images: [] };
+
+// ---------- pictures (for plugins) ----------
+const IMAGE_MAX = 25 * 1024 * 1024;
+function fileURL(f, m) {
+  return f.url || `/api/files/${encodeURIComponent((m && m._session) || chat.current || "")}/${encodeURIComponent(f.id)}`;
+}
+function isImage(f) { return !f.mime || /^image\//.test(f.mime); }
+function filesHTML(m) {
+  const fs = (m._previews || []).concat(m.files || []);
+  if (!fs.length) return "";
+  const mine = m.role === "user";
+  return `<div class="files${mine ? " sent" : ""}">${fs.map((f) => {
+    const u = fileURL(f, m), dims = f.width && f.height ? `${f.width} × ${f.height}` : "";
+    if (!isImage(f)) return `<a class="file-link" href="${esc(u)}" download="${esc(f.name)}">${esc(f.name)}</a>`;
+    return `<figure><a href="${esc(u)}" target="_blank" rel="noopener"><img src="${esc(u)}" alt="${esc(f.name)}" loading="lazy"></a>
+      ${mine ? "" : `<figcaption><span>${esc(f.name)}${dims ? ` · ${dims}` : ""}</span><a class="btn small quiet" href="${esc(u)}" download="${esc(f.name)}">Save</a></figcaption>`}</figure>`;
+  }).join("")}</div>`;
+}
+function addImageFile(file) {
+  if (!file) return;
+  if (!/^image\/(png|jpeg|webp)$/.test(file.type)) { toast("Add a PNG, JPEG or WebP picture.", true); return; }
+  if (file.size > IMAGE_MAX) { toast("Pictures can be up to 25 MB.", true); return; }
+  const rd = new FileReader();
+  rd.onload = () => {
+    const data = String(rd.result).split(",")[1] || "";
+    chat.images.forEach((i) => URL.revokeObjectURL(i.url));
+    chat.images = [{ name: file.name || "picture.png", data, url: URL.createObjectURL(file), size: file.size }];
+    renderAttachments();
+    $("#prompt").focus();
+  };
+  rd.onerror = () => toast("Couldn't read that picture.", true);
+  rd.readAsDataURL(file);
+}
+function renderAttachments() {
+  const box = $("#attachments");
+  box.hidden = !chat.images.length;
+  setHTML(box, chat.images.map((i, n) => `<span class="attachment"><img src="${esc(i.url)}" alt=""><span>${esc(i.name)}</span>
+    <button class="link small" type="button" data-act="remove-attachment" data-n="${n}" aria-label="Remove ${esc(i.name)}">×</button></span>`).join(""));
+  $("#prompt").placeholder = chat.images.length ? "What should a Head do with this picture? (e.g. add a soft studio shadow)" : "Ask something…";
+}
 
 function md(src) {
   const parts = String(src || "").split("```");
@@ -916,7 +964,12 @@ function messageEl(m, idx) {
   const el = document.createElement("div");
   el.className = `msg ${m.role}${m.task ? " task" : ""}`;
   if (idx !== undefined) el.dataset.index = idx;
-  if (m.role === "user") { el.textContent = m.content; return el; }
+  if (m.role === "user") {
+    el.textContent = m.content;
+    const files = filesHTML(m);
+    if (files) el.insertAdjacentHTML("beforeend", files);
+    return el;
+  }
   el._m = m;
   el.innerHTML = `<div class="note" hidden></div><div class="plan" hidden></div><details hidden><summary>Thinking</summary><div></div></details><div class="body"></div><div class="meta"></div><div class="rate-wrap"></div>`;
   if (m.task) fillTask(el, m); else fillAssistant(el, m);
@@ -940,11 +993,15 @@ function fillAssistant(el, m) {
     return;
   }
   let html = md(m.content);
-  if (m.status === "pending") {
+  if (m.status === "pending" && !m.plugin) {
     const caret = '<span class="caret"></span>';
     html = html.endsWith("</p>") ? html.slice(0, -4) + caret + "</p>" : html + caret;
   }
-  body.innerHTML = html;
+  if (m.status === "pending" && m.plugin) {
+    const pct = Math.round((m._fraction || 0) * 100);
+    html += `<div class="plugin-progress"><span style="width:${pct}%"></span></div>`;
+  }
+  body.innerHTML = html + filesHTML(m);
   meta.textContent = m.status === "pending" ? (m._runner || "Sending…") : metaText(m);
   fillRate(el, m);
 }
@@ -1037,10 +1094,11 @@ function fillRate(el, m) {
   let after = "";
   const askNote = r >= 4 && !m.rating_sent && !m._noteDone && S && S.network.joined;
   if (m._rateMsg) after = `<span class="rdone">${esc(m._rateMsg)}</span>`;
+  else if (m.rating_sent && m.plugin) after = `<span class="rdone">Counted toward the Head's rating</span>`;
   else if (m.rating_sent && r >= 4) after = `<span class="rdone">Shared with the library</span>`;
   else if (r) after = `<span class="rdone">Rated</span>`;
   let note = "";
-  if (askNote) note = `<form class="rate-note" data-rate-note><input class="field" name="note" placeholder="What worked well? It helps the network reuse it." maxlength="2000"><button class="btn small" type="submit">Send</button><button class="btn small quiet" type="button" data-rate-skip>Skip</button></form>`;
+  if (askNote) note = `<form class="rate-note" data-rate-note><input class="field" name="note" placeholder="${m.plugin ? "What worked well? The Head's owner sees it." : "What worked well? It helps the network reuse it."}" maxlength="2000"><button class="btn small" type="submit">Send</button><button class="btn small quiet" type="button" data-rate-skip>Skip</button></form>`;
   setHTML(box, `<div class="rate"><span class="rlabel">${r ? "Your rating" : "Rate this reply"}</span>${stars}${askNote ? "" : after}</div>${note}`);
 }
 
@@ -1066,7 +1124,8 @@ async function sendRateNote(el, note) {
   try {
     const r = await api("POST", "/api/feedback", { session_id: chat.current, index: idx, rating: m.rating, note, send: true });
     m.rating_note = note; m.rating_sent = !!r.sent;
-    m._rateMsg = r.queued ? "Thanks. The network's biggest model will save what worked to the library." : r.sent ? "Thanks for rating" : (r.error || "Saved");
+    m._rateMsg = r.queued ? "Thanks. The network's biggest model will save what worked to the library."
+      : r.sent && m.plugin ? "Thanks. It counts toward the Head's rating." : r.sent ? "Thanks for rating" : (r.error || "Saved");
   } catch (e) { m._rateMsg = ""; m._noteDone = false; toast(e.message, true); }
   fillRate(el, m);
 }
@@ -1079,7 +1138,7 @@ function renderMessages(sess) {
     box.innerHTML = `<div class="chat-empty"><h2 class="section-title">Test the network</h2><p>Send a prompt and Chimera runs it on a device that's lending, maybe a friend's. Each reply says which computer and model wrote it. Turn on Long task for bigger jobs: Hydra splits them into steps that run on several computers at once.</p></div>`;
     return;
   }
-  sess.messages.forEach((m, i) => box.appendChild(messageEl(m, i)));
+  sess.messages.forEach((m, i) => { m._session = sess.id; box.appendChild(messageEl(m, i)); });
   box.scrollTop = box.scrollHeight;
 }
 
@@ -1106,13 +1165,22 @@ function liveMessage(el) {
   return {
     on(ev) {
       switch (ev.type) {
-        case "started": chat.busy = { kind: "gen", id: ev.gen_id }; if (!chat.current) chat.current = ev.session_id; m.content = ""; m.thinking = ""; break;
+        case "started": chat.busy = { kind: "gen", id: ev.gen_id }; if (!chat.current) chat.current = ev.session_id; m._session = ev.session_id; m.content = ""; m.thinking = ""; break;
         case "note": m.note = ev.reason; break;
-        case "queued": m._runner = "Waiting for a free device…"; break;
+        case "queued": m._runner = m.plugin ? "Waiting for a computer with that Head…" : "Waiting for a free device…"; break;
+        case "plugin": m.plugin = ev.plugin; m.model = ev.model; m._runner = `Using ${ev.model}…`; break;
         case "assigned":
           m.device = ev.device_name; m.owner = ev.owner; m.model = ev.model; m.local = ev.local;
-          m._runner = ev.local ? `Writing here with ${ev.model}…` : `Writing on ${deviceLabel(ev.device_name, ev.owner)} with ${ev.model}…`;
+          if (m.plugin) m._runner = ev.local ? `Running ${ev.model} here…` : `Running ${ev.model} on ${deviceLabel(ev.device_name, ev.owner)}…`;
+          else m._runner = ev.local ? `Writing here with ${ev.model}…` : `Writing on ${deviceLabel(ev.device_name, ev.owner)} with ${ev.model}…`;
           break;
+        case "status": {
+          m._fraction = ev.fraction || 0;
+          const where = m.device ? (m.local ? "Here" : `On ${deviceLabel(m.device, m.owner)}`) : "";
+          m._runner = `${where ? where + ": " : ""}${ev.reason || "Working"}${ev.fraction ? ` (${Math.round(ev.fraction * 100)}%)` : ""}`;
+          break;
+        }
+        case "file": if (ev.file) m.files = (m.files || []).concat([ev.file]); break;
         case "delta": m.content += ev.content || ""; m.thinking += ev.thinking || ""; break;
         case "replay": m.content = ev.content || ""; m.thinking = ev.thinking || ""; break;
         case "requeued": m.content = ""; m.thinking = ""; m.note = `Moved to another device: ${ev.reason}`; m._runner = "Finding another device…"; break;
@@ -1208,17 +1276,22 @@ async function attachStream(url, live, busy) {
 async function send() {
   const ta = $("#prompt");
   const text = ta.value.trim();
-  if (!text || chat.busy) return;
+  const images = chat.images.slice();
+  if ((!text && !images.length) || chat.busy) return;
   const asTask = $("#chk-task").checked;
+  if (asTask && images.length) { toast("Pictures go to Heads. Untick Long task to send this one.", true); return; }
   const body = asTask
     ? { session_id: chat.current || "", goal: text, private: $("#chk-private").checked, loop: $("#chk-loop").checked }
     : { session_id: chat.current || "", message: text, model: $("#sel-model").value, target: $("#sel-device").value, private: $("#chk-private").checked };
+  if (images.length) body.images = images.map((i) => ({ name: i.name, data: i.data }));
   ta.value = "";
+  chat.images = [];
+  renderAttachments();
   autosize();
   const box = $("#messages");
   if (box.querySelector(".chat-empty")) { box.innerHTML = ""; chat.count = 0; }
   const base = chat.count;
-  box.appendChild(messageEl({ role: "user", content: text }, base));
+  box.appendChild(messageEl({ role: "user", content: text, _previews: images.map((i) => ({ url: i.url, name: i.name })) }, base));
   const el = messageEl(asTask ? { role: "assistant", status: "pending", content: "", task: { phase: "planning", steps: [] } } : { role: "assistant", status: "pending", content: "" }, base + 1);
   box.appendChild(el);
   chat.count = base + 2;
@@ -1304,7 +1377,7 @@ function refreshPickers() {
 
 // ---------- library ----------
 const lib = { q: "", status: "", entries: [], admin: false, joined: false, open: new Set(), full: {}, stats: "", seq: 0, loaded: false };
-const KIND_WORDS = { snippet: "Code", blender: "Blender script", lesson: "Lesson", prompt: "Prompt" };
+const KIND_WORDS = { snippet: "Code", blender: "Blender script", lesson: "Lesson", prompt: "Prompt", plugin: "Head" };
 
 async function loadLibrary() {
   const seq = ++lib.seq;
@@ -1337,6 +1410,13 @@ function entryStatus(e) {
 function sourceLine(e) {
   const src = e.source || {};
   const bits = [];
+  if (e.kind === "plugin") {
+    bits.push(`Head${e.version ? ` ${e.version}` : ""} installed on ${src.owner ? `${src.owner}'s ` : ""}${src.device || "a computer"}`);
+    bits.push(e.rated ? `${(e.stars / e.rated).toFixed(1)} stars from ${plural(e.rated, "rating")}` : "not rated yet");
+    if (e.uses) bits.push(`ran ${plural(e.uses, "time")} for people`);
+    const text = bits.join(", ");
+    return text + ".";
+  }
   if (src.from === "rating") bits.push(`From ${src.owner}'s ${src.rating}-star reply${src.model ? ` written by ${src.model}` : ""}`);
   else if (src.owner) bits.push(`Added by ${src.owner}`);
   if (e.votes > 1) bits.push(`rated 4 or 5 stars ${plural(e.votes, "time")}`);
@@ -1366,7 +1446,7 @@ function entryHTML(e) {
   }
   return `<div class="entry"><button class="entry-head" data-lib-open="${esc(e.id)}" aria-expanded="${open}">
       <span class="led ${st.led}"></span>
-      <span><b>${esc(e.title)}</b><span class="kind">${esc(KIND_WORDS[e.kind] || e.kind)}</span><p>${esc(e.summary || "")}</p></span>
+      <span><b>${esc(e.title)}</b><span class="kind">${esc(KIND_WORDS[e.kind] || e.kind)}</span>${e.kind === "plugin" && e.rated ? `<span class="kind stars">★ ${(e.stars / e.rated).toFixed(1)} (${e.rated})</span>` : ""}<p>${esc(e.summary || "")}</p></span>
       <span class="estatus ${st.cls}">${esc(st.text)}</span></button>${body}</div>`;
 }
 
@@ -1485,6 +1565,13 @@ document.addEventListener("click", async (e) => {
     case "new-invite":
       try { await api("POST", "/api/network/new-invite"); toast("New invite code made. Devices already in stay in."); } catch (err) { toast(err.message, true); }
       return;
+    case "open-plugins":
+      try { await api("POST", "/api/open-folder", { which: "plugins" }); } catch (err) { toast(err.message, true); }
+      return;
+    case "remove-attachment":
+      chat.images.splice(Number(t.dataset.n), 1).forEach((i) => URL.revokeObjectURL(i.url));
+      renderAttachments();
+      return;
   }
 });
 
@@ -1600,6 +1687,19 @@ $("#prompt").addEventListener("keydown", (e) => {
   }
 });
 $("#prompt").addEventListener("input", autosize);
+$("#btn-attach").addEventListener("click", () => $("#file-attach").click());
+$("#file-attach").addEventListener("change", (e) => { addImageFile(e.target.files[0]); e.target.value = ""; });
+$("#prompt").addEventListener("paste", (e) => {
+  const f = [...((e.clipboardData && e.clipboardData.files) || [])].find((x) => /^image\//.test(x.type));
+  if (f) { e.preventDefault(); addImageFile(f); }
+});
+$("#composer").addEventListener("dragover", (e) => { if ([...e.dataTransfer.types].includes("Files")) { e.preventDefault(); $("#composer").classList.add("drop"); } });
+$("#composer").addEventListener("dragleave", () => $("#composer").classList.remove("drop"));
+$("#composer").addEventListener("drop", (e) => {
+  $("#composer").classList.remove("drop");
+  const f = [...e.dataTransfer.files].find((x) => /^image\//.test(x.type));
+  if (f) { e.preventDefault(); addImageFile(f); }
+});
 
 $("#btn-open-folder").addEventListener("click", () => api("POST", "/api/open-folder").catch((e) => toast(e.message, true)));
 $("#btn-quit").addEventListener("click", async () => {

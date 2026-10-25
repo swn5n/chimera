@@ -36,6 +36,20 @@ type SessionMessage struct {
 	RatingSent bool        `json:"rating_sent,omitempty"` // sent to the network's library
 	Task       *TaskRecord `json:"task,omitempty"`        // a Hydra long task
 	TaskID     string      `json:"task_id,omitempty"`
+
+	Files  []SessionFile `json:"files,omitempty"`   // pictures sent with a message, or made by a plugin
+	Plugin string        `json:"plugin,omitempty"`  // the plugin that made this reply (its rating goes there)
+	StepID string        `json:"step_id,omitempty"` // the network step that ran it (rated once, by its asker)
+}
+
+// SessionFile is a file kept with a chat (in sessions/files/<chat>/<id>).
+type SessionFile struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	MIME   string `json:"mime"`
+	Bytes  int    `json:"bytes"`
+	Width  int    `json:"width,omitempty"`
+	Height int    `json:"height,omitempty"`
 }
 
 type Session struct {
@@ -138,7 +152,50 @@ func (s *SessionStore) Delete(id string) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	_ = os.RemoveAll(filepath.Join(s.dir, "files", id))
 	return os.Remove(s.path(id))
+}
+
+// SaveFile keeps a file with a chat and describes it.
+func (s *SessionStore) SaveFile(sessionID, name, mime string, data []byte) (SessionFile, error) {
+	if !validID(sessionID) {
+		return SessionFile{}, os.ErrNotExist
+	}
+	dir := filepath.Join(s.dir, "files", sessionID)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return SessionFile{}, err
+	}
+	f := SessionFile{ID: randomID(8), Name: cleanFileName(name), MIME: mime, Bytes: len(data)}
+	f.Width, f.Height = imageSize(data)
+	if err := writeFileAtomic(filepath.Join(dir, f.ID), data); err != nil {
+		return SessionFile{}, err
+	}
+	return f, nil
+}
+
+// FilePath is where a chat's file lives, or "" for a bad id.
+func (s *SessionStore) FilePath(sessionID, fileID string) string {
+	if !validID(sessionID) || !validID(fileID) {
+		return ""
+	}
+	return filepath.Join(s.dir, "files", sessionID, fileID)
+}
+
+func cleanFileName(name string) string {
+	name = filepath.Base(strings.ReplaceAll(strings.TrimSpace(name), "\\", "/"))
+	name = strings.Map(func(r rune) rune {
+		if r < 32 || r == '"' || r == '/' || r == ':' {
+			return '_'
+		}
+		return r
+	}, name)
+	if name == "" || name == "." || name == ".." {
+		name = "file"
+	}
+	if r := []rune(name); len(r) > 100 {
+		name = string(r[:100])
+	}
+	return name
 }
 
 func (s *SessionStore) List() []SessionSummary {
