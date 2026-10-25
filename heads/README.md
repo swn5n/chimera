@@ -22,7 +22,8 @@ someone else, plus 1 credit each time someone else rates the result 4 or 5 stars
 3. Within a minute **Tools** lists it. If it says *Can't run here*, the note says what's missing — usually
    a server to start or a program to install. Check by hand with `python3 <folder>/run.py --probe`.
 4. Leave **Let the pool use my Heads** on and press **Connect**. (Lending needs Ollama running with at
-   least one shared model, for now.)
+   least one shared model, for now. The fastest shared model also reads each job's options from the
+   request, on this computer, so keep a small fast one shared.)
 
 Heads run **sandboxed**: no internet, your home folder hidden except the Head's own folder and the
 folders its probe asks for, writes only into a throwaway folder and the Head's cache. A Head that
@@ -86,7 +87,7 @@ Copy `TEMPLATE/`, rename the folder to your id, edit `plugin.json` and fill in `
 | `produces` | MIME types it returns — the asker keeps only these (`image/png`, `model/gltf-binary`, `model/obj`, …) |
 | `entry`, `interpreter` | the script inside the folder; `python3` (default) or `sh` |
 | `network` | leave out, or `"localhost"` to reach servers on the same computer |
-| `options` | a JSON-schema object: a model fills it from the request's words, Chimera checks the values |
+| `options` | a JSON-schema object: the fastest shared model on the Head's computer fills it from the request's words, Chimera checks the values |
 | `env` | environment variable names passed through (never `CHIMERA_*`) |
 | `timeout_s` | 30–7200, default 1800 |
 
@@ -103,11 +104,16 @@ The entry script's contract:
 | `CHIMERA_CACHE` | a folder kept between runs (models, analyses) |
 
 How a request reaches a Head: with a picture attached, the hub lists Heads that accept that picture
-type and match the words (relevant first, then best rated), and the top one runs. With words only, the
-same list is made from Heads that need no picture; then the pool's fastest model is asked, with the
-Head's own description in front of it, *should this tool handle the request?* — so "generate an image
-of a red car" goes to the image Head and "how does image generation work?" stays a conversation. Picking
-a specific model in the composer always uses that model.
+type and match the words, best rated first, and the top one runs. With words only, the same list is
+made from Heads that need no picture; then the pool's fastest model is asked, with the Head's own
+description in front of it, *should this tool handle the request?* — so "generate an image of a red
+car" goes to the image Head and "how does image generation work?" stays a conversation. Picking a
+specific model in the composer keeps a words-only message away from Heads.
+
+The asker's computer only sends the request and shows what comes back. The computer that has the Head
+reads the options from the words with its own model and runs the Head, and the *should this tool
+handle it?* question goes to another computer's model. The asker's own computer does Head work only
+when the Head is installed on it: then it's the person's own Head.
 
 ## Ideas for more Heads
 

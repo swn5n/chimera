@@ -1,4 +1,4 @@
-# Chimera 0.6
+# Chimera 0.6.1
 
 Share idle GPUs — and the tools on them — with friends through Ollama, SheepIt style. One person hosts the pool; everyone else's Chimera finds it and joins on its own — on the same Wi-Fi automatically, and across the internet once you point it at the host's address. Press Connect to lend your GPU: prompts from the pool run on your models, and you earn credits for the work.
 
@@ -67,7 +67,7 @@ Everyone in a pool should run the same version. Device cards show a warning next
 ## First test: your two Macs
 
 1. Install Ollama on both computers from ollama.com/download and open it.
-2. Open the new Chimera on both (from `dist/Chimera.app` — or wherever you keep it). **Open Settings and confirm it says Chimera 0.4.1** on each; if it says 0.3, the old one was still running — just open the new app once more.
+2. Open the new Chimera on both (from `dist/Chimera.app` — or wherever you keep it). **Open Settings and confirm it says Chimera 0.6.1** on each; if it says anything older, the old one was still running — just open the new app once more.
 3. Enter your name. You don't have to choose Host or Join: on the same Wi-Fi they find each other on their own within about 20 seconds — one hosts, the other joins. If you *did* click Host on both, that's fine now; they merge.
 4. Still not seeing each other after ~30 seconds? Go down the list in **"Still can't see each other?"** below.
 5. On each computer open **Models** and download the recommended picks you want.
@@ -79,7 +79,7 @@ Everyone in a pool should run the same version. Device cards show a warning next
 
 In order, most common first:
 
-1. **Is it really 0.4.1?** Settings shows the version at the bottom. If not, open the new app once more; it replaces the old one.
+1. **Is it really 0.6.1?** Settings shows the version at the bottom. If not, open the new app once more; it replaces the old one.
 2. **macOS Local Network permission.** System Settings → Privacy & Security → **Local Network** → Chimera must be on, on *both* Macs. If Chimera isn't listed, quit it from Settings, open it again and say **Allow** to the prompt.
 3. **Same Wi-Fi, really?** Some routers put 2.4 GHz and 5 GHz on separate networks, or have a "guest"/"isolated" mode that stops devices talking to each other. Both Macs should show the same network name, and the laptop should be able to open `http://<studio's address>:7480/v1/ping` in a browser (the Studio's address is under Settings → Network → Addresses on the Studio) and see `{"app":"chimera-hub"…}`. If that page doesn't load, it's the network, not Chimera — try a different Wi-Fi, or join by typing that address in the Network tab.
 4. **Firewall.** See "Opening it the first time".

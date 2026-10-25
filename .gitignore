@@ -15,3 +15,6 @@ Claude outputs/
 .env
 .env.*
 *.log
+
+# a plain `go build` in app/
+app/chimera

@@ -2,7 +2,8 @@
 Chimera processes and the fake Ollama (which answers the Head gate). Checks that a request to MAKE
 something routes to the Head and a picture comes back, that a QUESTION stays a normal chat, that a
 hand-picked model is respected, that a "network": "localhost" Head reaches a local server from inside
-its sandbox, and that the Head's owner earns the run bonus and the star bonus.
+its sandbox, that the asker's own Ollama stays idle for the Head job even while the asker lends (the gate and
+the options run on other computers), and that the Head's owner earns the run bonus and the star bonus.
 Usage: python3 heads_text_test.py <chimera binary> <workdir>"""
 import json, os, shutil, subprocess, sys, time, threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -11,7 +12,7 @@ import run_it as it  # reuse its helpers (api, chat, wait_for, start, check)
 
 BIN, WORK = it.BIN, it.WORK
 HERE = it.HERE
-A_UI, B_UI, HUB, OLLAMA, LOCAL = 7591, 7592, 7595, 11575, 7596
+A_UI, B_UI, HUB, OLLAMA, LOCAL, OLLAMA_A = 7591, 7592, 7595, 11575, 7596, 11576
 
 class Hello(BaseHTTPRequestHandler):
     def log_message(self, *a): pass
@@ -32,13 +33,17 @@ def main():
     srv = HTTPServer(("127.0.0.1", LOCAL), Hello); threading.Thread(target=srv.serve_forever, daemon=True).start()
     it.procs.append(subprocess.Popen([sys.executable, os.path.join(HERE, "fake_ollama.py"), str(OLLAMA),
                                       os.path.join(WORK, "ollama_chats.jsonl")], start_new_session=True))
+    it.procs.append(subprocess.Popen([sys.executable, os.path.join(HERE, "fake_ollama.py"), str(OLLAMA_A),
+                                      os.path.join(WORK, "ollama_chats_A.jsonl"), "--loaded"], start_new_session=True))
     oll = "http://127.0.0.1:%d" % OLLAMA
-    start("A", ["--data-dir", os.path.join(WORK, "A"), "--ui-port", str(A_UI), "--hub-port", str(HUB), "--no-open", "--ollama", oll], {})
+    start("A", ["--data-dir", os.path.join(WORK, "A"), "--ui-port", str(A_UI), "--hub-port", str(HUB), "--no-open",
+                "--ollama", "http://127.0.0.1:%d" % OLLAMA_A], {})
     start("B", ["--data-dir", os.path.join(WORK, "B"), "--ui-port", str(B_UI), "--no-open", "--ollama", oll], {"DEMO_LOCAL_PORT": str(LOCAL)})
     wait_for(lambda: api(A_UI, "GET", "/api/ping")[0] == 200, "A")
     wait_for(lambda: api(B_UI, "GET", "/api/ping")[0] == 200, "B")
-    for port in (A_UI, B_UI):
+    for port in (A_UI, B_UI):  # lending needs the fake model listed, not just Ollama answering
         wait_for(lambda: api(port, "GET", "/api/state")[1]["ollama"]["status"] == "running", "Ollama seen as running", 30)
+        wait_for(lambda: api(port, "GET", "/api/state")[1]["ollama"].get("models"), "the fake model listed", 30)
     api(A_UI, "POST", "/api/settings", {"auto_join": False})
     st, hv = api(A_UI, "POST", "/api/network/host", {"enabled": True, "owner": "Alice", "device_name": "Host laptop", "name": "Heads net"})
     check("A hosts", st == 200 and hv.get("enabled"))
@@ -48,7 +53,12 @@ def main():
     api(B_UI, "POST", "/api/connect")
     wait_for(lambda: any(d["name"] == "Nvidia PC" and d["online"] and d["lending"] and d["profile"].get("plugins")
                          for d in api(A_UI, "GET", "/api/state")[1]["network"]["devices"]), "B lending with its Head", 60)
+    # A lends its own model too, like a laptop that's connected: the hub could pick it as the fastest
+    api(A_UI, "POST", "/api/connect")
+    wait_for(lambda: any(d["name"] == "Host laptop" and d["online"] and d["lending"]
+                         for d in api(A_UI, "GET", "/api/state")[1]["network"]["devices"]), "A lending", 60)
     before = balances(A_UI)
+    a_before = len(it.ollama_calls("ollama_chats_A.jsonl"))
 
     # 1. words only, asking to MAKE something -> the Head runs on B, a picture comes back
     evs = chat(A_UI, {"message": "make me a red poster please", "model": ""})
@@ -64,6 +74,9 @@ def main():
     check("1. localhost Head reached its local server inside the sandbox", "Local server: reached (hello from the local server)" in summary, summary)
     check("1. no input picture was needed", "Input picture: none" in summary, summary)
     check("1. finished", kinds[-1] == "done", json.dumps(evs[-1]))
+    a_calls = it.ollama_calls("ollama_chats_A.jsonl")[a_before:]
+    check("1. the asker's own Ollama stayed idle: the gate and the options ran on other computers", not a_calls,
+          "%d call(s) on A: %s" % (len(a_calls), [c["last"][-60:] for c in a_calls]))
     gen_id = evs[-1].get("gen_id")
     step = next((e.get("step_id") for e in evs if e.get("step_id")), None)
 

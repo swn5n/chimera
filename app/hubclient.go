@@ -184,6 +184,15 @@ func (c *HubClient) Status(ctx context.Context, id, status string, fraction floa
 	return out.Cancel, err
 }
 
+// Note sends a plugin step's line for the asker, shown above the reply.
+func (c *HubClient) Note(ctx context.Context, id, note string) (bool, error) {
+	var out struct {
+		Cancel bool `json:"cancel"`
+	}
+	_, err := c.call(ctx, "POST", "/v1/steps/"+id+"/progress", progressReq{Note: note}, &out)
+	return out.Cancel, err
+}
+
 // CompleteWithFiles finishes a plugin step with what it made.
 func (c *HubClient) CompleteWithFiles(ctx context.Context, id string, stats ChatStats, files []StepFile) error {
 	_, err := c.call(ctx, "POST", "/v1/steps/"+id+"/complete", completeReq{Stats: stats, Files: files}, nil)

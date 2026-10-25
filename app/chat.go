@@ -393,14 +393,11 @@ func (g *GenManager) runWordsOrHead(gen *generation, req chatReq, text string, h
 	gen.mu.Lock()
 	gen.cancelFn = cancel
 	gen.mu.Unlock()
-	choice, why := g.app.headForText(ctx, text)
+	choice := g.app.headForText(ctx, text)
 	cancel()
 	if choice == nil {
 		g.run(gen, req, history)
 		return
-	}
-	if why != "" {
-		gen.emit(genEvent{Type: "note", Reason: why})
 	}
 	g.runPlugin(gen, req, text, nil, nil, choice)
 }

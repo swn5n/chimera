@@ -1,11 +1,13 @@
 """A fake Ollama for Chimera's integration test: one small chat model. Structured-output
-requests (format = a JSON schema) get options derived from the words in the request."""
+requests (format = a JSON schema) get options derived from the words in the request. With --loaded the
+model shows as already in memory (/api/ps), so the hub sees this computer as the fastest."""
 import json, sys, time
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 
 MODEL = {"name": "fake-llm:8b", "model": "fake-llm:8b", "size": 4920000000, "digest": "f00d",
          "details": {"family": "llama", "parameter_size": "8.0B", "quantization_level": "Q4_K_M"}}
-LOG = sys.argv[2] if len(sys.argv) > 2 else None
+LOG = sys.argv[2] if len(sys.argv) > 2 and sys.argv[2] != "--loaded" else None
+LOADED = "--loaded" in sys.argv[2:]
 
 class H(BaseHTTPRequestHandler):
     def log_message(self, *a): pass
@@ -16,7 +18,7 @@ class H(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/api/version": return self.send({"version": "0.12.6"})
         if self.path == "/api/tags": return self.send({"models": [MODEL]})
-        if self.path == "/api/ps": return self.send({"models": []})
+        if self.path == "/api/ps": return self.send({"models": [MODEL] if LOADED else []})
         self.send({"error": "not found"}, 404)
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")

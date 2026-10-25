@@ -6,7 +6,7 @@ import base64, http.client, json, os, shutil, signal, subprocess, sys, time, thr
 
 BIN, WORK = os.path.abspath(sys.argv[1]), os.path.abspath(sys.argv[2])
 HERE = os.path.dirname(os.path.abspath(__file__))
-A_UI, B_UI, HUB, OLLAMA = 7571, 7572, 7580, 11555
+A_UI, B_UI, HUB, OLLAMA, OLLAMA_A = 7571, 7572, 7580, 11555, 11556
 SECRET = os.path.join(os.path.expanduser("~"), "chimera-it-secret.txt")
 results, procs = [], []
 
@@ -73,6 +73,14 @@ def start(name, args, env_extra):
     return p
 
 
+def ollama_calls(log):
+    """The chat calls a fake Ollama has answered so far (its log in WORK)."""
+    try:
+        return [json.loads(l) for l in open(os.path.join(WORK, log))]
+    except FileNotFoundError:
+        return []
+
+
 def image_body(text, name="machine.png"):
     data = base64.b64encode(open(os.path.join(HERE, "machine.png"), "rb").read()).decode()
     return {"message": text, "images": [{"name": name, "data": data}]}
@@ -90,16 +98,22 @@ def main():
         shutil.copytree(os.path.join(HERE, "plugins_src", pid), os.path.join(WORK, "B", "plugins", pid))
     procs.append(subprocess.Popen([sys.executable, os.path.join(HERE, "fake_ollama.py"), str(OLLAMA),
                                    os.path.join(WORK, "ollama_chats.jsonl")], start_new_session=True))
+    # A (the asker) has an Ollama of its own, so the test can tell whether Head work ever touches it; its
+    # model is already loaded, so for "the fastest model" the hub would pick A over B
+    procs.append(subprocess.Popen([sys.executable, os.path.join(HERE, "fake_ollama.py"), str(OLLAMA_A),
+                                   os.path.join(WORK, "ollama_chats_A.jsonl"), "--loaded"], start_new_session=True))
     oll = "http://127.0.0.1:%d" % OLLAMA
-    start("A", ["--data-dir", os.path.join(WORK, "A"), "--ui-port", str(A_UI), "--hub-port", str(HUB), "--no-open", "--ollama", oll], {})
+    start("A", ["--data-dir", os.path.join(WORK, "A"), "--ui-port", str(A_UI), "--hub-port", str(HUB), "--no-open",
+                "--ollama", "http://127.0.0.1:%d" % OLLAMA_A], {})
     start("B", ["--data-dir", os.path.join(WORK, "B"), "--ui-port", str(B_UI), "--no-open", "--ollama", oll], {"IT_SECRET_FILE": SECRET,
         # the demo plugins' probes ask to read the folder above B's data folder, and the data folder
         # itself: config.json must stay hidden
         "DEMO_READ": os.pathsep.join([WORK, os.path.join(WORK, "B")])})
     wait_for(lambda: api(A_UI, "GET", "/api/ping")[0] == 200, "A")
     wait_for(lambda: api(B_UI, "GET", "/api/ping")[0] == 200, "B")
-    for port in (A_UI, B_UI):  # the fake Ollama may come up after the apps' first check
+    for port in (A_UI, B_UI):  # the fake Ollama may come up after the apps' first check; lending needs its model listed
         wait_for(lambda: api(port, "GET", "/api/state")[1]["ollama"]["status"] == "running", "Ollama seen as running", 30)
+        wait_for(lambda: api(port, "GET", "/api/state")[1]["ollama"].get("models"), "the fake model listed", 30)
 
     # ---- network: A hosts a closed pool (never merges with a real one nearby), B joins and lends ----
     api(A_UI, "POST", "/api/settings", {"auto_join": False})
@@ -118,6 +132,12 @@ def main():
         devs = api(A_UI, "GET", "/api/state")[1]["network"]["devices"]
         return any(d["name"] == "Studio Mac" and d["online"] and d["lending"] and d["profile"].get("plugins") for d in devs)
     wait_for(b_ready, "B lending with plugins", 60)
+    # A lends its own model too, like a laptop that's connected: the hub could pick it as the fastest
+    st, out = api(A_UI, "POST", "/api/connect")
+    check("A lends its own model too", st == 200, str(out)[:200])
+    wait_for(lambda: any(d["name"] == "Host laptop" and d["online"] and d["lending"]
+                         for d in api(A_UI, "GET", "/api/state")[1]["network"]["devices"]), "A lending", 60)
+    a_before = len(ollama_calls("ollama_chats_A.jsonl"))
 
     # ---- 1: a picture with a request runs the best plugin on B, and the picture comes back ----
     t0 = time.time()
@@ -172,6 +192,9 @@ def main():
     evs = chat(A_UI, image_body("a soft studio shadow but huge darkness"))
     content = "".join(e.get("content", "") for e in evs if e["type"] == "delta")
     check("4. out-of-range options are clamped to the schema", "darkness 1.00" in content, content)
+    a_calls = ollama_calls("ollama_chats_A.jsonl")[a_before:]
+    check("4. the asker's own Ollama stayed idle: the worker read every Head job's options", not a_calls,
+          "%d call(s) on A: %s" % (len(a_calls), [c["last"][-60:] for c in a_calls]))
 
     # ---- 5: cancelling stops the plugin on the worker ----
     gen = {"status": []}

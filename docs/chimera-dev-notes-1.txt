@@ -1,0 +1,82 @@
+Download models from Chimera that best fit device
+	-want to mitigate GPU timeouts so load models smaller than max that device can handle.
+	-download tools via chimera
+		-all tools should be the same across nodes for consistency? 
+		
+
+Determine device context limits
+Determine device model limits
+
+Determine device installed tools
+	-vision
+	-audio
+	-computer use
+	-image generation
+	-video generation
+	-3d mesh generation
+	-audio generation
+
+-Once ran, determine what device is best useful for and what current tasks need help. Compare open help wait times vs machine capabilities.
+
+-System prompt created for long task; lets nodes know they are working on a larger project, just to focus on one small piece.
+	-system prompt may vary depending on task
+
+
+-For certain tasks build a cache of known working mechanics
+	-ie code for basic stuff instead of calling on models
+	-blender scripts that are known to work
+
+-Small working distillation cache but internal?
+	-not distilling large company models but instead distilling ourselves.
+	-have a 5 star rating prompt after a response on chimera
+		-if user gives 4 or 5 stars prompt what was working or what went well
+		-use largest GPU on network to take that info and put it into the central database for future tasks. 
+
+		-when extra spare compute is idle for a set time test these scripts to ensure they are working and user didn’t submit spam or accidentally lie
+		-if something shows as an error flag for me to personally review in the main app/database
+
+		-small internal blender model database / 3d mesh data base generations
+
+
+=====================++SENT=========================
+
+-Since we have a tasking portion for each prompt and depending on task it may not be long, since we determine how much needs to get called, should we just have no modes and it be auto selected to “Hydra1.0”?
+
+
+
+-should we have a “test this device” like sheepit has where it ensures the model that’s loaded answers a certain prompt in a certain way? Prevents bad actors with fake / malicious models maybe?
+
+-I remember hearing that in the original days of image diffusion ai generation, the models would take the users prompt and make them more detailed to make better photos since more words helped them search more images or something?. Is there something like that we could do since we are splitting prompts across multiple devices? Have the prompt get ran through a model that makes it more detailed and parsed out but in a way that parses out with context pointing to a specific part of the job that model was tasked with?
+
+
+-Right now on my Mac Studio is shows 72gb for models, don’t I technically have 96? Is this maybe too much headroom for making models fit?
+
+-Create Admin panel app?
+-Have human in the loop mode? Where users can judge stuff for credits to take tasks away from bots?
+
+
+
+
+=========
+
+-Stem splitter engine
+-
+
+-Some sort of token meter that displays in chat?
+
+
+-I have created some plugins in blender, is there a way we could have shared ai driven plugins that models can search from? (DOWN THE ROAD)
+	-but could allow tools built by chimera to build on themselves; ie the shadow perspective plugin I made runs on hyudan3d to create soft black shadows on png images or objects on white backgrounds. If a users requests a prompt to say “add a shadow” to this png, instead of calling a diffusion model could the network pull saved/stored plugins on connected devices that then run the images through a blender script (for this specific idea) but have extra credits get allocated to people who create plugins compatible  with chimera???? (DOWN THE ROAD BUT BIG IDEA?) call these skills/plugins “Heads”
+
+-Heads might search open source image websites instead of generating diffusion image depending on request?
+	-needs online access and browsing access so maybe not possible?
+
+-Do hyper/super specific models exist?
+	-ie lightweight models that are really good at one thing in a categorical way
+
+-Weight user preference models vs what the network needs for most common tasks in demand
+
+
+=====
+
+-Uninstall models list?

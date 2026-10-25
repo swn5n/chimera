@@ -186,11 +186,17 @@ func (c *OllamaClient) Unload(ctx context.Context, model string) error {
 
 // ChatStream runs a chat and calls onDelta for each streamed piece.
 func (c *OllamaClient) ChatStream(ctx context.Context, model string, msgs []ChatMessage, options map[string]any, format json.RawMessage, onDelta func(content, thinking string)) (ChatStats, error) {
+	return c.ChatStreamKeep(ctx, model, msgs, options, format, "15m", onDelta)
+}
+
+// ChatStreamKeep is ChatStream with how long Ollama keeps the model loaded
+// afterwards ("0s" unloads it as soon as the reply is done).
+func (c *OllamaClient) ChatStreamKeep(ctx context.Context, model string, msgs []ChatMessage, options map[string]any, format json.RawMessage, keepAlive string, onDelta func(content, thinking string)) (ChatStats, error) {
 	clean := make([]ChatMessage, 0, len(msgs))
 	for _, m := range msgs {
 		clean = append(clean, ChatMessage{Role: m.Role, Content: m.Content})
 	}
-	body := map[string]any{"model": model, "messages": clean, "stream": true, "keep_alive": "15m"}
+	body := map[string]any{"model": model, "messages": clean, "stream": true, "keep_alive": keepAlive}
 	if len(options) > 0 {
 		body["options"] = options
 	}
@@ -210,7 +216,7 @@ func (c *OllamaClient) ChatStream(ctx context.Context, model string, msgs []Chat
 		if _, hasFormat := body["format"]; hasFormat && strings.Contains(strings.ToLower(err.Error()), "format") {
 			// Some models don't support structured output; our prompts ask for
 			// JSON anyway, so try once more without it.
-			return c.ChatStream(ctx, model, msgs, options, nil, onDelta)
+			return c.ChatStreamKeep(ctx, model, msgs, options, nil, keepAlive, onDelta)
 		}
 		return ChatStats{}, err
 	}

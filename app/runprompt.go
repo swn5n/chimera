@@ -78,14 +78,17 @@ func (a *App) bestLocalModel(want string, caps []string, prefer string) (ModelIn
 }
 
 // runPrompt returns the terminal event (done, error or cancelled). stepID is
-// told the hub step id so callers can cancel it.
+// told the hub step id so callers can cancel it. A NotHere request never runs
+// on this computer: the network or nothing.
 func (a *App) runPrompt(ctx context.Context, req submitReq, emit func(genEvent), stepID func(string)) genEvent {
 	note := ""
+	var serr error
 	if a.config().Joined() {
 		c, err := a.node.client()
 		if err == nil {
 			sctx, cancel := context.WithTimeout(ctx, 15*time.Second)
-			id, serr := c.Submit(sctx, req)
+			var id string
+			id, serr = c.Submit(sctx, req)
 			cancel()
 			if serr == nil {
 				if stepID != nil {
@@ -99,6 +102,12 @@ func (a *App) runPrompt(ctx context.Context, req submitReq, emit func(genEvent),
 			}
 			note = why
 		}
+	}
+	if req.NotHere { // the network or nothing
+		if serr != nil {
+			return genEvent{Type: "error", Error: friendlyNetErr(serr, "the hub")}
+		}
+		return genEvent{Type: "error", Error: "No other computer could take this."}
 	}
 	return a.runLocalPrompt(ctx, req, note, emit)
 }

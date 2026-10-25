@@ -33,13 +33,16 @@ const (
 	ackAfter         = 20 * time.Second // assigned but never picked up
 	stallAfter       = 30 * time.Second // running but silent
 	maxAttempts      = 3
-	softFloor        = -50.0
-	queueTimeout     = 20 * time.Minute
-	recentKeep       = 60
-	ledgerKeep       = 2000
-	demandWindow     = time.Hour
-	libraryBigWait   = 10 * time.Minute // library jobs wait this long for the biggest model
-	discoveryPort    = 7479             // UDP: devices find hosts on the same network here
+	// From this version the computer running a Head reads its options from the
+	// request; older ones run the Head on its defaults when the asker leaves them out.
+	optionsOnWorkerSince = "0.6.1"
+	softFloor            = -50.0
+	queueTimeout         = 20 * time.Minute
+	recentKeep           = 60
+	ledgerKeep           = 2000
+	demandWindow         = time.Hour
+	libraryBigWait       = 10 * time.Minute // library jobs wait this long for the biggest model
+	discoveryPort        = 7479             // UDP: devices find hosts on the same network here
 )
 
 type hubDevice struct {
@@ -176,6 +179,8 @@ type hubStep struct {
 	Files          []StepFile      // run_plugin: what it made
 	StatusMsg      string          // run_plugin: what it's doing now
 	Fraction       float64
+	Note           string // run_plugin: the worker's line for the asker (the options it read)
+	optionsLeft    bool   // run_plugin: the input has no options, for the worker to read (0.6.1 and newer)
 	Purpose        string // shown to the worker
 	Internal       bool   // made by the hub itself (library jobs); free
 	HostOnly       bool   // only the hosting computer may run it (library review)
@@ -1060,6 +1065,9 @@ func (h *Hub) assignLocked(st *hubStep, d *hubDevice, model string) {
 			model = pi.Name
 		}
 		st.RunModel = model
+		if st.optionsLeft && versionLess(d.appVer, optionsOnWorkerSince) { // it won't read them: say so
+			st.Note = d.Name + " runs an older Chimera that doesn't read options from the request, so the Head uses its defaults. Update it to " + Version + "."
+		}
 	}
 	st.Attempts++
 	st.AssignedAt = time.Now()
@@ -1069,6 +1077,9 @@ func (h *Hub) assignLocked(st *hubStep, d *hubDevice, model string) {
 		h.noteDemandLocked(demandEvent{Model: st.Model, Caps: st.NeedCaps, Wait: time.Since(st.Created).Seconds()})
 	}
 	st.emit(hubEvent{Type: "assigned", Device: d.ID, DeviceName: d.Name, Owner: d.Owner, Model: model})
+	if st.Note != "" {
+		st.emit(hubEvent{Type: "note", Reason: st.Note})
+	}
 }
 
 // dispatchLocked hands queued steps to the waiting device that suits them best.
@@ -1233,6 +1244,7 @@ type progressReq struct {
 	Thinking string  `json:"thinking"`
 	Status   string  `json:"status,omitempty"`   // a plugin step: what it's doing now
 	Fraction float64 `json:"fraction,omitempty"` // and how far along, 0..1
+	Note     string  `json:"note,omitempty"`     // a plugin step: a line for the asker (the options it read)
 }
 
 func (h *Hub) handleProgress(w http.ResponseWriter, r *http.Request, d *hubDevice) {
@@ -1262,6 +1274,10 @@ func (h *Hub) handleProgress(w http.ResponseWriter, r *http.Request, d *hubDevic
 	if req.Status != "" && (req.Status != st.StatusMsg || req.Fraction != st.Fraction) {
 		st.StatusMsg, st.Fraction = truncate(req.Status, 200), clampFloat(req.Fraction, 0, 1)
 		st.emit(hubEvent{Type: "status", Reason: st.StatusMsg, Fraction: st.Fraction})
+	}
+	if req.Note != "" && req.Note != st.Note {
+		st.Note = truncate(req.Note, 500)
+		st.emit(hubEvent{Type: "note", Reason: st.Note})
 	}
 	writeJSON(w, 200, map[string]bool{"cancel": st.CancelReq})
 }
@@ -1364,6 +1380,7 @@ type submitReq struct {
 	Kind     string          `json:"kind,omitempty"`      // "" (chat) or run_plugin
 	Plugin   string          `json:"plugin,omitempty"`    // run_plugin: which plugin
 	Input    json.RawMessage `json:"input,omitempty"`     // run_plugin: its input
+	NotHere  bool            `json:"not_here,omitempty"`  // never on the asking device (work for someone else's Head)
 }
 
 // usesOthers reports whether a step would run on someone else's device (and so
@@ -1421,6 +1438,12 @@ func (h *Hub) handleSubmit(w http.ResponseWriter, r *http.Request, d *hubDevice)
 		Kind: req.Kind, Plugin: req.Plugin, Input: req.Input,
 		Status: "queued", Created: time.Now(), Exclude: map[string]bool{},
 		subs: map[chan hubEvent]struct{}{},
+	}
+	if req.NotHere {
+		st.Exclude[d.ID] = true
+	}
+	if st.Kind == "run_plugin" {
+		_, _, st.optionsLeft = optionsWanted(req.Input)
 	}
 	demand := func(e demandEvent) { // plugin steps aren't demand for models
 		if st.Kind != "run_plugin" {
@@ -1511,7 +1534,7 @@ func (h *Hub) runnableLocked(st *hubStep) string {
 		return ""
 	}
 	if !h.possibleLocked(st) {
-		roomy := &hubStep{Model: st.Model, Private: st.Private, RequesterOwner: st.RequesterOwner, NeedCaps: st.NeedCaps, Kind: st.Kind}
+		roomy := &hubStep{Model: st.Model, Private: st.Private, RequesterOwner: st.RequesterOwner, NeedCaps: st.NeedCaps, Kind: st.Kind, Exclude: st.Exclude}
 		if st.NeedCtx > 0 && h.possibleLocked(roomy) {
 			return fmt.Sprintf("No device lending %s has room for this much text (about %dK tokens).", what, (st.NeedCtx+999)/1000)
 		}
@@ -1615,6 +1638,9 @@ func (h *Hub) replayLocked(st *hubStep) []hubEvent {
 			out = append(out, hubEvent{Type: "assigned", Device: d.ID, DeviceName: d.Name, Owner: d.Owner, Model: st.RunModel})
 		}
 	}
+	if st.Note != "" {
+		out = append(out, hubEvent{Type: "note", Reason: st.Note})
+	}
 	if st.Text.Len() > 0 || st.Thinking.Len() > 0 {
 		out = append(out, hubEvent{Type: "delta", Content: st.Text.String(), Thinking: st.Thinking.String()})
 	}
@@ -1673,7 +1699,7 @@ func (h *Hub) requeueLocked(st *hubStep, reason string, exclude bool) {
 	st.Assigned = ""
 	st.Text.Reset()
 	st.Thinking.Reset()
-	st.StatusMsg, st.Fraction, st.Files = "", 0, nil
+	st.StatusMsg, st.Fraction, st.Files, st.Note = "", 0, nil, ""
 	st.unrunnable = time.Time{}
 	h.queue = append(h.queue, st)
 	st.emit(hubEvent{Type: "requeued", Reason: reason})

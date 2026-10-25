@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -222,6 +223,9 @@ func TestMacPluginSandboxProfile(t *testing.T) {
 		var b strings.Builder
 		for _, x := range ps {
 			b.WriteString(` (subpath "` + x + `")`)
+			if r := resolved(x); r != x { // macOS temp folders are under /var, a link to /private/var; the profile names both
+				b.WriteString(` (subpath "` + r + `")`)
+			}
 		}
 		return b.String()
 	}
@@ -478,5 +482,154 @@ func TestMeshFilesKeepTheirType(t *testing.T) {
 	}
 	if acceptsType([]string{"model/gltf-binary"}, sniffMIME("mesh.glb", []byte("\x89PNG\r\n\x1a\n"))) {
 		t.Fatal("a PNG claiming to be a mesh must still be refused")
+	}
+}
+
+// Asking for someone else's Head never uses the asker's GPU: the asker leaves
+// the options out and the computer running the Head reads them from the words.
+func TestOptionsAreLeftForTheHeadsComputer(t *testing.T) {
+	img := `{"name":"a.png","data_base64":"iVBORw0K"}`
+	in, text, ok := optionsWanted([]byte(`{"request":"light from the left","return":"files","image":` + img + `}`))
+	if !ok || text != "light from the left" || string(in["image"]) != img {
+		t.Fatalf("an input without options needs them read: %v %q %v", in, text, ok)
+	}
+	if _, _, ok := optionsWanted([]byte(`{"options":{},"request":"light from the left"}`)); ok {
+		t.Fatal("an older asker sends options; they're run as they are")
+	}
+	if _, _, ok := optionsWanted([]byte(`not json`)); ok {
+		t.Fatal("input that isn't an object is run as it is")
+	}
+	// A Head with no options schema gets an empty options object, the picture untouched, and no model is asked.
+	a := &App{tools: NewToolScanner(nil)}
+	a.tools.plugins["x"] = &installedPlugin{Manifest: PluginManifest{ID: "x", Name: "X"}, Probe: pluginProbe{Have: true}}
+	out, note, _ := a.withPluginOptions(context.Background(), "x", []byte(`{"request":"hi","image":`+img+`}`), false, func(string) {
+		t.Fatal("no schema, nothing to read")
+	})
+	var got map[string]json.RawMessage
+	if json.Unmarshal(out, &got) != nil || string(got["options"]) != "{}" || string(got["image"]) != img || note != "" {
+		t.Fatalf("got %s (note %q)", out, note)
+	}
+}
+
+// Work for someone else's Head (the "should a Head do this?" check) can't land on
+// the asking computer, even when that computer lends the fastest model.
+func TestNotHereStepsSkipTheAsker(t *testing.T) {
+	h := NewHub(filepath.Join(t.TempDir(), "hub.json"), 0)
+	fast := []ModelInfo{{Name: "fast:1b", ParamsB: 1, Loaded: true, TokS: 200}}
+	asker := &hubDevice{ID: "a", Name: "Laptop", Owner: "Sam", online: true, lending: true, ollamaOK: true, lastSeen: time.Now(), slots: 1, models: fast}
+	h.st.Devices["a"] = asker
+	submit := func(body string) *httptest.ResponseRecorder {
+		rr := httptest.NewRecorder()
+		h.handleSubmit(rr, httptest.NewRequest("POST", "/v1/steps", strings.NewReader(body)), asker)
+		return rr
+	}
+	gate := `{"messages":[{"role":"user","content":"Should this tool handle the request?"}],"prefer":"fastest","not_here":true}`
+	if rr := submit(gate); rr.Code != 409 {
+		t.Fatalf("only the asker lends: want 409 so it isn't run there, got %d %s", rr.Code, rr.Body)
+	}
+	worker := &hubDevice{ID: "w", Name: "Studio Mac", Owner: "Andrews", online: true, lending: true, ollamaOK: true, lastSeen: time.Now(), slots: 1,
+		models: []ModelInfo{{Name: "slow:8b", ParamsB: 8, TokS: 20}}}
+	h.st.Devices["w"] = worker
+	rr := submit(gate)
+	var out struct{ ID string }
+	if rr.Code != 200 || json.Unmarshal(rr.Body.Bytes(), &out) != nil {
+		t.Fatalf("another device lends: want it queued, got %d %s", rr.Code, rr.Body)
+	}
+	st := h.steps[out.ID]
+	if _, _, ok := h.fits(asker, st); ok {
+		t.Fatal("the asker must never run a not_here step")
+	}
+	if _, _, ok := h.fits(worker, st); !ok {
+		t.Fatal("the other device should run it")
+	}
+	rr = submit(`{"messages":[{"role":"user","content":"hi"}],"prefer":"fastest"}`)
+	json.Unmarshal(rr.Body.Bytes(), &out)
+	if _, _, ok := h.fits(asker, h.steps[out.ID]); !ok {
+		t.Fatal("an ordinary chat may still run on the asker's own fastest model")
+	}
+}
+
+// The Head's computer sends the options it read as a note: the asker sees it,
+// a reconnect replays it, and a retry elsewhere starts without it.
+func TestWorkerNoteReachesTheAsker(t *testing.T) {
+	h, asker := testHubWithPlugins(t, shadowPlugin)
+	worker := h.st.Devices["w"]
+	st := &hubStep{ID: "s1", Kind: "run_plugin", Plugin: "perspective-shadow", RequesterID: asker.ID, RequesterOwner: asker.Owner,
+		Status: "assigned", Assigned: worker.ID, Attempts: 1, Exclude: map[string]bool{}, subs: map[chan hubEvent]struct{}{}}
+	h.steps[st.ID] = st
+	ch := make(chan hubEvent, 8)
+	st.subs[ch] = struct{}{}
+	req := httptest.NewRequest("POST", "/v1/steps/s1/progress", strings.NewReader(`{"note":"Options from your request: style left."}`))
+	req.SetPathValue("id", "s1")
+	h.handleProgress(httptest.NewRecorder(), req, worker)
+	select { // emit is synchronous: the note is already in the channel or never comes
+	case ev := <-ch:
+		if ev.Type != "note" || ev.Reason != "Options from your request: style left." {
+			t.Fatalf("the asker should get the note: %+v", ev)
+		}
+	default:
+		t.Fatal("no note reached the asker")
+	}
+	if r := h.replayLocked(st); len(r) < 2 || r[1].Type != "note" {
+		t.Fatalf("a reconnect replays the note after the assignment: %+v", r)
+	}
+	h.requeueLocked(st, "worker went away", true)
+	for _, ev := range h.replayLocked(st) {
+		if ev.Type == "note" {
+			t.Fatal("a retry on another computer starts without the old note")
+		}
+	}
+}
+
+// A not_here request (the gate for someone else's Head) never runs on this
+// computer: out of a network, or refused by the hub, it fails instead of
+// falling back to this computer's own model. (This App has no Ollama, so a
+// fallback would crash the test.)
+func TestNotHereNeverRunsOnThisComputer(t *testing.T) {
+	a := &App{}
+	ev := a.runPrompt(context.Background(), submitReq{Messages: []ChatMessage{{Role: "user", Content: "Should this tool handle the request?"}}, NotHere: true},
+		func(ev genEvent) { t.Fatalf("nothing may run here: %+v", ev) }, nil)
+	if ev.Type != "error" {
+		t.Fatalf("want an error, got %+v", ev)
+	}
+}
+
+// A worker older than 0.6.1 doesn't read options the asker left out; the asker is told
+// the Head ran on its defaults. A current worker gets no such note.
+func TestOlderWorkerIsNamedWhenItCantReadOptions(t *testing.T) {
+	h, asker := testHubWithPlugins(t, shadowPlugin)
+	worker := h.st.Devices["w"]
+	step := func() *hubStep {
+		return &hubStep{ID: "s1", Kind: "run_plugin", Plugin: "perspective-shadow", RequesterID: asker.ID, RequesterOwner: asker.Owner,
+			optionsLeft: true, Exclude: map[string]bool{}, subs: map[chan hubEvent]struct{}{}}
+	}
+	worker.appVer = "0.6.0"
+	st := step()
+	h.assignLocked(st, worker, "")
+	if !strings.Contains(st.Note, "Studio Mac runs an older Chimera") {
+		t.Fatalf("want a note naming the old worker, got %q", st.Note)
+	}
+	worker.appVer = Version
+	st = step()
+	h.assignLocked(st, worker, "")
+	if st.Note != "" {
+		t.Fatalf("a current worker reads the options itself: %q", st.Note)
+	}
+}
+
+// Reading options picks the model that answers soonest, the hub's "fastest":
+// with speeds unknown that's the small one, and a loaded model beats loading one.
+func TestOptionsModelIsTheSoonestToAnswer(t *testing.T) {
+	big := ModelInfo{Name: "big:14b", ParamsB: 14, SizeBytes: 9e9}
+	small := ModelInfo{Name: "small:3b", ParamsB: 3, SizeBytes: 2e9}
+	if m, _ := fastestChatModel([]ModelInfo{big, small}); m.Name != "small:3b" {
+		t.Fatalf("unknown speeds: want the small model, got %s", m.Name)
+	}
+	big.Loaded = true
+	if m, _ := fastestChatModel([]ModelInfo{small, big}); m.Name != "big:14b" {
+		t.Fatalf("an already loaded model answers sooner than one that must load: got %s", m.Name)
+	}
+	if _, ok := fastestChatModel([]ModelInfo{{Name: "nomic-embed-text", SizeBytes: 3e8}}); ok {
+		t.Fatal("an embedding model can't read options")
 	}
 }

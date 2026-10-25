@@ -115,6 +115,18 @@ func (n *Node) sharedModels() []ModelInfo {
 	return out
 }
 
+// runningModel says whether a step running here is using the model.
+func (n *Node) runningModel(model string) bool {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	for _, rs := range n.running {
+		if normModel(rs.Model) == normModel(model) {
+			return true
+		}
+	}
+	return false
+}
+
 func (n *Node) isShared(model string) bool {
 	for _, m := range n.sharedModels() {
 		if normModel(m.Name) == normModel(model) {
@@ -704,7 +716,31 @@ func (n *Node) runPluginStep(ctx context.Context, cancel context.CancelFunc, c *
 			}
 		}
 	}()
-	res := n.app.runPlugin(ctx, a.StepID, a.Plugin, a.Input, func(msg string, f float64) {
+	// The options come from the request here, with a model on this computer, so
+	// the asker's own GPU stays out of it.
+	own := sameOwner(a.Requester, n.app.config().Owner)
+	starting := status
+	input, note, took := n.app.withPluginOptions(ctx, a.Plugin, a.Input, own, func(msg string) {
+		smu.Lock()
+		status, dirty = msg, true
+		smu.Unlock()
+	})
+	smu.Lock()
+	if status != starting { // the options are read; the plugin itself starts now
+		status, dirty = starting, true
+	}
+	smu.Unlock()
+	if note != "" && ctx.Err() == nil {
+		nctx, nc := context.WithTimeout(context.Background(), 8*time.Second)
+		if stop, err := c.Note(nctx, a.StepID, note); err == nil && stop {
+			n.mu.Lock()
+			rs.stopReason = "requester"
+			n.mu.Unlock()
+			cancel()
+		}
+		nc()
+	}
+	res := n.app.runPlugin(ctx, a.StepID, a.Plugin, input, func(msg string, f float64) {
 		smu.Lock()
 		if msg != "" {
 			status = msg
@@ -731,7 +767,7 @@ func (n *Node) runPluginStep(ctx context.Context, cancel context.CancelFunc, c *
 		pctx, pc := context.WithTimeout(context.Background(), 8*time.Second)
 		_, _ = c.Progress(pctx, a.StepID, res.Summary, "")
 		pc()
-		stats := ChatStats{TotalDuration: int64(res.Seconds * 1e9)}
+		stats := ChatStats{TotalDuration: int64((res.Seconds + took.Seconds()) * 1e9)} // the options are part of the job
 		if err := c.CompleteWithFiles(fctx, a.StepID, stats, res.Files); err != nil {
 			log.Printf("step %s: reporting the plugin's result: %v", a.StepID, err)
 			return

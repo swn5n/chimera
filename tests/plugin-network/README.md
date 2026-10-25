@@ -9,15 +9,20 @@ cd ../../app && go build -o /tmp/chimera . && cd ../tests/plugin-network
 python3 run_it.py /tmp/chimera /tmp/chimera-it
 ```
 
-It checks (25 checks; exit code 0 when all pass): B's probe turns its plugins into tools; a chat message
+It checks (27 checks; exit code 0 when all pass): B's probe turns its plugins into tools; a chat message
 with a picture picks the relevant plugin, runs it on B and the picture comes back and is saved with the
-chat; the options come from the request through a model with structured output, and out-of-range values
-are clamped; inside the plugin the home folder and Chimera's data folder are hidden and the network is
+chat; the options come from the request through a model with structured output on B, and out-of-range
+values are clamped; A lends its own already-loaded model too (so the hub would pick A as "the fastest"),
+yet A's own Ollama gets no call during the Head jobs; inside the plugin the home folder and Chimera's data folder are hidden and the network is
 blocked, even though the demo plugins' probes ask to read the folder that holds B's data folder and
 the data folder itself (`DEMO_READ`; the worker refuses the second); a 1-star rating moves the choice to the other relevant plugin; cancelling stops the plugin's
 process on B; a request no plugin fits gets a clear answer; and turning off "Let the network use my
 plugins" on B stops it being used. It plants `~/chimera-it-secret.txt` for the sandbox check and removes
-it afterwards. Uses ports 7571, 7572, 7580 and 11555.
+it afterwards. Uses ports 7571, 7572, 7580, 11555 and 11556 (A's own fake Ollama).
+
+`heads_text_test.py` (16 checks, same arguments) does words-only Heads: a request to make something goes
+to B's Head, a question stays a chat, and A's own Ollama stays idle for the Head job: the "should this
+tool handle it?" check and the options run on B. Ports 7591, 7592, 7595, 7596, 11575 and 11576.
 
 Safe to run beside a real Chimera: its own ports, data folders and a closed pool, and the worker is
 stopped before the hub.
