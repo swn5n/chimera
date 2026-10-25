@@ -115,8 +115,7 @@ Never port-forward 7480 straight from your router: that exposes the hub with no 
 - **One picture per message; long tasks don't call Heads yet; no video/audio player inline** (those files download).
 - The reference Heads haven't met a real ComfyUI / Hunyuan3D yet.
 
-- **Privacy.** The pool is open and unencrypted: the host can see prompts, and anyone you let in can too. Fine for friends; not for anything sensitive. Encrypting traffic and hiding prompts from the host is a later job.
-- The window is still a web app (in a Chrome/Edge window, or the Dock app once you install it). A fully native Mac window would need a separate build on the Mac — say the word if you want it.
+- **Privacy.** The pool is open and unencrypted: the host can see prompts, and anyone you let in can too. Fine for friends; not for anything sensitive. Encrypting traffic and hiding prompts from the host is something we are working on.
 - Chimera finds and links tools like Blender and ComfyUI but doesn't install them; Ollama models it downloads itself.
 - The library stores text (code, scripts, lessons). Generated 3D meshes and images aren't stored yet.
 
