@@ -43,7 +43,7 @@ var upscaler = PluginInfo{ID: "upscale", Name: "Upscaler", Version: "1.0.0", Sum
 func TestPluginSearchRelevanceThenRating(t *testing.T) {
 	h, asker := testHubWithPlugins(t, shadowPlugin, otherShadow, upscaler)
 	// Both shadow plugins are relevant; with no ratings the prior ties them and relevance decides.
-	got := h.pluginCandidatesLocked(asker, "add a soft studio shadow under this machine", "image/png", false)
+	got := h.pluginCandidatesLocked(asker, "add a soft studio shadow under this machine", "image/png", false, pluginScope{})
 	if len(got) != 2 {
 		t.Fatalf("want the 2 shadow plugins, got %+v", got)
 	}
@@ -57,26 +57,63 @@ func TestPluginSearchRelevanceThenRating(t *testing.T) {
 	for _, r := range []int{2, 3} {
 		h.ratePluginLocked("perspective-shadow", r)
 	}
-	got = h.pluginCandidatesLocked(asker, "add a soft studio shadow under this machine", "image/png", false)
+	got = h.pluginCandidatesLocked(asker, "add a soft studio shadow under this machine", "image/png", false, pluginScope{})
 	if got[0].ID != "quick-shadow" || got[0].Rating != 5 || got[0].Rated != 3 {
 		t.Fatalf("the better rated plugin should lead: %+v", got[0])
 	}
 	// An irrelevant request finds neither shadow plugin.
-	if got := h.pluginCandidatesLocked(asker, "make this picture bigger and sharper", "image/png", false); len(got) != 1 || got[0].ID != "upscale" {
+	if got := h.pluginCandidatesLocked(asker, "make this picture bigger and sharper", "image/png", false, pluginScope{}); len(got) != 1 || got[0].ID != "upscale" {
 		t.Fatalf("want only the upscaler, got %+v", got)
 	}
 	// A JPEG can't go to a PNG-only plugin.
-	for _, c := range h.pluginCandidatesLocked(asker, "upscale", "image/jpeg", false) {
+	for _, c := range h.pluginCandidatesLocked(asker, "upscale", "image/jpeg", false, pluginScope{}) {
 		if c.ID == "upscale" {
 			t.Fatal("upscale only takes PNG")
 		}
 	}
 }
 
+// The pool's best rated Head is on someone else's computer, and the asker has its
+// own: with "Run on" set to the asker's computer, or "Only my devices", the search
+// must offer the asker's Head, not one the step could never be sent to.
+func TestPluginSearchKeepsToRunOnAndOnlyMine(t *testing.T) {
+	theirs := PluginInfo{ID: "hunyuan3d-glb-mac", Name: "Hunyuan3D picture to 3D mesh (GLB)", Version: "0.1.0",
+		Summary: "Turns a picture into a 3D mesh.", Have: true, Tags: []string{"3d", "mesh"}, Accepts: []string{"image/png"}}
+	ours := PluginInfo{ID: "hunyuan3d-mac", Name: "Hunyuan3D textured 3D model from a picture", Version: "0.1.0",
+		Summary: "Turns a picture into a textured 3D model.", Have: true, Tags: []string{"3d", "mesh", "texture"}, Accepts: []string{"image/png"}}
+	h, asker := testHubWithPlugins(t, theirs)
+	asker.lending, asker.ollamaOK, asker.lendPlugins, asker.slots = true, true, true, 1
+	asker.profile = DeviceProfile{Tools: []ToolInfo{{ID: "plugin:" + ours.ID, Have: true}}, Plugins: []PluginInfo{ours}}
+	h.syncPluginEntriesLocked(asker)
+	for _, r := range []int{5, 5, 5} {
+		h.ratePluginLocked(theirs.ID, r)
+	}
+	const q = "can u turn this into a textured 3d model"
+	if got := h.pluginCandidatesLocked(asker, q, "image/png", false, pluginScope{}); len(got) != 2 || got[0].ID != theirs.ID {
+		t.Fatalf("anywhere: want both, the better rated first, got %+v", got)
+	}
+	for _, scope := range []pluginScope{{Target: asker.ID}, {Private: true}, {Target: asker.ID, Private: true}} {
+		got := h.pluginCandidatesLocked(asker, q, "image/png", false, scope)
+		if len(got) != 1 || got[0].ID != ours.ID || got[0].Devices != 1 {
+			t.Fatalf("%+v: want only the asker's own Head, got %+v", scope, got)
+		}
+	}
+	if got := h.pluginCandidatesLocked(asker, q, "image/png", false, pluginScope{Target: "w"}); len(got) != 1 || got[0].ID != theirs.ID {
+		t.Fatalf("Run on the other computer: want its Head only, got %+v", got)
+	}
+	// The hub's endpoint reads the scope from the query.
+	rec := httptest.NewRecorder()
+	h.handlePlugins(rec, httptest.NewRequest("GET", "/v1/plugins?q=3d+model&accepts=image/png&target=a", nil), asker)
+	var out struct{ Plugins []PluginCandidate }
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || len(out.Plugins) != 1 || out.Plugins[0].ID != ours.ID {
+		t.Fatalf("GET /v1/plugins with target: %s", rec.Body.String())
+	}
+}
+
 func TestPluginNotLentToOthers(t *testing.T) {
 	h, asker := testHubWithPlugins(t, shadowPlugin)
 	h.st.Devices["w"].lendPlugins = false
-	if got := h.pluginCandidatesLocked(asker, "shadow", "image/png", false); len(got) != 0 {
+	if got := h.pluginCandidatesLocked(asker, "shadow", "image/png", false, pluginScope{}); len(got) != 0 {
 		t.Fatalf("a device that doesn't lend plugins must not be offered: %+v", got)
 	}
 	st := &hubStep{Kind: "run_plugin", Plugin: "perspective-shadow", RequesterOwner: "Sam", Exclude: map[string]bool{}}
@@ -97,7 +134,7 @@ func TestPluginFlaggedAfterBadRatings(t *testing.T) {
 	if e := h.pluginEntryLocked("perspective-shadow"); e.Status != "flagged" {
 		t.Fatalf("want flagged, got %s", e.Status)
 	}
-	if got := h.pluginCandidatesLocked(asker, "shadow", "image/png", false); len(got) != 0 {
+	if got := h.pluginCandidatesLocked(asker, "shadow", "image/png", false, pluginScope{}); len(got) != 0 {
 		t.Fatal("a flagged plugin isn't picked")
 	}
 }

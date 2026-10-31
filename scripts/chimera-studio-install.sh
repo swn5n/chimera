@@ -24,6 +24,8 @@
 #   ~/chimera-tools            tools, Python envs, model weights, launchers, log
 #   Ollama's model folder      the four `ollama pull`s (default ~/.ollama/models)
 #   ~/.cache/huggingface       facebook/dinov2-giant, used by Hunyuan texturing
+#   ~/.u2net                   rembg's background-removal model, for the hunyuan3d-mac Head
+#   ~/.local/share/uv/python   only if no Python 3.10-3.12 here can run pip and uv is installed
 #   ~/.cache/uv and pip        Python package caches
 #   ~/.gitconfig               Hunyuan's installer runs `git lfs install`
 #   Homebrew                   only if Python 3.10-3.12 or git-lfs is missing AND
@@ -378,6 +380,24 @@ confirm_brew() {  # <formulae>
   return 1
 }
 
+# A Python 3.10-3.12 whose pip can start. Homebrew's python@3.11 bottle may be built for a newer
+# macOS than this one: then pyexpat can't load (/usr/lib/libexpat lacks a symbol), pip can't read
+# the macOS version, and ensurepip fails. Falls back to uv's self-contained Python 3.11.
+working_python() {
+  local c
+  for c in python3.12 python3.11 python3.10 "$HOME/.local/bin/python3.12" "$HOME/.local/bin/python3.11"; do
+    if command -v "$c" >/dev/null 2>&1 && "$c" -c 'import pyexpat, ensurepip' >/dev/null 2>&1; then
+      echo "$c"
+      return 0
+    fi
+  done
+  command -v uv >/dev/null 2>&1 || return 1
+  say "  no working Python 3.10-3.12 found; installing uv's Python 3.11 (~/.local/share/uv/python)" >&2
+  uv python install 3.11 >&2 || return 1
+  "$HOME/.local/bin/python3.11" -c 'import pyexpat, ensurepip' >/dev/null 2>&1 || return 1
+  echo "$HOME/.local/bin/python3.11"
+}
+
 step_hunyuan() {
   local marker="$DONE_DIR/hunyuan3d" py="" v need="" w
   if [ -f "$marker" ]; then
@@ -409,6 +429,17 @@ step_hunyuan() {
   fi
   git_pinned "$HY_PORT_URL" "$HY_PORT_SHA" "$HY_DIR" || return 1
   git_pinned "$HY_UPSTREAM_URL" "$HY_UPSTREAM_SHA" "$HY_DIR/Hunyuan3D-2.1" || return 1
+  # The port's installer reuses an existing venv, so make it here with a Python whose pip starts.
+  # A venv left by a failed run (no working pip) is remade; one that works is left alone.
+  if [ -d "$HY_DIR/venv" ] && ! "$HY_DIR/venv/bin/python" -m pip --version >/dev/null 2>&1; then
+    say "  removing the half-made venv from an earlier failed run"
+    rm -rf "$HY_DIR/venv"
+  fi
+  if [ ! -d "$HY_DIR/venv" ]; then
+    py="$(working_python)" || { note "no Python 3.10-3.12 here can run pip (Homebrew's may be built for a newer macOS); run 'brew install uv', then re-run"; return 1; }
+    say "  making the venv with $py"
+    "$py" -m venv "$HY_DIR/venv" || { note "couldn't make the venv with $py"; return 1; }
+  fi
   say "  running the port's own installer (the reviewed copy). Long: ~${HUNYUAN_GB} GB, tens of minutes."
   say "  Its messages are in Russian; that's cosmetic."
   if ! ( cd "$HY_DIR" && bash ./install.sh ); then
@@ -419,6 +450,14 @@ step_hunyuan() {
   if [ ! -x "$HY_DIR/venv/bin/python" ]; then note "venv missing after install"; return 1; fi
   if [ ! -d "$w/hunyuan3d-dit-v2-1" ]; then note "shape weights missing after install"; return 1; fi
   if [ ! -d "$w/hunyuan3d-paintpbr-v2-1" ]; then note "texture (paint) weights missing after install"; return 1; fi
+  # rembg fetches its background model on first use; Heads run with no network, so fetch it now.
+  if [ ! -f "${U2NET_HOME:-$HOME/.u2net}/u2net.onnx" ]; then
+    say "  fetching rembg's u2net background model (~176 MB) for the hunyuan3d-mac Head"
+    if ! "$HY_DIR/venv/bin/python" -c "from rembg import new_session; new_session('u2net')"; then
+      note "couldn't download rembg's u2net model; re-run to retry"
+      return 1
+    fi
+  fi
   printf 'port=%s upstream=%s date=%s\n' "$HY_PORT_SHA" "$HY_UPSTREAM_SHA" "$(date +%Y-%m-%d)" > "$marker"
   return 0
 }

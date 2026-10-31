@@ -27,6 +27,17 @@ type pluginChoice struct {
 	why   string // why this one, for the reply's note ("2 Heads could do this; …")
 }
 
+// pluginScope is where the request may run, for picking its Head.
+func (r chatReq) pluginScope() pluginScope {
+	return pluginScope{Target: r.Target, Private: r.Private}
+}
+
+// elsewhere says whether scope pins the request to another computer, so a
+// Head installed here mustn't stand in.
+func (a *App) elsewhere(scope pluginScope) bool {
+	return scope.Target != "" && scope.Target != a.config().DeviceID
+}
+
 // headRunsHere says whether a Head is installed on this computer and able to
 // run here. Only such a Head is the person's own, which may use this
 // computer's GPU; an installed copy that can't run here doesn't count.
@@ -63,7 +74,7 @@ func (a *App) runPluginChat(ctx context.Context, gen *generation, req chatReq, t
 			mime = img.MIME
 		}
 		var err error
-		if choice, why, err = a.choosePlugin(ctx, text, mime); err != nil {
+		if choice, why, err = a.choosePlugin(ctx, text, mime, req.pluginScope()); err != nil {
 			return genEvent{Type: "error", Error: err.Error()}
 		}
 	}
@@ -191,13 +202,13 @@ func (a *App) runPluginHere(ctx context.Context, gen *generation, p PluginCandid
 }
 
 // choosePlugin picks the plugin for a request: the network's answer when this
-// computer is in one (relevant plugins, best rated first), otherwise the most
-// relevant plugin installed here.
-func (a *App) choosePlugin(ctx context.Context, text, mime string) (pluginChoice, string, error) {
+// computer is in one (relevant plugins on the devices the request may run on,
+// best rated first), otherwise the most relevant plugin installed here.
+func (a *App) choosePlugin(ctx context.Context, text, mime string, scope pluginScope) (pluginChoice, string, error) {
 	if a.config().Joined() {
 		if c, err := a.node.client(); err == nil {
 			sctx, sc := context.WithTimeout(ctx, 10*time.Second)
-			cands, err := c.Plugins(sctx, text, mime)
+			cands, err := c.Plugins(sctx, text, mime, scope)
 			sc()
 			if err == nil && len(cands) > 0 {
 				best := cands[0]
@@ -208,6 +219,9 @@ func (a *App) choosePlugin(ctx context.Context, text, mime string) (pluginChoice
 				return pluginChoice{PluginCandidate: best}, why, nil
 			}
 		}
+	}
+	if a.elsewhere(scope) {
+		return pluginChoice{}, "", errors.New("The computer picked in Run on has no Head that can do that. Pick another one, or Best available.")
 	}
 	local := a.localPluginCandidates(text, mime)
 	if len(local) > 0 {
@@ -227,7 +241,7 @@ func (a *App) choosePlugin(ctx context.Context, text, mime string) (pluginChoice
 // over ordinary conversation ("how does image generation work?" stays a chat).
 // With no model to ask, only a very strong word match counts. Returns the Head
 // when one should run.
-func (a *App) headForText(ctx context.Context, text string) *pluginChoice {
+func (a *App) headForText(ctx context.Context, text string, scope pluginScope) *pluginChoice {
 	if strings.TrimSpace(text) == "" {
 		return nil
 	}
@@ -236,11 +250,11 @@ func (a *App) headForText(ctx context.Context, text string) *pluginChoice {
 	if a.config().Joined() {
 		if c, err := a.node.client(); err == nil {
 			sctx, sc := context.WithTimeout(ctx, 8*time.Second)
-			cands, _ = c.Plugins(sctx, text, "")
+			cands, _ = c.Plugins(sctx, text, "", scope)
 			sc()
 		}
 	}
-	if len(cands) == 0 {
+	if len(cands) == 0 && !a.elsewhere(scope) {
 		cands, local = a.localPluginCandidates(text, ""), true
 	}
 	if len(cands) == 0 {
@@ -273,10 +287,11 @@ var headGateSchema = json.RawMessage(`{"type":"object","properties":{"use":{"typ
 // another computer to take it before the words alone decide.
 const gateWaitElsewhere = 8 * time.Second
 
-// headGate asks the fastest model whether the Head should handle the request,
-// on another computer when notHere is set. Those may all be busy (a Head job
-// takes minutes), so if none takes the question within a few seconds it isn't
-// asked. asked is false when no model could be reached.
+// headGate asks the helper model (Hydra 1.0), or else the fastest model,
+// whether the Head should handle the request, on another computer when notHere
+// is set. Those may all be busy (a Head job takes minutes), so if none takes
+// the question within a few seconds it isn't asked. asked is false when no
+// model could be reached.
 func (a *App) headGate(ctx context.Context, p PluginCandidate, text string, notHere bool) (use, asked bool) {
 	desc := p.Name + ": " + p.Summary
 	if p.WhenToUse != "" {
@@ -288,6 +303,7 @@ func (a *App) headGate(ctx context.Context, p PluginCandidate, text string, notH
 	}
 	req := submitReq{Messages: msgs, Format: headGateSchema, Prefer: "fastest", NeedCtx: historyTokens(msgs) + 256,
 		Options: map[string]any{"temperature": 0}, Purpose: "Deciding whether " + p.Name + " should handle a request", NotHere: notHere}
+	req.PreferModel = helperFor(req.NeedCtx) // Hydra 1.0 was trained for this check
 	gctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
 	var unassigned *time.Timer
@@ -409,11 +425,12 @@ func (a *App) withPluginOptions(ctx context.Context, id string, input []byte, ow
 
 // fastestChatModel is the chat model that fits its computer and answers
 // soonest, the way the hub picks "fastest" (eta: loading it, then its speed).
+// The helper model isn't one: reading options isn't one of its jobs.
 func fastestChatModel(models []ModelInfo) (ModelInfo, bool) {
 	var best ModelInfo
 	found := false
 	for _, m := range models {
-		if !m.CanChat() || m.Fits == "too_big" {
+		if !m.ForChat() || m.Fits == "too_big" {
 			continue
 		}
 		if !found || eta(m) < eta(best) {

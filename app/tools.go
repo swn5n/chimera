@@ -30,6 +30,7 @@ type ToolInfo struct {
 	Lendable bool   `json:"lendable"`
 	GetURL   string `json:"get_url,omitempty"`
 	Path     string `json:"-"`
+	Version  string `json:"-"` // "Blender 5.2.2", "Python 3.13.12" (blender and python only)
 }
 
 type ToolScanner struct {
@@ -67,7 +68,7 @@ func (t *ToolScanner) loop() {
 func (t *ToolScanner) scan() {
 	found := map[string]ToolInfo{}
 	if p, v := findBlender(); p != "" {
-		found["blender"] = ToolInfo{ID: "blender", Name: "Blender", Have: true, Via: v, Path: p}
+		found["blender"] = ToolInfo{ID: "blender", Name: "Blender", Have: true, Via: v, Path: p, Version: v}
 	}
 	for id, info := range scanComfy() {
 		found[id] = info
@@ -82,7 +83,8 @@ func (t *ToolScanner) scan() {
 		found["tts"] = ToolInfo{ID: "tts", Name: "Text to speech", Have: true, Via: filepath.Base(p), Path: p}
 	}
 	if p := findPython(); p != "" {
-		found["python"] = ToolInfo{ID: "python", Name: "Python", Have: true, Via: p, Path: p}
+		found["python"] = ToolInfo{ID: "python", Name: "Python", Have: true, Via: p, Path: p,
+			Version: strings.TrimSpace(runOut(5*time.Second, p, "--version"))}
 	}
 	t.mu.Lock()
 	changed := len(found) != len(t.ext)
@@ -116,6 +118,13 @@ func (t *ToolScanner) Path(id string) string {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.ext[id].Path
+}
+
+// Info is what was found for an app on disk (empty if it wasn't).
+func (t *ToolScanner) Info(id string) ToolInfo {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.ext[id]
 }
 
 // List merges what Ollama's models can do with the apps found on disk.
@@ -260,6 +269,9 @@ func findBlender() (path, version string) {
 		cands = []string{"/snap/bin/blender", "/usr/bin/blender", "/usr/local/bin/blender"}
 	}
 	if p, err := exec.LookPath("blender"); err == nil {
+		if app := launcherTarget(p); app != "" {
+			p = app // a launcher script (Homebrew's): use the app it starts
+		}
 		cands = append([]string{p}, cands...)
 	}
 	for _, p := range cands {

@@ -33,6 +33,7 @@ type genEvent struct {
 	Credits      float64 `json:"credits,omitempty"`
 	Free         bool    `json:"free,omitempty"`
 	Local        bool    `json:"local,omitempty"`
+	DoneReason   string  `json:"done_reason,omitempty"` // "length": the model stopped at its output limit
 	// Plugin replies: which plugin, how far along it is, and the files it made.
 	Plugin   string       `json:"plugin,omitempty"`
 	Fraction float64      `json:"fraction,omitempty"`
@@ -393,7 +394,7 @@ func (g *GenManager) runWordsOrHead(gen *generation, req chatReq, text string, h
 	gen.mu.Lock()
 	gen.cancelFn = cancel
 	gen.mu.Unlock()
-	choice := g.app.headForText(ctx, text)
+	choice := g.app.headForText(ctx, text, req.pluginScope())
 	cancel()
 	if choice == nil {
 		g.run(gen, req, history)

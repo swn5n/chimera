@@ -30,6 +30,7 @@ type DeviceProfile struct {
 	BestFor      []string     `json:"best_for"`
 	Tools        []ToolInfo   `json:"tools"`
 	CanTest      bool         `json:"can_test"`          // can safely sandbox library test runs
+	CanCheck     bool         `json:"can_check"`         // can sandbox a long task's script to check it (hydra_check.go)
 	Plugins      []PluginInfo `json:"plugins,omitempty"` // plugins installed here
 }
 
@@ -274,6 +275,7 @@ func (a *App) profile() DeviceProfile {
 		Accel:        accel,
 		Tools:        a.tools.List(),
 		CanTest:      canSandbox(),
+		CanCheck:     checkSandboxOK(),
 		Plugins:      a.tools.PluginInfos(),
 	}
 	if sys.OS == "" {
@@ -296,7 +298,7 @@ func bestFor(p DeviceProfile, models []ModelInfo) []string {
 	}
 	longest, fastest := 0, 0.0
 	for _, m := range models {
-		if !m.CanChat() || m.Fits == "too_big" {
+		if !m.ForChat() || m.Fits == "too_big" {
 			continue
 		}
 		if m.CtxMax > longest {

@@ -1,0 +1,33 @@
+{
+  "chimera_plugin": 1,
+  "id": "hunyuan3d-mac",
+  "name": "Hunyuan3D textured 3D model from a picture",
+  "version": "0.1.0",
+  "summary": "Turns one picture of an object into a textured 3D model (GLB with a PBR material) with Hunyuan3D 2.1, run on this Mac's GPU. Sends a turntable preview picture with it.",
+  "when_to_use": "Someone attaches a picture of a single object and asks for a 3D model, mesh, GLB, asset or printable model of it, textured or not — for Blender, a game, AR, 3D printing.",
+  "when_not_to_use": "Pictures of whole scenes, rooms or several objects, anything without a picture, or 2D edits like shadows, backgrounds and upscaling.",
+  "tags": ["3d", "3d model", "mesh", "glb", "texture", "textured", "pbr", "hunyuan3d", "image to 3d", "asset", "blender"],
+  "task_kinds": ["mesh-generation"],
+
+  "accepts": ["image/png", "image/jpeg", "image/webp"],
+  "optional_input": false,
+  "produces": ["model/gltf-binary", "image/png"],
+
+  "entry": "run.py",
+  "interpreter": "python3",
+  "network": "",
+  "env": ["HUNYUAN3D_MAC_DIR", "HF_HUB_CACHE", "U2NET_HOME"],
+  "timeout_s": 3600,
+
+  "options": {
+    "type": "object",
+    "properties": {
+      "texture": {"type": "boolean", "description": "paint a PBR texture on the mesh (default yes; roughly doubles the time). No for a plain grey mesh"},
+      "octree_resolution": {"type": "integer", "minimum": 128, "maximum": 512, "description": "mesh detail; 256 is the default, 384-512 is finer and slower"},
+      "steps": {"type": "integer", "minimum": 10, "maximum": 50, "description": "shape diffusion steps (default 30)"},
+      "guidance": {"type": "number", "minimum": 1, "maximum": 15, "description": "how closely the shape follows the picture (default 5)"},
+      "seed": {"type": "integer", "minimum": 0, "maximum": 2147483647, "description": "a fixed seed to repeat a result"},
+      "remove_background": {"type": "boolean", "description": "cut the object out of its background first (default yes; no only if the picture is already a cut-out)"}
+    }
+  }
+}

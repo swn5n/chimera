@@ -39,6 +39,8 @@ type App struct {
 	hub    *Hub
 	hubErr string
 
+	helper helperShare // the helper model: shared as a host, fetched from the host (helper_share.go)
+
 	subMu sync.Mutex
 	subs  map[chan struct{}]struct{}
 
@@ -354,6 +356,7 @@ func (a *App) rejoinSomewhere(cfg Config) {
 }
 
 func (a *App) Shutdown() {
+	a.tasks.CancelAll()
 	a.node.Disconnect("now")
 	time.Sleep(300 * time.Millisecond)
 	a.hubMu.Lock()
@@ -501,6 +504,7 @@ func (a *App) startHostingWith(elected bool) error {
 		h.EnsureOwner(cfg.Owner)
 		h.EnsureAutoJoin(cfg.AutoJoin)
 		h.SetElected(elected)
+		h.SetHelperSource(a.sharedHelper) // hand out this computer's Hydra 1.0
 		if err := h.Start(); err != nil {
 			a.hubErr = err.Error()
 			a.hubMu.Unlock()

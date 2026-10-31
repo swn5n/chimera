@@ -296,10 +296,19 @@ func acceptsType(accepts []string, mime string) bool {
 	return false
 }
 
+// pluginScope is where a request may run: the device picked in "Run on" and
+// "Only my devices". The search only counts plugins on those devices, the same
+// limits fits puts on the step itself, so the best rated plugin is one the step
+// can actually go to.
+type pluginScope struct {
+	Target  string // a device ID, or "" for any
+	Private bool   // only the asker's own devices
+}
+
 // pluginCandidatesLocked lists the plugins that could run for viewer's request:
 // relevant to the words (when there are any) and able to take the input, ranked
 // by their ratings. all=true lists every plugin in the network.
-func (h *Hub) pluginCandidatesLocked(viewer *hubDevice, query, accepts string, all bool) []PluginCandidate {
+func (h *Hub) pluginCandidatesLocked(viewer *hubDevice, query, accepts string, all bool, scope pluginScope) []PluginCandidate {
 	type agg struct {
 		info    PluginInfo
 		devices int
@@ -312,6 +321,9 @@ func (h *Hub) pluginCandidatesLocked(viewer *hubDevice, query, accepts string, a
 		}
 		mine := viewer != nil && sameOwner(d.Owner, viewer.Owner)
 		if !d.lendPlugins && !mine {
+			continue
+		}
+		if (scope.Target != "" && d.ID != scope.Target) || (scope.Private && !mine) {
 			continue
 		}
 		for _, p := range d.profile.Plugins {
@@ -383,7 +395,8 @@ func (h *Hub) pluginCandidatesLocked(viewer *hubDevice, query, accepts string, a
 func (h *Hub) handlePlugins(w http.ResponseWriter, r *http.Request, d *hubDevice) {
 	q := r.URL.Query()
 	h.mu.Lock()
-	out := h.pluginCandidatesLocked(d, q.Get("q"), q.Get("accepts"), q.Get("all") == "1")
+	out := h.pluginCandidatesLocked(d, q.Get("q"), q.Get("accepts"), q.Get("all") == "1",
+		pluginScope{Target: q.Get("target"), Private: q.Get("private") == "1"})
 	h.mu.Unlock()
 	if n := atoiDefault(q.Get("limit"), 10); n > 0 && len(out) > n {
 		out = out[:n]

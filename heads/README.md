@@ -40,11 +40,13 @@ ComfyUI for the pool.
 |---|---|---|---|
 | `TEMPLATE/` | A skeleton to copy for a new Head | — | either |
 | `comfyui-image/` | Pictures from words via ComfyUI's API (SD 1.5 / SDXL / Flux, any checkpoint you have; or your own exported `workflow_api.json`) | ComfyUI running (default `http://127.0.0.1:8188`) with a checkpoint | words |
-| `hunyuan3d-mesh/` | A 3D mesh (GLB/OBJ) from one picture via Hunyuan3D 2's API server, optionally textured | `python api_server.py --port 8080` from the Hunyuan3D-2 repo (`--enable_tex` for textures) | picture |
+| `hunyuan3d-mac/` | A **textured** 3D model (GLB with a PBR material) from one picture with Hunyuan3D 2.1 on a Mac's GPU, plus a turntable preview picture. No server: each job runs the model and exits | The Hunyuan3D 2.1 Mac port, from `scripts/chimera-studio-install.sh` (`SKIP=image,music,tts,vision,planner` for just this) | picture |
+| `hunyuan3d-mesh/` | A 3D mesh (GLB/OBJ) from one picture via Hunyuan3D 2's API server, optionally textured. For Nvidia PCs | `python api_server.py --port 8080` from the Hunyuan3D-2 repo (`--enable_tex` for textures) | picture |
 | *(on the laptop)* `perspective-shadow/` | Studio shadows for pictures of machines (Perspective in Blender) — see the laptop's handoff | Blender 5 + Perspective | picture |
 
-The two reference Heads were tested through Chimera's real sandboxed runner against servers that speak
-the same API; they have **not** been run against real ComfyUI / Hunyuan3D yet. If one trips on your
+`hunyuan3d-mac` ran for real on the Studio through Chimera's sandboxed runner. The other two reference
+Heads were tested through that runner against servers that speak the same API; they have **not** been
+run against real ComfyUI / Hunyuan3D yet. If one trips on your
 setup, run it alone (below) and send the output.
 
 ### ComfyUI notes
@@ -57,6 +59,25 @@ setup, run it alone (below) and send the output.
   (`launchctl setenv COMFYUI_URL http://127.0.0.1:8188` on a Mac before opening it).
 - This is where an **Nvidia PC** shines: SDXL and Flux with CUDA are several times faster than on a Mac,
   and that computer's Head serves the whole pool.
+
+### Hunyuan3D on a Mac (`hunyuan3d-mac`)
+
+- Install the model with `SKIP=image,music,tts,vision,planner bash scripts/chimera-studio-install.sh`
+  (about 26 GB of weights; it also fetches rembg's u2net model, which the Head needs offline). Then
+  copy `heads/hunyuan3d-mac/` into the heads folder. Another place: set `HUNYUAN3D_MAC_DIR`.
+- A job: cut the object out of its background (rembg), build the shape, free that model, paint a PBR
+  texture, render a 4-view preview. Back come `<name>_textured.glb` (about 40,000 faces; the paint
+  step remeshes) and `<name>_preview.png`. `texture: false` returns the raw, denser grey mesh.
+- Texturing runs the port's **Safe** preset (6 views at 256 px, 2048 px texture) on every Mac, however
+  much memory it has: the finer presets need flash attention, which Apple's GPUs don't have. A CUDA
+  PC with `hunyuan3d-mesh` can paint finer textures.
+- On the Studio (M3 Ultra, 96 GB), sandboxed, nothing else loaded: about 3 minutes with texture
+  (shape 1m40s at octree 256 / 30 steps including ~15 s of model loading, texture about 1 minute)
+  and about 1 minute without (octree 192 / 20 steps). It peaks at about 24 GB; with a big Ollama model
+  loaded at the same time (gpt-oss:120b is ~65 GB) macOS pages and the job slows down a lot.
+- No network at all (no `"network"` field): the Head talks to no server, so it isn't affected by the
+  localhost sandbox bug. The last job's log is kept in Chimera's `plugin-cache/hunyuan3d-mac/last-job.log`.
+- Hunyuan3D 2.1's community licence doesn't cover the EU, the UK or South Korea.
 
 ## Try a Head alone (exactly as a worker runs it, sandbox included)
 

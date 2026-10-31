@@ -289,3 +289,99 @@ func (c *OllamaClient) Pull(ctx context.Context, model string, onProgress func(P
 		}
 	}
 }
+
+// ollamaShowFull is what /api/show says about how a model was made: the
+// Modelfile (its FROM line names the model file), the prompt template, the
+// parameters (one "name value" per line, values in Go syntax) and the licence.
+type ollamaShowFull struct {
+	Modelfile  string `json:"modelfile"`
+	Template   string `json:"template"`
+	Parameters string `json:"parameters"`
+	License    string `json:"license"`
+	System     string `json:"system"`
+}
+
+func (c *OllamaClient) ShowFull(ctx context.Context, model string) (ollamaShowFull, error) {
+	var v ollamaShowFull
+	err := c.postJSON(ctx, "/api/show", map[string]any{"model": model}, &v)
+	return v, err
+}
+
+// HasBlob says whether Ollama already has a file, by its digest ("sha256:…").
+func (c *OllamaClient) HasBlob(ctx context.Context, digest string) (bool, error) {
+	req, _ := http.NewRequestWithContext(ctx, "HEAD", c.Base+"/api/blobs/"+digest, nil)
+	resp, err := c.hc.Do(req)
+	if err != nil {
+		return false, err
+	}
+	resp.Body.Close()
+	switch resp.StatusCode {
+	case 200:
+		return true, nil
+	case 404:
+		return false, nil
+	}
+	return false, fmt.Errorf("Ollama returned %s", resp.Status)
+}
+
+// PushBlob streams a file of size bytes into Ollama, which checks it against
+// digest and keeps it for Create.
+func (c *OllamaClient) PushBlob(ctx context.Context, digest string, body io.Reader, size int64) error {
+	req, _ := http.NewRequestWithContext(ctx, "POST", c.Base+"/api/blobs/"+digest, body)
+	req.ContentLength = size
+	req.Header.Set("Content-Type", "application/octet-stream")
+	resp, err := c.hc.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	switch resp.StatusCode {
+	case 200, 201:
+		return nil
+	case 400:
+		return errors.New("the model file that arrived doesn't match its checksum; try again")
+	}
+	return readOllamaError(resp)
+}
+
+// Create makes a model from files already pushed with PushBlob. req is the
+// body of Ollama's /api/create (model, files, template, parameters, license).
+func (c *OllamaClient) Create(ctx context.Context, req map[string]any, onStatus func(string)) error {
+	body := map[string]any{"stream": true}
+	for k, v := range req {
+		body[k] = v
+	}
+	b, _ := json.Marshal(body)
+	hreq, _ := http.NewRequestWithContext(ctx, "POST", c.Base+"/api/create", bytes.NewReader(b))
+	hreq.Header.Set("Content-Type", "application/json")
+	resp, err := c.hc.Do(hreq)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return readOllamaError(resp)
+	}
+	dec := json.NewDecoder(resp.Body)
+	for {
+		var p struct {
+			Status string `json:"status"`
+			Error  string `json:"error"`
+		}
+		if err := dec.Decode(&p); err != nil {
+			if err == io.EOF {
+				return errors.New("Ollama stopped before the model was made")
+			}
+			return err
+		}
+		if p.Error != "" {
+			return errors.New(p.Error)
+		}
+		if onStatus != nil && p.Status != "" {
+			onStatus(p.Status)
+		}
+		if p.Status == "success" {
+			return nil
+		}
+	}
+}

@@ -201,7 +201,7 @@
             <label class="sel"><span>Run on</span><select id="sel-device"></select></label>
             <label class="check"><input type="checkbox" id="chk-private"><span>Only my devices</span></label>
             <label class="check" title="Hydra splits a bigger task into steps and runs them on several computers at once"><input type="checkbox" id="chk-task"><span>Long task</span></label>
-            <label class="check" id="loop-wrap" hidden title="After each round, the biggest model reviews the result and runs another round to improve it, until it's good enough"><input type="checkbox" id="chk-loop"><span>Keep going until done</span></label>
+            <label class="check" id="loop-wrap" hidden title="After each round, a Blender or Python script in the result is run here in a sandbox (when that's on in Settings), and Hydra 1.0 (or else the biggest model) reviews the result; another round improves it until it's good enough"><input type="checkbox" id="chk-loop"><span>Keep going until done</span></label>
             <button class="btn primary send" type="submit" id="btn-send">Send</button>
           </div>
         </form>
@@ -245,6 +245,9 @@
         <label class="row toggle"><span>Connect when Chimera opens</span><input type="checkbox" data-setting="connect_on_launch"></label>
         <label class="row toggle"><span>Let my devices help my long tasks</span><input type="checkbox" data-setting="auto_help"></label>
         <p class="fine">When you start a long task, your other devices connect to pitch in, then stand down when it's done.</p>
+        <label class="row toggle"><span>Run my long tasks' scripts here to check them</span><input type="checkbox" data-setting="check_results"></label>
+        <p class="fine">For your own long tasks with “Keep going until done”: a Blender or Python script in each round's result runs on this computer before Hydra accepts it, in a sandbox with no network, your home folder hidden and writes only to a throwaway folder (on a Mac it can't start other programs either). A crash sends its error into the next round. Models on other people's computers help write these scripts; they only ever run here, never on theirs, and nobody else's scripts run on yours.</p>
+        <p class="fine" id="check-results-no" hidden>This computer can't make that sandbox (it needs macOS, or bwrap on Linux), so its long tasks' scripts aren't run.</p>
       </section>
 
       <section class="panel" id="settings-network"></section>

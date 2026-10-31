@@ -38,9 +38,14 @@ func fallbackWorthy(err error, req submitReq) (bool, string) {
 	return true, "Couldn't reach the network, so this ran on your computer."
 }
 
-// bestLocalModel picks the strongest model here that fits and has the needed capabilities.
-func (a *App) bestLocalModel(want string, caps []string, prefer string) (ModelInfo, bool) {
-	models := a.annotate(a.ollama.State().Models)
+// bestLocalModel picks the strongest model here that fits and has the needed
+// capabilities. preferModel (the helper, for its own jobs) wins when it's here;
+// otherwise the helper is never picked.
+func (a *App) bestLocalModel(want string, caps []string, prefer, preferModel string) (ModelInfo, bool) {
+	return pickLocalModel(a.annotate(a.ollama.State().Models), want, caps, prefer, preferModel)
+}
+
+func pickLocalModel(models []ModelInfo, want string, caps []string, prefer, preferModel string) (ModelInfo, bool) {
 	if want != "" {
 		for _, m := range models {
 			if normModel(m.Name) == normModel(want) {
@@ -48,19 +53,25 @@ func (a *App) bestLocalModel(want string, caps []string, prefer string) (ModelIn
 			}
 		}
 	}
+	hasCaps := func(m ModelInfo) bool {
+		for _, c := range caps {
+			if !m.HasCap(c) {
+				return false
+			}
+		}
+		return true
+	}
+	if preferModel != "" {
+		for _, m := range models {
+			if normModel(m.Name) == normModel(preferModel) && m.CanChat() && m.Fits != "too_big" && hasCaps(m) {
+				return m, true
+			}
+		}
+	}
 	var best ModelInfo
 	bestScore := -1e18
 	for _, m := range models {
-		if !m.CanChat() || m.Fits == "too_big" {
-			continue
-		}
-		ok := true
-		for _, c := range caps {
-			if !m.HasCap(c) {
-				ok = false
-			}
-		}
-		if !ok {
+		if !m.ForChat() || m.Fits == "too_big" || !hasCaps(m) {
 			continue
 		}
 		s := m.ParamsB
@@ -137,12 +148,7 @@ func (a *App) followStep(ctx context.Context, c *HubClient, id string, emit func
 			return genEvent{Type: "cancelled"}
 		}
 		lastErr = c.Events(context.WithoutCancel(ctx), id, func(ev hubEvent) bool {
-			ge := genEvent{Type: ev.Type, Content: ev.Content, Thinking: ev.Thinking, Device: ev.Device,
-				DeviceName: ev.DeviceName, Owner: ev.Owner, Model: ev.Model, Reason: ev.Reason, Error: ev.Error,
-				Credits: ev.Credits, Free: ev.Free, Fraction: ev.Fraction, raw: ev.File}
-			if ev.Stats != nil {
-				ge.Tokens, ge.PromptTokens, ge.TokPerSec = ev.Stats.EvalCount, ev.Stats.PromptEvalCount, ev.Stats.TokPerSec()
-			}
+			ge := genFromHub(ev)
 			if ev.Type == "delta" && attempt > 0 {
 				ge.Type = "replay" // a reconnect replays the full text so far
 			}
@@ -166,6 +172,18 @@ func (a *App) followStep(ctx context.Context, c *HubClient, id string, emit func
 	return genEvent{Type: "error", Error: msg}
 }
 
+// genFromHub turns a step's event from the hub into the app's own event.
+func genFromHub(ev hubEvent) genEvent {
+	ge := genEvent{Type: ev.Type, Content: ev.Content, Thinking: ev.Thinking, Device: ev.Device,
+		DeviceName: ev.DeviceName, Owner: ev.Owner, Model: ev.Model, Reason: ev.Reason, Error: ev.Error,
+		Credits: ev.Credits, Free: ev.Free, Fraction: ev.Fraction, raw: ev.File}
+	if ev.Stats != nil {
+		ge.Tokens, ge.PromptTokens, ge.TokPerSec = ev.Stats.EvalCount, ev.Stats.PromptEvalCount, ev.Stats.TokPerSec()
+		ge.DoneReason = ev.Stats.DoneReason
+	}
+	return ge
+}
+
 func (a *App) runLocalPrompt(ctx context.Context, req submitReq, note string, emit func(genEvent)) genEvent {
 	if !a.ollama.Running() {
 		if note != "" {
@@ -173,7 +191,7 @@ func (a *App) runLocalPrompt(ctx context.Context, req submitReq, note string, em
 		}
 		return genEvent{Type: "error", Error: "Ollama isn't running on this computer, and you're not in a network yet."}
 	}
-	m, ok := a.bestLocalModel(req.Model, req.NeedCaps, req.Prefer)
+	m, ok := a.bestLocalModel(req.Model, req.NeedCaps, req.Prefer, req.PreferModel)
 	if !ok {
 		return genEvent{Type: "error", Error: "This computer has no chat model that fits. Download one in Models."}
 	}
@@ -199,7 +217,8 @@ func (a *App) runLocalPrompt(ctx context.Context, req submitReq, note string, em
 		return genEvent{Type: "error", Error: err.Error()}
 	}
 	a.perf.Record(m.Name, stats)
-	return genEvent{Type: "done", Tokens: stats.EvalCount, PromptTokens: stats.PromptEvalCount, TokPerSec: stats.TokPerSec(), Free: true, Local: true}
+	return genEvent{Type: "done", Tokens: stats.EvalCount, PromptTokens: stats.PromptEvalCount, TokPerSec: stats.TokPerSec(), Free: true, Local: true,
+		DoneReason: stats.DoneReason}
 }
 
 func historyTokens(msgs []ChatMessage) int {

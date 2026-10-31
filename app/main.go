@@ -26,7 +26,7 @@ import (
 	"time"
 )
 
-const Version = "0.6.1"
+const Version = "0.7.0"
 
 const (
 	defaultUIPort  = 7470
@@ -54,6 +54,8 @@ func main() {
 	showVersion := flags.Bool("version", false, "print the version and exit")
 	pluginTest := flags.String("plugin-test", "", "run the plugin in this folder once, the way the network does (input JSON on stdin), and exit")
 	pluginOut := flags.String("plugin-out", "", "with --plugin-test: where to save the files it makes (default ./plugin-test-out)")
+	checkResult := flags.String("check-result", "", "check a long task's result (a reply .md or a .py script) the way looping mode does, print the verdict as JSON, and exit")
+	checkGoal := flags.String("check-goal", "", "with --check-result: the task's goal (a Blender version named there is taken into account)")
 	_ = flags.Parse(args)
 
 	if *showVersion {
@@ -71,6 +73,9 @@ func main() {
 	}
 	if *pluginTest != "" {
 		os.Exit(runPluginTest(dir, *pluginTest, *pluginOut))
+	}
+	if *checkResult != "" {
+		os.Exit(runCheckResult(dir, *checkResult, *checkGoal))
 	}
 	setupLogging(dir)
 	log.Printf("Chimera %s starting (data folder: %s)", Version, dir)

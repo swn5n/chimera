@@ -1,10 +1,12 @@
 package main
 
-// Hydra: long tasks. The biggest model available plans the work as a few
-// small steps, the steps run at the same time on whichever devices are
-// lending (each worker is told it's one piece of a bigger project, with a
-// system prompt that suits the kind of task), known-good library entries are
-// reused when they match, and the biggest model combines the pieces.
+// Hydra: long tasks. The helper model Hydra 1.0 (helper.go), or the biggest
+// model when no computer has it or the request is too big for it, plans the
+// work as a few small steps; the steps run at the same time on whichever
+// devices are lending (each worker is told it's one piece of a bigger project,
+// with a system prompt that suits the kind of task), known-good library entries
+// are reused when they match, and the biggest model combines the pieces. In
+// looping mode the helper (or the biggest model) reviews the result.
 
 import (
 	"context"
@@ -50,7 +52,7 @@ type hydraPlan struct {
 type TaskRecord struct {
 	hydraPlan
 	Goal          string    `json:"goal"`
-	Phase         string    `json:"phase"` // planning, working, combining, reviewing, done, error, cancelled
+	Phase         string    `json:"phase"` // planning, working, combining, checking, reviewing, done, error, cancelled
 	Round         int       `json:"round,omitempty"`
 	Rounds        int       `json:"rounds,omitempty"` // >1 means iterate-until-done
 	Critique      string    `json:"critique,omitempty"`
@@ -66,6 +68,19 @@ type TaskRecord struct {
 	Finished      time.Time `json:"finished,omitempty"`
 	Tokens        int       `json:"tokens,omitempty"`
 	Credits       float64   `json:"credits,omitempty"`
+
+	// The latest review (looping mode).
+	ReviewerDevice string `json:"reviewer_device,omitempty"`
+	ReviewerOwner  string `json:"reviewer_owner,omitempty"`
+	ReviewerModel  string `json:"reviewer_model,omitempty"`
+
+	// What running each round's result found (looping mode), and results cut
+	// off at their model's output limit (any mode): facts, not a model's opinion.
+	Checks []resultCheck `json:"checks,omitempty"`
+	// A line for the reply, e.g. that a later round couldn't finish.
+	Note string `json:"note,omitempty"`
+	// This round's steps whose model stopped at its output limit.
+	CutSteps []string `json:"cut_steps,omitempty"`
 }
 
 type taskEvent struct {
@@ -164,6 +179,8 @@ func (t *TaskManager) Start(req taskReq) (*taskRun, error) {
 func (r *taskRun) snapshot() TaskRecord {
 	rec := r.rec
 	rec.Steps = append([]hydraStep(nil), r.rec.Steps...)
+	rec.Checks = append([]resultCheck(nil), r.rec.Checks...)
+	rec.CutSteps = append([]string(nil), r.rec.CutSteps...)
 	return rec
 }
 
@@ -217,6 +234,20 @@ func (r *taskRun) Unsubscribe(ch chan taskEvent) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	delete(r.subs, ch)
+}
+
+// CancelAll stops every running task (the app is quitting), which also stops
+// any script a check is running.
+func (t *TaskManager) CancelAll() {
+	t.mu.Lock()
+	runs := make([]*taskRun, 0, len(t.runs))
+	for _, r := range t.runs {
+		runs = append(runs, r)
+	}
+	t.mu.Unlock()
+	for _, r := range runs {
+		r.cancel()
+	}
 }
 
 func (t *TaskManager) Cancel(id string) error {
@@ -304,6 +335,9 @@ func (t *TaskManager) execute(ctx context.Context, run *taskRun, req taskReq) {
 	run.mu.Unlock()
 
 	prior, critique := "", ""
+	room := synthRoom    // reply room for the combine; grows after a cut-off
+	var prev resultCheck // the round before's check: the same fault twice ends the loop
+loop:
 	for round := 1; round <= rounds; round++ {
 		if ctx.Err() != nil {
 			run.mu.Lock()
@@ -311,9 +345,15 @@ func (t *TaskManager) execute(ctx context.Context, run *taskRun, req taskReq) {
 			run.mu.Unlock()
 			return
 		}
-		result, term := t.onePass(ctx, run, req, round, prior, critique)
+		pass, term := t.onePass(ctx, run, req, round, planPrior(prior, critique), critique, room)
 		switch term.Type {
 		case "error":
+			if round > 1 && prior != "" {
+				// A later round couldn't finish: keep the last round's result
+				// rather than lose it.
+				t.keepRound(run, round-1, prior, term.Error)
+				break loop
+			}
 			t.fail(run, term.Error)
 			return
 		case "cancelled":
@@ -322,12 +362,45 @@ func (t *TaskManager) execute(ctx context.Context, run *taskRun, req taskReq) {
 			run.mu.Unlock()
 			return
 		}
+		result := pass.Text
 		prior = result
+		// Facts before opinions: a result that was cut off, or a script that
+		// crashes, isn't done, whatever a review would say.
+		chk := t.checkResult(ctx, run, req, round, pass)
+		if ctx.Err() != nil {
+			run.mu.Lock()
+			run.rec.Phase = "cancelled"
+			run.mu.Unlock()
+			return
+		}
 		if !req.Loop || round == rounds {
 			break
 		}
+		next := loopNext(chk, prev)
+		prev = chk
+		if next == "stop" { // the same crash or cut-off again: another round won't fix it
+			t.markStopped(run)
+			break
+		}
+		if next == "again" {
+			if chk.Outcome == "cut_off" {
+				room = cutRoom(pass.Tokens, room)
+			}
+			critique = chk.Critique
+			run.mu.Lock()
+			run.rec.Critique = critique
+			run.rec.ReviewerDevice, run.rec.ReviewerOwner, run.rec.ReviewerModel = "", "", "" // no review this round
+			run.mu.Unlock()
+			continue
+		}
 		// Review the result against the goal; stop early when it's good enough.
 		v, revTerm := t.review(ctx, run, req, result)
+		if ctx.Err() != nil {
+			run.mu.Lock()
+			run.rec.Phase = "cancelled"
+			run.mu.Unlock()
+			return
+		}
 		if revTerm.Type != "" || v.Done {
 			break
 		}
@@ -344,9 +417,33 @@ func (t *TaskManager) execute(ctx context.Context, run *taskRun, req taskReq) {
 	t.save(run, false)
 }
 
+// planPrior is what the next round's planner is told came before: the last
+// result, or, when the last round wrote nothing but has a critique (say its
+// model stopped at its limit before writing any of the result), a line saying
+// so, since the critique only goes to the planner with a previous result.
+func planPrior(prior, critique string) string {
+	if prior == "" && critique != "" {
+		return "(nothing: the last round's result was empty)"
+	}
+	return prior
+}
+
+// keepRound ends the task on round's result after a later round failed.
+func (t *TaskManager) keepRound(run *taskRun, round int, result, errMsg string) {
+	log.Printf("hydra: round %d didn't finish (%s); keeping round %d's result", round+1, errMsg, round)
+	run.mu.Lock()
+	run.final.Reset()
+	run.final.WriteString(result)
+	run.broadcastLocked(taskEvent{Type: "replay", TaskID: run.id, Content: result})
+	run.rec.Round = round
+	run.rec.Note = fmt.Sprintf("Round %d couldn't finish (%s), so this is round %d's result.", round+1, strings.TrimSuffix(errMsg, "."), round)
+	run.mu.Unlock()
+}
+
 // onePass does one plan -> run -> combine cycle and returns the combined
 // result. A non-empty term (error/cancelled) means the pass didn't finish.
-func (t *TaskManager) onePass(ctx context.Context, run *taskRun, req taskReq, round int, prior, critique string) (string, genEvent) {
+// room is the reply room the combine gets.
+func (t *TaskManager) onePass(ctx context.Context, run *taskRun, req taskReq, round int, prior, critique string, room int) (passResult, genEvent) {
 	a := t.app
 	setPhase := func(p string) {
 		run.mu.Lock()
@@ -357,8 +454,9 @@ func (t *TaskManager) onePass(ctx context.Context, run *taskRun, req taskReq, ro
 	}
 	setPhase("planning")
 
-	// 1. Plan on the biggest model available. On a later round, build on the
-	// previous attempt and the review's critique instead of starting over.
+	// 1. Plan on Hydra 1.0, or the biggest model available. On a later round,
+	// build on the previous attempt and the review's critique instead of
+	// starting over.
 	refs := a.librarySearch(req.Goal, 3)
 	var useful []LibEntry
 	for _, e := range refs {
@@ -381,41 +479,36 @@ func (t *TaskManager) onePass(ctx context.Context, run *taskRun, req taskReq, ro
 	}
 	userMsg += refsBlock(useful)
 	planMsgs := []ChatMessage{{Role: "system", Content: hydraPlannerPrompt}, {Role: "user", Content: userMsg}}
-	var planText strings.Builder
-	planEv := a.runPrompt(ctx, submitReq{Private: req.Private, Messages: planMsgs, Prefer: "largest", TaskWork: true,
-		Format: json.RawMessage(`"json"`), NeedCtx: historyTokens(planMsgs) + 2048, Purpose: "Hydra: planning (round " + itoaSmall(round) + ")"},
-		func(ev genEvent) {
-			switch ev.Type {
-			case "assigned":
-				run.mu.Lock()
-				run.rec.PlannerDevice, run.rec.PlannerOwner, run.rec.PlannerModel = deviceLabelGo(ev), ev.Owner, ev.Model
-				run.mu.Unlock()
-				run.push(false)
-			case "delta":
-				planText.WriteString(ev.Content)
-			case "replay":
-				planText.Reset()
-				planText.WriteString(ev.Content)
-			case "requeued":
-				planText.Reset()
-			}
-		}, nil)
-	if planEv.Type == "error" || planEv.Type == "cancelled" {
-		return "", planEv
+	planReq := submitReq{Private: req.Private, Messages: planMsgs, Prefer: "largest", TaskWork: true,
+		Format: json.RawMessage(`"json"`), NeedCtx: historyTokens(planMsgs) + 2048, Purpose: "Hydra: planning (round " + itoaSmall(round) + ")"}
+	planReq.PreferModel = helperFor(planReq.NeedCtx) // Hydra 1.0 when it's around and the plan fits it
+	plan, planEv, ok := t.askPlanner(ctx, run, planReq)
+	if !ok && planEv.Type != "cancelled" && ctx.Err() == nil && planReq.PreferModel != "" && isHelperModel(planEv.Model) {
+		// Second chance: the helper's plan couldn't be read (or its step failed),
+		// so ask the biggest model once before giving up.
+		log.Printf("hydra: %s didn't return a usable plan; asking the biggest model", planEv.Model)
+		planReq.PreferModel = ""
+		plan, planEv, ok = t.askPlanner(ctx, run, planReq)
 	}
-	var plan hydraPlan
-	if !extractJSON(planText.String(), &plan) || len(plan.Steps) == 0 {
-		return "", genEvent{Type: "error", Error: "The planner didn't return a usable plan. Try again, or rephrase the task."}
+	if planEv.Type == "error" || planEv.Type == "cancelled" {
+		return passResult{}, planEv
+	}
+	if !ok {
+		return passResult{}, genEvent{Type: "error", Error: "The planner didn't return a usable plan. Try again, or rephrase the task."}
 	}
 	plan = cleanPlan(plan)
 	run.mu.Lock()
 	run.rec.hydraPlan = plan
-	run.rec.Tokens += planEv.Tokens
-	run.rec.Credits += planEv.Credits
+	run.rec.CutSteps = nil
 	run.mu.Unlock()
 	setPhase("working")
 
-	// 2. Run the steps, in parallel where they don't depend on each other.
+	// 2. Run the steps, in parallel where they don't depend on each other. A
+	// lone step writes the result itself, so after a cut-off it gets the room.
+	stepRoom := 4096
+	if len(plan.Steps) == 1 {
+		stepRoom = max(stepRoom, room)
+	}
 	parallel := a.parallelism(req.Private)
 	sem := make(chan struct{}, parallel)
 	var wg sync.WaitGroup
@@ -446,12 +539,12 @@ func (t *TaskManager) onePass(ctx context.Context, run *taskRun, req taskReq, ro
 		go func(i int) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			t.runStep(ctx, run, i, req.Private)
+			t.runStep(ctx, run, i, req.Private, stepRoom)
 		}(idx)
 	}
 	wg.Wait()
 	if ctx.Err() != nil {
-		return "", genEvent{Type: "cancelled"}
+		return passResult{}, genEvent{Type: "cancelled"}
 	}
 
 	// 3. Combine the pieces into one result.
@@ -463,7 +556,7 @@ func (t *TaskManager) onePass(ctx context.Context, run *taskRun, req taskReq, ro
 		}
 	}
 	if done == 0 {
-		return "", genEvent{Type: "error", Error: "None of the steps finished. " + firstFailure(rec.Steps)}
+		return passResult{}, genEvent{Type: "error", Error: "None of the steps finished. " + firstFailure(rec.Steps)}
 	}
 	resetFinal := func(s string) {
 		run.mu.Lock()
@@ -473,8 +566,9 @@ func (t *TaskManager) onePass(ctx context.Context, run *taskRun, req taskReq, ro
 		run.mu.Unlock()
 	}
 	if len(rec.Steps) == 1 {
-		resetFinal(rec.Steps[0].Output)
-		return rec.Steps[0].Output, genEvent{}
+		s := rec.Steps[0]
+		resetFinal(s.Output)
+		return passResult{Text: s.Output, Cut: contains(rec.CutSteps, s.ID), Model: s.Model, Tokens: s.Tokens}, genEvent{}
 	}
 	setPhase("combining")
 	resetFinal("") // a new round's result replaces the last one
@@ -489,8 +583,13 @@ func (t *TaskManager) onePass(ctx context.Context, run *taskRun, req taskReq, ro
 		fmt.Fprintf(&parts, "\n## Step %d: %s\n%s\n", i+1, s.Title, truncate(out, budget))
 	}
 	synthMsgs := []ChatMessage{{Role: "system", Content: synthPrompt(rec.Kind)}, {Role: "user", Content: parts.String()}}
-	synthEv := a.runPrompt(ctx, submitReq{Private: req.Private, Messages: synthMsgs, Prefer: "largest", TaskWork: true,
-		NeedCtx: historyTokens(synthMsgs) + 4096, Purpose: "Hydra: combining (round " + itoaSmall(round) + ")"},
+	synthReq := submitReq{Private: req.Private, Messages: synthMsgs, Prefer: "largest", TaskWork: true,
+		NeedCtx: historyTokens(synthMsgs) + room, Purpose: "Hydra: combining (round " + itoaSmall(round) + ")"}
+	if room > synthRoom {
+		// The last combine stopped at its output limit: let this one write more.
+		synthReq.Options = map[string]any{"num_predict": room}
+	}
+	synthEv := a.runPrompt(ctx, synthReq,
 		func(ev genEvent) {
 			run.mu.Lock()
 			switch ev.Type {
@@ -510,14 +609,54 @@ func (t *TaskManager) onePass(ctx context.Context, run *taskRun, req taskReq, ro
 			}
 		}, nil)
 	if synthEv.Type == "error" || synthEv.Type == "cancelled" {
-		return "", synthEv
+		return passResult{}, synthEv
 	}
 	run.mu.Lock()
 	run.rec.Tokens += synthEv.Tokens
 	run.rec.Credits += synthEv.Credits
-	result := run.final.String()
+	pass := passResult{Text: run.final.String(), Cut: synthEv.DoneReason == "length", Model: run.rec.SynthModel, Tokens: synthEv.Tokens}
 	run.mu.Unlock()
-	return result, genEvent{}
+	return pass, genEvent{}
+}
+
+// askPlanner sends one planning request and reads the plan. The returned
+// event's Model is the model that was assigned the step ("" if none was).
+func (t *TaskManager) askPlanner(ctx context.Context, run *taskRun, req submitReq) (hydraPlan, genEvent, bool) {
+	var planText strings.Builder
+	model := ""
+	run.mu.Lock() // a second ask starts unassigned, not still showing the first one's model
+	run.rec.PlannerDevice, run.rec.PlannerOwner, run.rec.PlannerModel = "", "", ""
+	run.mu.Unlock()
+	ev := t.app.runPrompt(ctx, req, func(ev genEvent) {
+		switch ev.Type {
+		case "assigned":
+			model = ev.Model
+			run.mu.Lock()
+			run.rec.PlannerDevice, run.rec.PlannerOwner, run.rec.PlannerModel = deviceLabelGo(ev), ev.Owner, ev.Model
+			run.mu.Unlock()
+			run.push(false)
+		case "delta":
+			planText.WriteString(ev.Content)
+		case "replay":
+			planText.Reset()
+			planText.WriteString(ev.Content)
+		case "requeued":
+			planText.Reset()
+		}
+	}, nil)
+	ev.Model = model
+	run.mu.Lock()
+	run.rec.Tokens += ev.Tokens
+	run.rec.Credits += ev.Credits
+	run.mu.Unlock()
+	if ev.Type != "done" {
+		return hydraPlan{}, ev, false
+	}
+	var plan hydraPlan
+	if !extractJSON(planText.String(), &plan) || len(plan.Steps) == 0 {
+		return hydraPlan{}, ev, false
+	}
+	return plan, ev, true
 }
 
 type reviewVerdict struct {
@@ -526,41 +665,80 @@ type reviewVerdict struct {
 	Critique string `json:"critique"`
 }
 
-// review asks the biggest model whether the result fully meets the goal.
+// review asks whether the result fully meets the goal: Hydra 1.0 when it's
+// around and the result is short enough for it, otherwise the biggest model.
 func (t *TaskManager) review(ctx context.Context, run *taskRun, req taskReq, result string) (reviewVerdict, genEvent) {
-	a := t.app
 	run.mu.Lock()
 	run.rec.Phase = "reviewing"
+	run.rec.ReviewerDevice, run.rec.ReviewerOwner, run.rec.ReviewerModel = "", "", "" // not last round's
 	run.mu.Unlock()
 	run.push(true)
+	revReq := reviewRequest(req, result)
+	v, ev, ok := t.askReviewer(ctx, run, revReq)
+	if !ok && ev.Type != "cancelled" && ctx.Err() == nil && revReq.PreferModel != "" && isHelperModel(ev.Model) {
+		// Second chance: the helper's verdict couldn't be read (or its step
+		// failed), so ask the biggest model once.
+		log.Printf("hydra: %s didn't return a usable review; asking the biggest model", ev.Model)
+		revReq.PreferModel = ""
+		v, ev, ok = t.askReviewer(ctx, run, revReq)
+	}
+	if ev.Type == "error" || ev.Type == "cancelled" {
+		return reviewVerdict{Done: true}, ev // can't review: treat current result as final
+	}
+	if !ok {
+		return reviewVerdict{Done: true}, genEvent{} // unparseable: stop with what we have
+	}
+	return v, genEvent{}
+}
+
+// reviewRequest is the step that reviews a result.
+func reviewRequest(req taskReq, result string) submitReq {
 	msgs := []ChatMessage{
 		{Role: "system", Content: hydraReviewPrompt},
 		{Role: "user", Content: "The task:\n" + req.Goal + "\n\nThe result so far:\n" + truncate(result, 40000)},
 	}
+	revReq := submitReq{Private: req.Private, Messages: msgs, Prefer: "largest", TaskWork: true,
+		Format: json.RawMessage(`"json"`), NeedCtx: historyTokens(msgs) + 1024, Purpose: "Hydra: reviewing the result"}
+	revReq.PreferModel = helperForReview(revReq.NeedCtx)
+	return revReq
+}
+
+// askReviewer sends one review request and reads the verdict. The returned
+// event's Model is the model that was assigned the step ("" if none was).
+func (t *TaskManager) askReviewer(ctx context.Context, run *taskRun, req submitReq) (reviewVerdict, genEvent, bool) {
 	var out strings.Builder
-	ev := a.runPrompt(ctx, submitReq{Private: req.Private, Messages: msgs, Prefer: "largest", TaskWork: true,
-		Format: json.RawMessage(`"json"`), NeedCtx: historyTokens(msgs) + 1024, Purpose: "Hydra: reviewing the result"},
-		func(ev genEvent) {
-			switch ev.Type {
-			case "delta":
-				out.WriteString(ev.Content)
-			case "replay", "requeued":
-				out.Reset()
-				out.WriteString(ev.Content)
-			}
-		}, nil)
-	if ev.Type == "error" || ev.Type == "cancelled" {
-		return reviewVerdict{Done: true}, ev // can't review: treat current result as final
-	}
+	model := ""
+	run.mu.Lock() // a second ask starts unassigned, not still showing the first one's model
+	run.rec.ReviewerDevice, run.rec.ReviewerOwner, run.rec.ReviewerModel = "", "", ""
+	run.mu.Unlock()
+	ev := t.app.runPrompt(ctx, req, func(ev genEvent) {
+		switch ev.Type {
+		case "assigned":
+			model = ev.Model
+			run.mu.Lock()
+			run.rec.ReviewerDevice, run.rec.ReviewerOwner, run.rec.ReviewerModel = deviceLabelGo(ev), ev.Owner, ev.Model
+			run.mu.Unlock()
+			run.push(false)
+		case "delta":
+			out.WriteString(ev.Content)
+		case "replay", "requeued":
+			out.Reset()
+			out.WriteString(ev.Content)
+		}
+	}, nil)
+	ev.Model = model
 	run.mu.Lock()
 	run.rec.Tokens += ev.Tokens
 	run.rec.Credits += ev.Credits
 	run.mu.Unlock()
+	if ev.Type != "done" {
+		return reviewVerdict{}, ev, false
+	}
 	var v reviewVerdict
 	if !extractJSON(out.String(), &v) {
-		return reviewVerdict{Done: true}, genEvent{} // unparseable: stop with what we have
+		return reviewVerdict{}, ev, false
 	}
-	return v, genEvent{}
+	return v, ev, true
 }
 
 func itoaSmall(n int) string { return string(rune('0' + n%10)) }
@@ -692,7 +870,7 @@ func (t *TaskManager) readySteps(run *taskRun) ([]int, int) {
 	return ready, remaining
 }
 
-func (t *TaskManager) runStep(ctx context.Context, run *taskRun, i int, private bool) {
+func (t *TaskManager) runStep(ctx context.Context, run *taskRun, i int, private bool, room int) {
 	a := t.app
 	run.mu.Lock()
 	rec := run.snapshot()
@@ -748,8 +926,12 @@ func (t *TaskManager) runStep(ctx context.Context, run *taskRun, i int, private 
 	var lastErr string
 	for attempt := 0; attempt < 2; attempt++ {
 		out.Reset()
-		ev := a.runPrompt(ctx, submitReq{Private: private, Messages: msgs, NeedCtx: historyTokens(msgs) + 4096, TaskWork: true,
-			Purpose: fmt.Sprintf("Hydra: step %d of %d", i+1, len(rec.Steps))},
+		stepReq := submitReq{Private: private, Messages: msgs, NeedCtx: historyTokens(msgs) + room, TaskWork: true,
+			Purpose: fmt.Sprintf("Hydra: step %d of %d", i+1, len(rec.Steps))}
+		if room > synthRoom {
+			stepReq.Options = map[string]any{"num_predict": room} // the last round's result stopped at its limit
+		}
+		ev := a.runPrompt(ctx, stepReq,
 			func(ev genEvent) {
 				switch ev.Type {
 				case "assigned":
@@ -774,6 +956,9 @@ func (t *TaskManager) runStep(ctx context.Context, run *taskRun, i int, private 
 			run.mu.Lock()
 			run.rec.Tokens += ev.Tokens
 			run.rec.Credits += ev.Credits
+			if ev.DoneReason == "length" { // its model stopped at its output limit
+				run.rec.CutSteps = append(run.rec.CutSteps, step.ID)
+			}
 			run.mu.Unlock()
 			run.push(true)
 			return
@@ -857,15 +1042,33 @@ func (t *TaskManager) save(run *taskRun, final bool) {
 			m.Task = &r
 			m.Content = content
 			m.Model = rec.SynthModel
+			m.Device, m.Owner = rec.SynthDevice, rec.SynthOwner
+			if m.Model == "" && len(rec.Steps) == 1 && rec.Steps[0].Model != "" {
+				// One step: its worker wrote the answer (the planner, maybe the
+				// helper model, only planned it).
+				m.Model, m.Device, m.Owner = rec.Steps[0].Model, rec.Steps[0].Device, rec.Steps[0].Owner
+			}
 			if m.Model == "" {
 				m.Model = rec.PlannerModel
 			}
-			m.Device, m.Owner = rec.SynthDevice, rec.SynthOwner
 			m.Tokens, m.Credits = rec.Tokens, round2(rec.Credits)
 			if final {
 				switch rec.Phase {
 				case "done":
 					m.Status = ""
+					switch c := finalCheck(rec); c.Outcome {
+					case "cut_off":
+						who := c.Model
+						if who == "" {
+							who = "the model"
+						}
+						m.Note = "This result was cut off: " + who + " stopped writing at its output limit, so the end is missing."
+					case "failed":
+						m.Note = fmt.Sprintf("This result's script still crashes in %s at line %d: %s", c.Runner, c.Line, sentence(c.Error))
+					}
+					if rec.Note != "" {
+						m.Note = strings.TrimSpace(rec.Note + " " + m.Note)
+					}
 				case "cancelled":
 					m.Status = "cancelled"
 				default:

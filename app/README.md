@@ -6,10 +6,10 @@ One Go program (standard library only) plus a plain HTML/CSS/JS interface embedd
 
 | File | What it does |
 |---|---|
-| `main.go` | Startup, logging, `--hub-only` / `--plugin-test` modes; on macOS hands over to a detached copy of itself so opening the app again brings the window back (`handOverOnMac`); single-instance check that **replaces an older running build** (asks it to quit via `/api/quit`, then takes the port) so updates take effect without the person quitting from Settings |
+| `main.go` | Startup, logging, `--hub-only` / `--plugin-test` / `--check-result` modes (`--check-result <reply.md or script.py> [--check-goal <text>]` checks a result the way looping mode does and prints the verdict as JSON; exit 0 passed, 1 the script crashed, 2 anything else); on macOS hands over to a detached copy of itself so opening the app again brings the window back (`handOverOnMac`); single-instance check that **replaces an older running build** (asks it to quit via `/api/quit`, then takes the port) so updates take effect without the person quitting from Settings |
 | `app.go` | Ties everything together; joining, hosting, settings; `autoPool` (zero-config: pool address → LAN discovery → auto-host election) |
 | `config.go` | `config.json` in the data folder |
-| `ollama.go` | Talks to the local Ollama (`/api/version`, `tags`, `show`, `ps`, `chat`, `pull`) |
+| `ollama.go` | Talks to the local Ollama (`/api/version`, `tags`, `show`, `ps`, `chat`, `pull`, and `blobs` + `create` to set up the helper model) |
 | `ollama_monitor.go` | Watches Ollama; models, capabilities, architecture (KV cache size, experts), what's loaded |
 | `profile.go` | Usable memory, fit (comfortable, tight, too big), context limits, speed estimates, measured speeds (`perf.json`), "best for" |
 | `catalog.go` | Curated Ollama models, rated for this computer, best pick per role |
@@ -20,12 +20,15 @@ One Go program (standard library only) plus a plain HTML/CSS/JS interface embedd
 | `discovery.go` | UDP LAN discovery: host answers probes; devices find hosts and auto-join (no code/IP typed). `enableBroadcast` (SO_BROADCAST) is required or the OS silently drops the broadcast probes |
 | `sockopt_unix.go`, `sockopt_windows.go` | Per-platform `enableBroadcast`: sets `SO_BROADCAST` on the discovery socket |
 | `library.go` | The hub's library: entries, ratings, curation, review, idle checks, test runs, export |
-| `runner.go` | Test-runs library scripts on the host (opt-in, sandboxed on macOS, no network on Linux) |
+| `runner.go` | Runs untrusted Python and Blender scripts in a sandbox: library test runs on the host (opt-in, with the `riskyScript` pre-filter) and the check of a looping long task's result on the asker. macOS profile: no network, home folder hidden, writes only in a throwaway folder, no other programs, no forking, no signals to other processes, no Apple Events; Linux: bubblewrap. A `/bin/sh` watchdog kills the run if the app dies |
+| `hydra_check.go` | Looping mode's facts-before-opinions check: picks the Blender or Python script in a round's result, runs it here (`check_results`, default on), and a definite crash (or a combine cut off at its output limit, from `done_reason`) means not done: the review is skipped and the error is the next round's critique. Anything uncertain leaves it to the reviewer. Also the `--check-result` command (`checkresult_cli.go`) |
 | `plugins.go` | Plugins installed on this computer: finding and probing them, running a plugin step in its sandbox, collecting the files it makes |
 | `hub_plugins.go` | The hub's view of the network's plugins: one library entry per plugin, star ratings, and the search that picks a plugin (relevant ones, best rated first) |
 | `plugin_chat.go` | A chat message with a picture: pick a plugin, turn the request into its options with a model, run it (on the network or here) and save the pictures it returns |
 | `runprompt.go` | Sends a prompt to the network, or runs it on this computer's best model when nobody is lending |
-| `hydra.go` | Long tasks: plan, run steps in parallel, reuse the library, combine; iterate-until-done loop with a review step |
+| `hydra.go` | Long tasks: plan, run steps in parallel, reuse the library, combine; iterate-until-done loop with a check (`hydra_check.go`) and a review step; a later round that fails keeps the previous round's result. The plan and the review prefer the helper model and ask again without it when its answer can't be read |
+| `helper.go` | Hydra 1.0, the helper model (`hydra:1.0`): its name, the size limit for what goes to it (the 8K context bucket), and the rule that it only plans, reviews and does the Head check |
+| `helper_share.go` | Getting the helper onto every computer from the host: the host finds its Ollama's copy and serves it (`/v1/helper`), a member pushes it into its own Ollama (`/api/blobs`, `/api/create`); the Models page's "Get from host" |
 | `prompts.go` | System prompts: planner, per-kind worker rules, combiner, curator, reviewer |
 | `hubclient.go` | HTTP client for the hub |
 | `chat.go`, `sessions.go` | Chats, stored on the computer that sent them |
@@ -46,7 +49,8 @@ Devices only make outgoing requests, so nobody but the host opens a port.
 - `POST /v1/heartbeat` every 3 s: lending state, shared models (with fit and context limits), hardware profile and tools. Returns the network snapshot, including demand and library counts.
 - `GET /v1/work?wait=25` long-polls for a step to run (only while Connected).
 - `POST /v1/steps/{id}/progress`, `/complete`, `/fail` stream a reply back. `fail` with `retryable` hands the step to another device.
-- `POST /v1/steps` submits a prompt (`model`, `prefer` largest/fastest, `need_caps`, `need_ctx`, `format`, `purpose`); `GET /v1/steps/{id}/events` streams it back (server-sent events).
+- `POST /v1/steps` submits a prompt (`model`, `prefer` largest/fastest, `prefer_model`, `need_caps`, `need_ctx`, `format`, `purpose`); `GET /v1/steps/{id}/events` streams it back (server-sent events). `prefer_model` (0.7.0, the helper's three jobs): a device that has that model gets the step ahead of all others, the one that answers soonest first (a free one that hasn't polled yet gets up to 3 s; a busy one isn't waited for); with none, `prefer` decides. Older hubs ignore it. Outside those jobs the hub never picks the helper.
+- Helper model: the snapshot's `network.helper` says the host hands out its helper model (name, size). `GET /v1/helper` gives its digest, template, parameters and licence; `GET /v1/helper/model` streams the file (two devices at a time).
 - Library: `GET /v1/library`, `GET /v1/library/{id}`, `POST /v1/library`, `POST /v1/library/{id}/review` (host), `POST /v1/library/{id}/used`, `POST /v1/feedback`, `GET /v1/library/export` (host), `POST /v1/admin/settings` (host).
 - Plugins: `GET /v1/plugins?q=…&accepts=image/png` lists the plugins online devices would run for you, relevant ones only, best rated first. `POST /v1/steps` with `kind: "run_plugin"`, `plugin` and `input` runs one; the worker sends `status` and `fraction` on `/progress`, and `files` (base64) on `/complete`, which reach the requester as `status` and `file` events. A rating with `plugin` set (`POST /v1/feedback`) goes to that plugin's library entry.
 

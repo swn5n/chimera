@@ -1,6 +1,11 @@
-# Chimera 0.6.1
+# Chimera 0.7.0
 
 Share idle GPUs — and the tools on them — with friends through Ollama, SheepIt style. One person hosts the pool; everyone else's Chimera finds it and joins on its own — on the same Wi-Fi automatically, and across the internet once you point it at the host's address. Press Connect to lend your GPU: prompts from the pool run on your models, and you earn credits for the work.
+
+## New in 0.7
+
+- **Hydra 1.0, the network's own helper model.** Planning a long task, the review in **Keep going until done**, and the "should a Head do this?" check now run on **Hydra 1.0** (`hydra:1.0`, 2.9 GB): a small model trained for exactly those three jobs, small enough for every computer to run. Long tasks no longer wait for the biggest model to plan or review, and the Head check gets the model that was trained for it. When no computer the task may use has Hydra 1.0, or a task is too big for it (roughly 13,000 characters going into a plan, 16,000 into a review), these go to the biggest model, as before. If Chimera can't read Hydra's plan or review, it asks once more without it. Hydra 1.0 never answers chats or works on steps, and the chat's model picker doesn't list it. The task card says which computer and model planned, combined and reviewed.
+- **Get it from the host, inside Chimera.** On each computer: **Models → Helper → Get from host**. It copies the host's Hydra 1.0 straight into that computer's Ollama; nothing is downloaded from the internet. The host needs Chimera 0.7.0 and Hydra 1.0 in its own Ollama. Only install it on computers that run 0.7.0: an older Chimera treats it as an ordinary chat model.
 
 ## New in 0.6
 
@@ -8,7 +13,7 @@ Share idle GPUs — and the tools on them — with friends through Ollama, Sheep
   - **Words alone work now.** Before, a tool was only considered when a picture was attached. Now a request in plain words goes to a Head when it's clearly asking for what that Head makes — the pool's fastest model double-checks, so *"how does image generation work?"* stays a conversation and *"generate an image of…"* becomes one. Picking a specific model in the composer always uses that model.
   - **Ratings decide, and Heads earn.** When several Heads could do a job, the best-rated one is picked — so rate results. The Head's owner earns **bonus credits** every time their Head does a job for someone else (half the run's charge again, at least 0.1), **plus 1 credit** each time someone else rates the result 4 or 5 stars. That's the reward for bridging a gap with a real tool instead of a model.
   - **Heads that wrap a local server** (ComfyUI, a 3D model server) can reach it from inside the sandbox when they say so; the internet stays blocked on a Mac.
-  - **Ready to install:** the `heads/` folder next to the app has `comfyui-image` (text → picture, any checkpoint you have; your own exported workflow for Flux), `hunyuan3d-mesh` (picture → GLB), a `TEMPLATE` to copy, and `heads/README.md` on how to write one. These two were tested against fake servers that speak the real API, not yet against real ComfyUI/Hunyuan3D — tell me what trips. `perspective-shadow` lives on the laptop (see its handoff).
+  - **Ready to install:** the `heads/` folder next to the app has `comfyui-image` (text → picture, any checkpoint you have; your own exported workflow for Flux), `hunyuan3d-mac` (picture → textured GLB with Hunyuan3D 2.1 on a Mac's GPU, about 3 minutes on the Studio; tested for real), `hunyuan3d-mesh` (picture → GLB through Hunyuan3D 2's API server, for Nvidia PCs), a `TEMPLATE` to copy, and `heads/README.md` on how to write one. `comfyui-image` and `hunyuan3d-mesh` were tested against fake servers that speak the real API, not yet against real ComfyUI/Hunyuan3D — tell me what trips. `perspective-shadow` lives on the laptop (see its handoff).
 - **Quit really quits, and opening Chimera again brings the window back (Mac).** Chimera lives in the background with no Dock icon; closing its window never quit it. On a Mac, double-clicking the app while it was running did *nothing* — macOS won't start a second copy and the running one couldn't hear the "show yourself" signal — which looked like "it says it's already running" with no way back in. Now opening Chimera again always brings the window back, and **Settings → Quit Chimera** ends it for real (it did before too; the confusing part was the reopen).
 - **Bigger model list.** More curated models in **Models** — small fast ones, coders for 16 GB cards, vision, reasoning, big ones for 48–96 GB — and a note on what an Nvidia/CUDA PC adds. Picture and 3D generation aren't Ollama models; they're Heads (above).
 
@@ -67,10 +72,10 @@ Everyone in a pool should run the same version. Device cards show a warning next
 ## First test: your two Macs
 
 1. Install Ollama on both computers from ollama.com/download and open it.
-2. Open the new Chimera on both (from `dist/Chimera.app` — or wherever you keep it). **Open Settings and confirm it says Chimera 0.6.1** on each; if it says anything older, the old one was still running — just open the new app once more.
+2. Open the new Chimera on both (from `dist/Chimera.app` — or wherever you keep it). **Open Settings and confirm it says Chimera 0.7.0** on each; if it says anything older, the old one was still running — just open the new app once more.
 3. Enter your name. You don't have to choose Host or Join: on the same Wi-Fi they find each other on their own within about 20 seconds — one hosts, the other joins. If you *did* click Host on both, that's fine now; they merge.
 4. Still not seeing each other after ~30 seconds? Go down the list in **"Still can't see each other?"** below.
-5. On each computer open **Models** and download the recommended picks you want.
+5. On each computer open **Models**, press **Get from host** next to Hydra 1.0 (the host has it already), and download the recommended picks you want.
 6. Press **Connect** on both. Both computers show up under your pool as Lending.
 7. In **Chat**, send something, or turn on **Long task** and describe a bigger job. Each reply says which computer and model wrote it.
 8. Rate a good reply 5 stars and say what worked. It shows up in **Library** once it's checked.
@@ -79,7 +84,7 @@ Everyone in a pool should run the same version. Device cards show a warning next
 
 In order, most common first:
 
-1. **Is it really 0.6.1?** Settings shows the version at the bottom. If not, open the new app once more; it replaces the old one.
+1. **Is it really 0.7.0?** Settings shows the version at the bottom. If not, open the new app once more; it replaces the old one.
 2. **macOS Local Network permission.** System Settings → Privacy & Security → **Local Network** → Chimera must be on, on *both* Macs. If Chimera isn't listed, quit it from Settings, open it again and say **Allow** to the prompt.
 3. **Same Wi-Fi, really?** Some routers put 2.4 GHz and 5 GHz on separate networks, or have a "guest"/"isolated" mode that stops devices talking to each other. Both Macs should show the same network name, and the laptop should be able to open `http://<studio's address>:7480/v1/ping` in a browser (the Studio's address is under Settings → Network → Addresses on the Studio) and see `{"app":"chimera-hub"…}`. If that page doesn't load, it's the network, not Chimera — try a different Wi-Fi, or join by typing that address in the Network tab.
 4. **Firewall.** See "Opening it the first time".
@@ -109,11 +114,11 @@ Never port-forward 7480 straight from your router: that exposes the hub with no 
 - Long tasks only reuse entries that passed the checks, so a new entry can't slip instructions to the AI workers.
 - Test-run output is only shown on the host.
 
-## Not in 0.6 yet
+## Not in 0.7 yet
 
 - **A real sandbox for Heads on Windows.** Macs and Linux run Heads sandboxed. Windows has no sandbox Chimera trusts, so Heads are off there by default — but you can switch them on under Settings → Heads → **Run Heads without a sandbox on this computer**. That's how the Nvidia PC hosts ComfyUI for the pool today: the Head runs with your normal permissions, so only install Heads you trust. (Head code is always installed by hand; the pool only sends it pictures and words.)
 - **One picture per message; long tasks don't call Heads yet; no video/audio player inline** (those files download).
-- The reference Heads haven't met a real ComfyUI / Hunyuan3D yet.
+- The `comfyui-image` and `hunyuan3d-mesh` reference Heads haven't met a real ComfyUI / Hunyuan3D server yet.
 
 - **Privacy.** The pool is open and unencrypted: the host can see prompts, and anyone you let in can too. Fine for friends; not for anything sensitive. Encrypting traffic and hiding prompts from the host is a later job.
 - The window is still a web app (in a Chrome/Edge window, or the Dock app once you install it). A fully native Mac window would need a separate build on the Mac — say the word if you want it.

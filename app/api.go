@@ -64,6 +64,7 @@ func (a *App) routes() http.Handler {
 		writeJSON(w, 200, map[string]bool{"ok": true})
 	})
 	mux.HandleFunc("POST /api/ollama/pull", a.handlePull)
+	mux.HandleFunc("POST /api/helper/install", a.handleHelperInstall) // get Hydra 1.0 from the network's host
 
 	mux.HandleFunc("POST /api/settings", a.handleSettings)
 
@@ -293,6 +294,7 @@ func (a *App) handleSettings(w http.ResponseWriter, r *http.Request) {
 		HostPort               *int      `json:"host_port"`
 		SetupDone              *bool     `json:"setup_done"`
 		RunTests               *bool     `json:"run_tests"`
+		CheckResults           *bool     `json:"check_results"`
 		AutoHelp               *bool     `json:"auto_help"`
 		AutoJoin               *bool     `json:"auto_join"`
 		PoolAddr               *string   `json:"pool_addr"`
@@ -349,6 +351,9 @@ func (a *App) handleSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		if req.RunTests != nil {
 			c.RunTests = *req.RunTests
+		}
+		if req.CheckResults != nil {
+			c.CheckResults = *req.CheckResults
 		}
 		if req.AutoHelp != nil {
 			c.AutoHelp = *req.AutoHelp
@@ -450,6 +455,7 @@ func (a *App) handleGetSession(w http.ResponseWriter, r *http.Request) {
 			m.Task = &rec
 		} else {
 			m.Status, m.Error = "error", "Interrupted (Chimera was closed while this was being written)."
+			interruptChecks(m.Task)
 			stale = true
 		}
 	}
@@ -462,6 +468,7 @@ func (a *App) handleGetSession(w http.ResponseWriter, r *http.Request) {
 					if m.Task != nil && m.Task.Phase != "done" {
 						m.Task.Phase = "error"
 					}
+					interruptChecks(m.Task)
 				}
 			}
 		})

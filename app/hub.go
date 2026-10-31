@@ -169,6 +169,7 @@ type hubStep struct {
 	Messages       []ChatMessage
 	Options        map[string]any
 	Prefer         string   // "", "largest", "fastest"
+	PreferModel    string   // a computer with this model gets the step first (the helper); else Prefer decides
 	NeedCaps       []string // e.g. vision
 	NeedCtx        int      // tokens of context the step needs
 	Format         json.RawMessage
@@ -239,6 +240,9 @@ type Hub struct {
 	running bool
 
 	disco net.PacketConn // UDP discovery listener
+
+	helperSource  func() *HelperOffer // the helper model this host hands out (helper_share.go)
+	helperSending int                 // computers it's being sent to now
 }
 
 func NewHub(path string, port int) *Hub {
@@ -442,6 +446,8 @@ func (h *Hub) routes() http.Handler {
 	mux.HandleFunc("POST /v1/steps/{id}/fail", h.auth(h.handleFail))
 	mux.HandleFunc("POST /v1/admin/settings", h.auth(h.handleAdminSettings))
 	mux.HandleFunc("GET /v1/plugins", h.auth(h.handlePlugins))
+	mux.HandleFunc("GET /v1/helper", h.auth(h.handleHelper))
+	mux.HandleFunc("GET /v1/helper/model", h.auth(h.handleHelperModel))
 	h.libraryRoutes(mux)
 	return mux
 }
@@ -645,6 +651,7 @@ func (h *Hub) handleHeartbeat(w http.ResponseWriter, r *http.Request, d *hubDevi
 	}
 	snap := h.snapshotLocked(d)
 	h.mu.Unlock()
+	snap.Network.Helper = h.helperSummary()
 	writeJSON(w, 200, snap)
 }
 
@@ -652,6 +659,7 @@ func (h *Hub) handleNetwork(w http.ResponseWriter, r *http.Request, d *hubDevice
 	h.mu.Lock()
 	snap := h.snapshotLocked(d)
 	h.mu.Unlock()
+	snap.Network.Helper = h.helperSummary()
 	writeJSON(w, 200, snap)
 }
 
@@ -663,6 +671,8 @@ type NetInfo struct {
 	Owner         string `json:"owner"`
 	Version       string `json:"version"`
 	VerifyIdleMin int    `json:"verify_idle_min"`
+
+	Helper *HelperSummary `json:"helper,omitempty"` // the helper model the host hands out
 }
 
 type DeviceView struct {
@@ -956,9 +966,25 @@ func (h *Hub) fits(d *hubDevice, st *hubStep) (model string, score float64, ok b
 		}
 		return "", 0, false
 	}
+	// The helper's jobs: a computer that has the helper beats every other
+	// choice, the one that answers soonest first. Without it, Prefer decides.
+	if st.PreferModel != "" {
+		for _, m := range d.models {
+			if normModel(m.Name) == normModel(st.PreferModel) && m.CanChat() && modelOK(m, st) {
+				return m.Name, preferredScore - eta(m), true
+			}
+		}
+		// A free computer that has the helper is about to ask for work (it has
+		// just finished a step, like the combine before a review): give it a
+		// moment instead of settling for another model. A busy one isn't
+		// waited for.
+		if time.Since(st.Created) < helperWait && h.helperFreeLocked(st, d) {
+			return "", 0, false
+		}
+	}
 	best, bestParams := -1e18, 0.0
 	for _, m := range d.models {
-		if !m.CanChat() || !modelOK(m, st) {
+		if !m.ForChat() || !modelOK(m, st) {
 			continue
 		}
 		var s float64
@@ -992,6 +1018,25 @@ func (h *Hub) fits(d *hubDevice, st *hubStep) (model string, score float64, ok b
 	return model, best, model != ""
 }
 
+// helperFreeLocked says whether a computer other than except that has st's
+// preferred model is free to take st now (ready, allowed, room for it).
+func (h *Hub) helperFreeLocked(st *hubStep, except *hubDevice) bool {
+	for _, o := range h.st.Devices {
+		if o == except || st.Exclude[o.ID] || !h.readyLocked(o) {
+			continue
+		}
+		if (st.Target != "" && st.Target != o.ID) || (st.Private && !sameOwner(o.Owner, st.RequesterOwner)) {
+			continue
+		}
+		for _, m := range o.models {
+			if normModel(m.Name) == normModel(st.PreferModel) && m.CanChat() && modelOK(m, st) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // largestLocked is the biggest model any lending device could run st with.
 func (h *Hub) largestLocked(st *hubStep) float64 {
 	top := 0.0
@@ -1003,7 +1048,7 @@ func (h *Hub) largestLocked(st *hubStep) float64 {
 			continue
 		}
 		for _, m := range d.models {
-			if m.CanChat() && modelOK(m, st) && m.ParamsB > top {
+			if m.ForChat() && modelOK(m, st) && m.ParamsB > top {
 				top = m.ParamsB
 			}
 		}
@@ -1381,6 +1426,11 @@ type submitReq struct {
 	Plugin   string          `json:"plugin,omitempty"`    // run_plugin: which plugin
 	Input    json.RawMessage `json:"input,omitempty"`     // run_plugin: its input
 	NotHere  bool            `json:"not_here,omitempty"`  // never on the asking device (work for someone else's Head)
+
+	// PreferModel: run on a computer that has this model when there is one (the
+	// helper, for its three jobs); otherwise route as Prefer says. Older hubs
+	// ignore it and route as Prefer says.
+	PreferModel string `json:"prefer_model,omitempty"`
 }
 
 // usesOthers reports whether a step would run on someone else's device (and so
@@ -1433,7 +1483,7 @@ func (h *Hub) handleSubmit(w http.ResponseWriter, r *http.Request, d *hubDevice)
 	st := &hubStep{
 		ID: randomID(8), RequesterID: d.ID, RequesterOwner: d.Owner, RequesterName: d.Name,
 		Model: model, Target: req.Target, Private: req.Private,
-		Messages: req.Messages, Options: req.Options, Prefer: req.Prefer, NeedCaps: req.NeedCaps,
+		Messages: req.Messages, Options: req.Options, Prefer: req.Prefer, PreferModel: strings.TrimSpace(req.PreferModel), NeedCaps: req.NeedCaps,
 		NeedCtx: req.NeedCtx, Format: req.Format, Purpose: req.Purpose, TaskWork: req.TaskWork,
 		Kind: req.Kind, Plugin: req.Plugin, Input: req.Input,
 		Status: "queued", Created: time.Now(), Exclude: map[string]bool{},
@@ -1465,7 +1515,16 @@ func (h *Hub) handleSubmit(w http.ResponseWriter, r *http.Request, d *hubDevice)
 	h.steps[st.ID] = st
 	h.queue = append(h.queue, st)
 	h.dispatchLocked()
+	if st.PreferModel != "" && st.Status == "queued" { // if the helper's computer doesn't ask in time, hand it on then
+		time.AfterFunc(helperWait+50*time.Millisecond, h.dispatchNow)
+	}
 	writeJSON(w, 200, map[string]any{"id": st.ID, "status": st.Status})
+}
+
+func (h *Hub) dispatchNow() {
+	h.mu.Lock()
+	h.dispatchLocked()
+	h.mu.Unlock()
 }
 
 // submitInternalLocked queues a step on the hub's own behalf (library work).

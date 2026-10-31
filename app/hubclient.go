@@ -199,12 +199,19 @@ func (c *HubClient) CompleteWithFiles(ctx context.Context, id string, stats Chat
 	return err
 }
 
-// Plugins asks the hub which plugins could handle a request, best first.
-func (c *HubClient) Plugins(ctx context.Context, query, accepts string) ([]PluginCandidate, error) {
+// Plugins asks the hub which plugins could handle a request, best first, among
+// those on the devices the request may run on.
+func (c *HubClient) Plugins(ctx context.Context, query, accepts string, scope pluginScope) ([]PluginCandidate, error) {
 	v := url.Values{}
 	v.Set("q", query)
 	if accepts != "" {
 		v.Set("accepts", accepts)
+	}
+	if scope.Target != "" {
+		v.Set("target", scope.Target)
+	}
+	if scope.Private {
+		v.Set("private", "1")
 	}
 	var out struct {
 		Plugins []PluginCandidate `json:"plugins"`

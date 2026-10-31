@@ -60,6 +60,10 @@ function setHTML(el, html) {
 const normModel = (s) => { s = String(s || "").trim().toLowerCase(); return s && !s.includes(":") ? s + ":latest" : s; };
 const sameOwner = (a, b) => String(a || "").trim().toLowerCase() !== "" && String(a || "").trim().toLowerCase() === String(b || "").trim().toLowerCase();
 const canChat = (m) => (m.caps && m.caps.length ? m.caps.includes("completion") : !/embed/i.test(m.name));
+// Hydra 1.0, the helper model, only plans long tasks, reviews them and decides when a Head should run:
+// it's never offered for chats.
+const isHelper = (m) => /^hydra:/.test(normModel(m.name).split("/").pop());
+const forChat = (m) => canChat(m) && !isHelper(m);
 const fmtGB = (bytes) => { const gb = (bytes || 0) / 1e9; return gb >= 10 ? `${Math.round(gb)} GB` : `${gb.toFixed(1)} GB`; };
 const fmtNum = (n) => Number(n || 0).toLocaleString();
 const fmtCredits = (n) => { n = Number(n || 0); return Math.abs(n) >= 100 ? n.toFixed(1) : n.toFixed(2); };
@@ -536,14 +540,55 @@ function renderFitPanel() {
     </div>`);
 }
 
+// Hydra 1.0 comes from the network's host, not from ollama.com: the host hands out its own copy.
+function helperPick() {
+  const h = S.helper;
+  if (!h) return "";
+  const what = "Plans long tasks, reviews their results and decides when a Head should run. Every computer can run it, so long tasks don't wait for the biggest model.";
+  const off = S.ollama.status !== "running";
+  let act;
+  if (h.installed) act = `<span class="have" title="${h.sharing ? "The computers in your network can get it from this one" : ""}"><span class="led ice"></span>${h.sharing ? "Installed, shared" : "Installed"}</span>`;
+  else if (dl.progress.helper) act = `<span class="dl" data-dl="helper"><span class="dl-text"></span><span class="pull-bar"><span></span></span></span>`;
+  else if (h.installing) act = `<span class="fine" title="Started from another window, or before this page was reloaded">Getting it from the host…</span>`;
+  else if (h.offered) act = `<button class="btn small" data-act="get-helper" title="Copies it from your network's host${h.size_gb ? ` (${gb(h.size_gb)})` : ""}" ${off ? "disabled" : ""}>Get from host</button>`;
+  else act = `<span class="fine" title="Its host needs Chimera ${esc(S.version)} and Hydra 1.0 in its Ollama">${S.network.joined ? "Host doesn't have it" : "Join a network"}</span>`;
+  const where = h.devices && h.devices.length ? ` On ${h.devices.length === 1 ? h.devices[0] : h.devices.length + " computers"} now.` : "";
+  return `<div class="pick"><span class="role">Helper</span><span class="pname" title="${esc(what + where)}">Hydra 1.0<em>${esc(h.model)}</em></span><span class="psize">${h.size_gb ? gb(h.size_gb) : ""}</span><span class="pact">${act}</span></div>`;
+}
+
+async function getHelper() {
+  if (dl.progress.helper || (S.helper && S.helper.installing)) return;
+  dl.progress.helper = { pct: 0, text: "Starting…" };
+  render();
+  let failed = null, last = 0;
+  try {
+    const res = await fetch("/api/helper/install", { method: "POST", headers: { "X-Chimera": "1" } });
+    if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.error || "Couldn't get it."); }
+    await readSSE(res, (ev) => {
+      if (ev.type === "progress") {
+        const pct = ev.total ? Math.floor((ev.completed / ev.total) * 100) : 0;
+        dl.progress.helper = { pct, text: ev.total && ev.completed < ev.total ? `${pct}% of ${fmtGB(ev.total)}` : ev.status };
+        if (Date.now() - last > 150) { last = Date.now(); paintDownloads(); }
+      } else if (ev.type === "error") failed = ev.error;
+    });
+    if (failed) throw new Error(failed);
+    toast("Hydra 1.0 is set up on this computer");
+  } catch (e) {
+    toast(`Hydra 1.0: ${e.message}`, true);
+  } finally {
+    delete dl.progress.helper;
+    if (S) render();
+  }
+}
+
 function renderPicks() {
   const items = S.catalog.items || [], box = $("#picks");
   const isMac = (S.device.info || {}).os === "macOS";
-  setHTML(box, (S.catalog.roles || []).map((r) => {
+  setHTML(box, helperPick() + (S.catalog.roles || []).map((r) => {
     const c = items.find((x) => x.tag === r.tag);
     if (!c) {
       const why = r.role === "images" && !isMac ? "Ollama's image models are Mac only for now. On an Nvidia PC, install the comfyui-image Head (Settings → Heads) and the whole pool can use it."
-        : r.role === "planner" ? "Planning needs a big model. Long tasks plan on the biggest one in the network."
+        : r.role === "planner" ? "Planning needs a big model. Long tasks plan with Hydra 1.0 when a computer has it, or on the biggest model in the network."
         : "Nothing in the list fits well here.";
       return `<div class="pick none"><span class="role">${esc(r.name)}</span><span class="pname">${esc(why)}</span></div>`;
     }
@@ -595,6 +640,7 @@ function renderInstalled() {
     const chatty = canChat(m), f = fitOf(m.fits);
     const bits = [];
     if (chatty) {
+      if (isHelper(m)) bits.push("the network's helper: plans long tasks, reviews them, picks Heads");
       bits.push(`needs about <b>${gb(m.need_gb)}</b>`);
       if (m.ctx_max) bits.push(`up to <b>${ctxWord(m.ctx_max)}</b> context here`);
       if (m.tok_s) bits.push(`<b>${Math.round(m.tok_s)}</b> tokens/s measured`);
@@ -679,6 +725,14 @@ function renderSettings() {
     if (el.type === "checkbox") el.checked = !!v;
     else if (String(el.value) !== String(v ?? "")) el.value = v ?? "";
   });
+  const canCheck = !!(S.profile && S.profile.can_check);
+  const cr = $('[data-setting="check_results"]');
+  if (cr) {
+    cr.disabled = !canCheck;
+    if (!canCheck) cr.checked = false; // it can't run here, whatever the setting says
+  }
+  const crNo = $("#check-results-no");
+  if (crNo) crNo.hidden = canCheck;
   const owner = $('[data-setting="owner"]');
   owner.disabled = S.network.joined;
   $("#owner-hint").textContent = S.network.joined
@@ -1016,14 +1070,20 @@ function phaseText(t, pending) {
   const rp = t.rounds > 1 && t.round && t.phase !== "done" ? `Round ${t.round}/${t.rounds} · ` : "";
   switch (t.phase) {
     case "planning":
-      return rp + (t.planner_model ? `Planning on ${deviceLabel(t.planner_device, t.planner_owner)} with ${t.planner_model}…` : "Finding the biggest model to plan with…");
+      return rp + (t.planner_model ? `Planning on ${deviceLabel(t.planner_device, t.planner_owner)} with ${t.planner_model}…` : "Finding a model to plan with…");
     case "working": return rp + `Working: ${done} of ${plural(steps.length, "step")} done`;
     case "combining": return rp + (t.synth_model ? `Combining on ${deviceLabel(t.synth_device, t.synth_owner)} with ${t.synth_model}…` : "Combining the steps…");
-    case "reviewing": return rp + "Reviewing the result…";
+    case "reviewing": return rp + (t.reviewer_model ? `Reviewing on ${deviceLabel(t.reviewer_device, t.reviewer_owner)} with ${t.reviewer_model}…` : "Reviewing the result…");
+    case "checking": {
+      const c = lastCheck(t);
+      return rp + `Running the script in ${(c && c.runner) || "a sandbox"} here…`;
+    }
     case "done": {
       const devs = new Set(steps.filter((s) => s.device).map((s) => s.device));
       const r = t.rounds > 1 && t.round ? `${plural(t.round, "round")}, ` : "";
-      return `Done: ${r}${plural(steps.length, "step")}${devs.size > 1 ? ` on ${devs.size} computers` : ""}`;
+      const c = finalCheck(t);
+      const tail = !c ? "" : c.outcome === "failed" ? " · the script still crashes" : c.outcome === "cut_off" ? " · cut off" : "";
+      return `Done: ${r}${plural(steps.length, "step")}${devs.size > 1 ? ` on ${devs.size} computers` : ""}${tail}`;
     }
     case "cancelled": return "Stopped";
     case "error": return t.error || "Didn't finish";
@@ -1031,13 +1091,54 @@ function phaseText(t, pending) {
   return pending ? "Starting…" : "";
 }
 
-function stepSub(s) {
+function lastCheck(t) {
+  const cs = t.checks || [];
+  return cs.length ? cs[cs.length - 1] : null;
+}
+
+// The check of the final result: the latest one, if it's from the last round.
+function finalCheck(t) {
+  const c = lastCheck(t);
+  return c && c.round === t.round ? c : null;
+}
+
+const openChecks = new Set(); // check outputs the person opened, kept open across updates
+
+// What running each round's result found: facts, shown apart from the review.
+function checkLines(t) {
+  const cs = t.checks || [];
+  if (!cs.length) return "";
+  const led = { running: "ice pulse", passed: "ice", failed: "brick", cut_off: "brick" };
+  const live = !["done", "cancelled", "error"].includes(t.phase);
+  let lastSkip = "";
+  const items = cs.map((c) => {
+    if (c.outcome === "skipped") {
+      if (c.summary === lastSkip) return "";
+      lastSkip = c.summary;
+    }
+    const stale = c.outcome === "running" && !live; // the task ended without finishing the check
+    let text = (t.rounds > 1 ? `Round ${c.round}: ` : "") + (stale ? "The check didn't finish." : c.summary);
+    if ((c.outcome === "failed" || c.outcome === "cut_off") && t.rounds > 1) {
+      if (c.stopped) text += " The same problem came back, so Hydra stopped here.";
+      else if (c.round < t.round || live) text += " Sent back for another round.";
+    }
+    const key = `${t.started}:${c.round}`;
+    const out = c.output ? `<details class="check-out" data-check="${esc(key)}"${openChecks.has(key) ? " open" : ""}><summary>Output</summary><pre>${esc(c.output)}</pre></details>` : "";
+    return `<li><span class="led ${stale ? "off" : led[c.outcome] || "off"}"></span><div>${esc(text)}${out}</div></li>`;
+  }).join("");
+  return `<ul class="plan-checks">${items}</ul>`;
+}
+
+function stepSub(s, t) {
   if (s.status === "library") return `<span class="ssub lib">Reused from the library: ${esc(s.from_library)}. No model needed.</span>`;
   if (s.status === "failed" && s.error === "cancelled") return `<span class="ssub">Stopped</span>`;
   if (s.status === "failed") return `<span class="ssub bad">${esc(s.error || "Didn't finish")}</span>`;
   const where = s.device ? (s.local ? `Here with ${esc(s.model)}` : `On ${esc(deviceLabel(s.device, s.owner))} with ${esc(s.model)}`) : "";
   if (s.status === "running") return `<span class="ssub">${where ? where + ", writing…" : "Waiting for a free device…"}</span>`;
-  if (s.status === "done") return `<span class="ssub">${where}${s.tokens ? `, ${fmtNum(s.tokens)} tokens` : ""}${s.free ? ", free" : s.credits ? `, ${fmtCredits(s.credits)} credits` : ""}</span>`;
+  if (s.status === "done") {
+    const cut = t && (t.cut_steps || []).includes(s.id) ? ", cut off at its output limit" : "";
+    return `<span class="ssub">${where}${s.tokens ? `, ${fmtNum(s.tokens)} tokens` : ""}${s.free ? ", free" : s.credits ? `, ${fmtCredits(s.credits)} credits` : ""}${cut}</span>`;
+  }
   const deps = (s.depends_on || []).length ? `After step ${s.depends_on.map((d) => d.replace(/^s/, "")).join(" and ")}` : "Waiting";
   return `<span class="ssub">${esc(deps)}</span>`;
 }
@@ -1052,7 +1153,7 @@ function fillTask(el, m) {
   const stepsHTML = steps.map((s) => {
     const open = openSteps.has(key(s)) && s.output;
     const l = s.status === "failed" && s.error === "cancelled" ? "off" : led[s.status] || "off";
-    return `<li><span class="led ${l}"></span><div><b>${esc(s.title)}</b>${stepSub(s)}</div>
+    return `<li><span class="led ${l}"></span><div><b>${esc(s.title)}</b>${stepSub(s, t)}</div>
       ${s.output ? `<button class="link small" data-step="${esc(key(s))}">${open ? "Hide" : "Show"}</button>` : "<span></span>"}
       ${open ? `<div class="sout">${md(s.output)}</div>` : ""}</li>`;
   }).join("");
@@ -1060,11 +1161,14 @@ function fillTask(el, m) {
   const bad = t.phase === "error";
   const foot = t.phase === "planning" ? [] : [t.planner_model ? `Planned on ${deviceLabel(t.planner_device, t.planner_owner)} with ${t.planner_model}` : "",
     t.synth_model ? `combined on ${deviceLabel(t.synth_device, t.synth_owner)} with ${t.synth_model}` : "",
+    t.reviewer_model && t.phase !== "reviewing" ? `reviewed on ${deviceLabel(t.reviewer_device, t.reviewer_owner)} with ${t.reviewer_model}` : "",
     (t.refs || []).length ? `used ${plural(t.refs.length, "library entry", "library entries")} as references` : ""].filter(Boolean);
   plan.hidden = false;
   setHTML(plan, `<div class="plan-head">${pending ? '<span class="led ice pulse"></span>' : ""}<span class="plan-title">${esc(t.title || "Long task")}</span><span class="plan-phase${bad ? " bad" : ""}">${esc(phase)}</span></div>
     ${t.summary ? `<p class="plan-summary">${esc(t.summary)}</p>` : ""}
     ${steps.length ? `<ol class="steps">${stepsHTML}</ol>` : ""}
+    ${checkLines(t)}
+    ${t.note && !(m.note || "").includes(t.note) ? `<p class="plan-foot">${esc(t.note)}</p>` : ""}
     ${foot.length ? `<p class="plan-foot">${esc(foot.join(", ").replace(/^./, (c) => c.toUpperCase()))}.</p>` : ""}`);
   let html = md(m.content);
   if (pending && t.phase === "combining") {
@@ -1337,11 +1441,11 @@ function refreshPickers() {
   const joined = S.network.joined;
   let models = [];
   if (!joined) {
-    models = S.ollama.models.filter(canChat).map((m) => ({ value: m.name, label: `${m.name} (this computer)` }));
+    models = S.ollama.models.filter(forChat).map((m) => ({ value: m.name, label: `${m.name} (this computer)` }));
   } else {
     const map = new Map();
     for (const d of lendingDevices()) {
-      for (const m of (d.models || []).filter(canChat)) {
+      for (const m of (d.models || []).filter(forChat)) {
         const k = normModel(m.name);
         if (!map.has(k)) map.set(k, { value: m.name, devs: [], size: m.params_b || 0 });
         map.get(k).devs.push(d.name);
@@ -1519,6 +1623,14 @@ async function addLibraryEntry() {
 }
 
 // ---------- wiring ----------
+// A check's output stays open across task updates (toggle doesn't bubble).
+document.addEventListener("toggle", (e) => {
+  const d = e.target;
+  if (!d.dataset || !d.dataset.check) return;
+  if (d.open) openChecks.add(d.dataset.check);
+  else openChecks.delete(d.dataset.check);
+}, true);
+
 document.addEventListener("click", async (e) => {
   const t = e.target.closest("button, a");
   if (!t) return;
@@ -1547,6 +1659,7 @@ document.addEventListener("click", async (e) => {
   if (t.dataset.star) { const el = t.closest(".msg"); if (el) rateMessage(el, Number(t.dataset.star)); return; }
   if (t.dataset.rateSkip !== undefined) { const el = t.closest(".msg"); if (el) sendRateNote(el, ""); return; }
   switch (t.dataset.act) {
+    case "get-helper": getHelper(); return;
     case "open-ollama":
       t.disabled = true;
       try { await api("POST", "/api/ollama/start"); toast("Ollama is running"); } catch (err) { toast(err.message, true); }

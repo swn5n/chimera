@@ -41,6 +41,8 @@ type Config struct {
 	RunTests               bool     `json:"run_tests"` // test-run library scripts here (host's devices only)
 	AutoHelp               bool     `json:"auto_help"` // let my devices auto-connect to help my long tasks
 	AutoHelpInit           bool     `json:"auto_help_init"`
+	CheckResults           bool     `json:"check_results"` // run a looping long task's Blender/Python result here, sandboxed, to check it
+	CheckResultsInit       bool     `json:"check_results_init"`
 	AutoJoin               bool     `json:"auto_join"`         // when hosting, let devices on this Wi-Fi join without a code
 	LendPlugins            bool     `json:"lend_plugins"`      // let the network run the plugins installed here
 	UnsandboxedHeads       bool     `json:"unsandboxed_heads"` // Windows: run Heads with no sandbox (owner's explicit choice)
@@ -93,6 +95,10 @@ func loadConfig(dir string) Config {
 		c.AutoJoin = true
 		c.ConnectOnLaunch = true // join the pool and start lending when opened
 		c.AutoHelpInit = true
+	}
+	if !c.CheckResultsInit { // default on, once, for new and existing installs
+		c.CheckResults = true
+		c.CheckResultsInit = true
 	}
 	return c
 }

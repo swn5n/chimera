@@ -667,6 +667,11 @@ input[type="checkbox"]:checked::after { transform: translateX(15px); background:
 .steps li .sout { grid-column: 3 / -1; margin-top: 4px; padding: 10px 12px; border-radius: 9px; background: #1a1d20; border: 1px solid var(--edge-soft); font-size: 13px; max-height: 360px; overflow: auto; }
 .steps li .sout pre { margin: .4em 0; }
 .plan-foot { margin: 10px 0 0; color: var(--lead); font-size: 12px; }
+.plan-checks { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 6px; font-size: 12px; color: var(--lead); }
+.plan-checks li { display: flex; gap: 8px; align-items: baseline; }
+.plan-checks li .led { flex: none; width: 8px; height: 8px; }
+.check-out summary { cursor: pointer; color: var(--pewter); }
+.check-out pre { max-height: 220px; overflow: auto; white-space: pre-wrap; font-size: 11px; margin: 4px 0 0; }
 .rate { display: flex; align-items: center; gap: 2px; margin-top: 8px; }
 .rate .rlabel { color: var(--lead); font-size: 12px; margin-right: 6px; }
 .star { width: 24px; height: 24px; padding: 2px; border: 0; background: none; cursor: pointer; color: #4a5056; border-radius: 6px; display: grid; place-items: center; }

@@ -62,6 +62,11 @@ func (m ModelInfo) CanChat() bool {
 	return false
 }
 
+// ForChat says whether the model may take ordinary work: chats, Hydra's worker
+// steps, combining, library jobs, reading a Head's options. The helper model
+// only does its own three jobs (helper.go).
+func (m ModelInfo) ForChat() bool { return m.CanChat() && !isHelperModel(m.Name) }
+
 func (m ModelInfo) SizeGB() float64 { return float64(m.SizeBytes) / 1e9 }
 
 type OllamaState struct {

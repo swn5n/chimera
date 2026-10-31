@@ -71,6 +71,7 @@ type SettingsView struct {
 	HostPort               int      `json:"host_port"`
 	SetupDone              bool     `json:"setup_done"`
 	RunTests               bool     `json:"run_tests"`
+	CheckResults           bool     `json:"check_results"`
 	AutoHelp               bool     `json:"auto_help"`
 	AutoJoin               bool     `json:"auto_join"`
 	PoolAddr               string   `json:"pool_addr"`
@@ -90,6 +91,7 @@ type UIState struct {
 	Profile  DeviceProfile `json:"profile"`
 	Catalog  CatalogView   `json:"catalog"`
 	Help     []HelpItem    `json:"help"`
+	Helper   HelperView    `json:"helper"` // Hydra 1.0, the helper model (helper_share.go)
 }
 
 func (a *App) buildState() UIState {
@@ -107,7 +109,7 @@ func (a *App) buildState() UIState {
 			MaxSlots: cfg.MaxSlots, MaxModelGB: cfg.MaxModelGB, Unshared: cfg.Unshared,
 			AutoStartOllama: cfg.AutoStartOllama, FreeMemoryOnDisconnect: cfg.FreeMemoryOnDisconnect,
 			ConnectOnLaunch: cfg.ConnectOnLaunch, AppWindow: cfg.AppWindow, HostPort: cfg.HostPort,
-			SetupDone: cfg.SetupDone, RunTests: cfg.RunTests, AutoHelp: cfg.AutoHelp, AutoJoin: cfg.AutoJoin, PoolAddr: cfg.PoolAddr,
+			SetupDone: cfg.SetupDone, RunTests: cfg.RunTests, CheckResults: cfg.CheckResults, AutoHelp: cfg.AutoHelp, AutoJoin: cfg.AutoJoin, PoolAddr: cfg.PoolAddr,
 			LendPlugins: cfg.LendPlugins, UnsandboxedHeads: cfg.UnsandboxedHeads,
 		},
 		DataDir: a.dataDir,
@@ -153,6 +155,7 @@ func (a *App) buildState() UIState {
 			s.Network.Recent = []StepSummary{}
 		}
 	}
+	s.Helper = a.helperView(s.Ollama.Models, snap, cfg.Joined())
 	return s
 }
 
@@ -188,7 +191,7 @@ func (a *App) helpItems(demand []DemandView, models []ModelInfo, catalogItems []
 		// A model already here that would do?
 		var have *ModelInfo
 		for i, m := range models {
-			if !m.CanChat() || m.Fits == "too_big" {
+			if !m.ForChat() || m.Fits == "too_big" {
 				continue
 			}
 			if d.Model != "" && normModel(m.Name) != normModel(d.Model) {

@@ -287,6 +287,11 @@ func (n *Node) Connect() error {
 		n.app.ollama.Refresh()
 		time.Sleep(800 * time.Millisecond)
 	}
+	// Right after launch the hardware check (system_profiler on a Mac) may not
+	// be done yet, and until it is every model looks too big to share.
+	for i := 0; i < 40 && n.app.sysInfo().OS == ""; i++ {
+		time.Sleep(250 * time.Millisecond)
+	}
 	if len(n.sharedModels()) == 0 {
 		if len(n.app.ollama.State().Models) == 0 {
 			return fail("Ollama has no models yet. Pull one under This device, then Connect.")
