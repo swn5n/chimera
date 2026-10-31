@@ -1,0 +1,6 @@
+# Raw replies are large and reproducible; summaries and reports are kept.
+results/runs*/*/raw.jsonl
+# Generated data: RNA dumps, teacher output, training files (large, and rebuilt by the tools).
+data/
+__pycache__/
+*.pyc

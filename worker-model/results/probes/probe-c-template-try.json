@@ -1,0 +1,539 @@
+{
+ "hf": "/Users/fx/.cache/huggingface/hub/models--google--gemma-4-12B-it/snapshots/43c9d014b231474fa7212dbb48a762566c2b255d/",
+ "ollama_model": "gemma4:12b-it-q4_K_M",
+ "worker_tag": "wm-probe-gemma4-worker:c",
+ "cases": [
+  {
+   "id": "w2-01",
+   "messages": [
+    "system",
+    "user"
+   ],
+   "content_with_outer_whitespace": [],
+   "hf_tokens": 804,
+   "hf_tokens_thinking": 802,
+   "ends_with_empty_thought": true,
+   "num_ctx": 8192,
+   "renderer_think_false": {
+    "prompt_tokens": 804,
+    "content": "```python\nimport bpy\n\nSETTINGS_s1 = {\n    \"glass_ior\": 1.45,\n    \"glass_roughness\": 0.02,\n    \"gold_color\": (1",
+    "thinking": "",
+    "done_reason": "length"
+   },
+   "renderer_think_unset": {
+    "prompt_tokens": 802,
+    "content": "",
+    "thinking": "*   Project: Perf",
+    "done_reason": "length"
+   },
+   "raw_hf_text": {
+    "prompt_tokens": 804,
+    "content": "```python\nimport bpy\n\nSETTINGS_s1 = {\n    \"glass_ior\": 1.45,\n    \"glass_roughness\": 0.02,\n    \"gold_color\": (1",
+    "done_reason": "length"
+   },
+   "worker_no_think_field": {
+    "prompt_tokens": 802,
+    "content": "",
+    "thinking": "*   Project: Perfume bottle product shot.\n    *   Step s1: Glass and gold materials [blender].\n    *   Task: Create two materials (clear glass and polished gold).\n    *",
+    "done_reason": "length"
+   },
+   "raw_hf_text_on_worker": {
+    "prompt_tokens": 804,
+    "content": "```python\nimport bpy\n\nSETTINGS_s1 = {\n    \"glass_ior\": 1.45,\n    \"glass_roughness\": 0.02,\n    \"gold_color\": (1",
+    "done_reason": "length"
+   },
+   "checks": {
+    "renderer_count_is_hf": true,
+    "renderer_reply_is_raw": true,
+    "raw_count_is_hf": true,
+    "worker_count_is_hf": false,
+    "worker_reply_is_raw": false,
+    "worker_no_thinking": false,
+    "unset_thinks": true
+   },
+   "mlx_stock": {
+    "full_tokens": 803,
+    "offset": 804,
+    "prompt_is_prefix": false,
+    "prompt_is_inference_prompt": true,
+    "target_is_answer_then_end": false,
+    "target_tail": ""
+   },
+   "mlx_worker": {
+    "full_tokens": 807,
+    "offset": 804,
+    "prompt_is_prefix": true,
+    "prompt_is_inference_prompt": true,
+    "target_is_answer_then_end": true,
+    "target_tail": "<turn|>\n"
+   }
+  },
+  {
+   "id": "w2-10",
+   "messages": [
+    "system",
+    "user"
+   ],
+   "content_with_outer_whitespace": [],
+   "hf_tokens": 728,
+   "hf_tokens_thinking": 726,
+   "ends_with_empty_thought": true,
+   "num_ctx": 8192,
+   "renderer_think_false": {
+    "prompt_tokens": 728,
+    "content": "```python\nimport bpy\n\nSETTINGS_s3 = {\n    \"distortion\": 0.02,\n    \"dispersion\": 0.01,\n    \"contrast\": 5.0,\n    \"",
+    "thinking": "",
+    "done_reason": "length"
+   },
+   "renderer_think_unset": {
+    "prompt_tokens": 726,
+    "content": "",
+    "thinking": "*   Project: Moody",
+    "done_reason": "length"
+   },
+   "raw_hf_text": {
+    "prompt_tokens": 728,
+    "content": "```python\nimport bpy\n\nSETTINGS_s3 = {\n    \"distortion\": 0.02,\n    \"dispersion\": 0.01,\n    \"contrast\": 5.0,\n    \"",
+    "done_reason": "length"
+   },
+   "worker_no_think_field": {
+    "prompt_tokens": 726,
+    "content": "",
+    "thinking": "*   Project: Moody product render of a watch.\n    *   Step s1: Watch model (blender).\n    *   Step s2: Lighting (blender).\n    *   Step s3",
+    "done_reason": "length"
+   },
+   "raw_hf_text_on_worker": {
+    "prompt_tokens": 728,
+    "content": "```python\nimport bpy\n\nSETTINGS_s3 = {\n    \"distortion\": 0.02,\n    \"dispersion\": 0.01,\n    \"contrast\": 5.0,\n    \"",
+    "done_reason": "length"
+   },
+   "checks": {
+    "renderer_count_is_hf": true,
+    "renderer_reply_is_raw": true,
+    "raw_count_is_hf": true,
+    "worker_count_is_hf": false,
+    "worker_reply_is_raw": false,
+    "worker_no_thinking": false,
+    "unset_thinks": true
+   },
+   "mlx_stock": {
+    "full_tokens": 727,
+    "offset": 728,
+    "prompt_is_prefix": false,
+    "prompt_is_inference_prompt": true,
+    "target_is_answer_then_end": false,
+    "target_tail": ""
+   },
+   "mlx_worker": {
+    "full_tokens": 731,
+    "offset": 728,
+    "prompt_is_prefix": true,
+    "prompt_is_inference_prompt": true,
+    "target_is_answer_then_end": true,
+    "target_tail": "<turn|>\n"
+   }
+  },
+  {
+   "id": "w3-04",
+   "messages": [
+    "system",
+    "user"
+   ],
+   "content_with_outer_whitespace": [],
+   "hf_tokens": 1374,
+   "hf_tokens_thinking": 1372,
+   "ends_with_empty_thought": true,
+   "num_ctx": 8192,
+   "renderer_think_false": {
+    "prompt_tokens": 1374,
+    "content": "```python\nimport bpy\nfrom mathutils import Vector\n\nSETTINGS_s2 = {\"key\": 1000.0, \"fill\": 400.0, \"rim\": 600.0,",
+    "thinking": "",
+    "done_reason": "length"
+   },
+   "renderer_think_unset": {
+    "prompt_tokens": 1372,
+    "content": "",
+    "thinking": "*   Task: Build",
+    "done_reason": "length"
+   },
+   "raw_hf_text": {
+    "prompt_tokens": 1374,
+    "content": "```python\nimport bpy\nfrom mathutils import Vector\n\nSETTINGS_s2 = {\"key\": 1000.0, \"fill\": 400.0, \"rim\": 600.0,",
+    "done_reason": "length"
+   },
+   "worker_no_think_field": {
+    "prompt_tokens": 1372,
+    "content": "",
+    "thinking": "*   Task: Build a three-point area light rig (key, fill, rim) in Blender 5.\n    *   Context: Part of a multi-step process (Chimera).\n    *   ",
+    "done_reason": "length"
+   },
+   "raw_hf_text_on_worker": {
+    "prompt_tokens": 1374,
+    "content": "```python\nimport bpy\nfrom mathutils import Vector\n\nSETTINGS_s2 = {\"key\": 1000.0, \"fill\": 400.0, \"rim\": 600.0,",
+    "done_reason": "length"
+   },
+   "checks": {
+    "renderer_count_is_hf": true,
+    "renderer_reply_is_raw": true,
+    "raw_count_is_hf": true,
+    "worker_count_is_hf": false,
+    "worker_reply_is_raw": false,
+    "worker_no_thinking": false,
+    "unset_thinks": true
+   },
+   "mlx_stock": {
+    "full_tokens": 1373,
+    "offset": 1374,
+    "prompt_is_prefix": false,
+    "prompt_is_inference_prompt": true,
+    "target_is_answer_then_end": false,
+    "target_tail": ""
+   },
+   "mlx_worker": {
+    "full_tokens": 1377,
+    "offset": 1374,
+    "prompt_is_prefix": true,
+    "prompt_is_inference_prompt": true,
+    "target_is_answer_then_end": true,
+    "target_tail": "<turn|>\n"
+   }
+  },
+  {
+   "id": "w3-12",
+   "messages": [
+    "system",
+    "user"
+   ],
+   "content_with_outer_whitespace": [],
+   "hf_tokens": 1605,
+   "hf_tokens_thinking": 1603,
+   "ends_with_empty_thought": true,
+   "num_ctx": 8192,
+   "renderer_think_false": {
+    "prompt_tokens": 1605,
+    "content": "```python\nimport bpy\nimport bmesh\nimport random\nfrom mathutils import Vector\n\nSETTINGS_s2 = {\n    \"rock_count\": 15,\n    \"seed\": 6,\n    \"spread",
+    "thinking": "",
+    "done_reason": "length"
+   },
+   "renderer_think_unset": {
+    "prompt_tokens": 1603,
+    "content": "",
+    "thinking": "*   Task: Scatter",
+    "done_reason": "length"
+   },
+   "raw_hf_text": {
+    "prompt_tokens": 1605,
+    "content": "```python\nimport bpy\nimport bmesh\nimport random\nfrom mathutils import Vector\n\nSETTINGS_s2 = {\n    \"rock_count\": 15,\n    \"seed\": 6,\n    \"spread",
+    "done_reason": "length"
+   },
+   "worker_no_think_field": {
+    "prompt_tokens": 1603,
+    "content": "",
+    "thinking": "*   Task: Scatter rocks on an island mesh (s2).\n    *   Input from s1: `ctx[\"objects\"][\"island\"]` (chimera_island) and `ctx[\"objects\"][\"rock_",
+    "done_reason": "length"
+   },
+   "raw_hf_text_on_worker": {
+    "prompt_tokens": 1605,
+    "content": "```python\nimport bpy\nimport bmesh\nimport random\nfrom mathutils import Vector\n\nSETTINGS_s2 = {\n    \"rock_count\": 15,\n    \"seed\": 6,\n    \"spread",
+    "done_reason": "length"
+   },
+   "checks": {
+    "renderer_count_is_hf": true,
+    "renderer_reply_is_raw": true,
+    "raw_count_is_hf": true,
+    "worker_count_is_hf": false,
+    "worker_reply_is_raw": false,
+    "worker_no_thinking": false,
+    "unset_thinks": true
+   },
+   "mlx_stock": {
+    "full_tokens": 1604,
+    "offset": 1605,
+    "prompt_is_prefix": false,
+    "prompt_is_inference_prompt": true,
+    "target_is_answer_then_end": false,
+    "target_tail": ""
+   },
+   "mlx_worker": {
+    "full_tokens": 1608,
+    "offset": 1605,
+    "prompt_is_prefix": true,
+    "prompt_is_inference_prompt": true,
+    "target_is_answer_then_end": true,
+    "target_tail": "<turn|>\n"
+   }
+  },
+  {
+   "id": "w4f-01",
+   "messages": [
+    "system",
+    "user"
+   ],
+   "content_with_outer_whitespace": [],
+   "hf_tokens": 780,
+   "hf_tokens_thinking": 778,
+   "ends_with_empty_thought": true,
+   "num_ctx": 8192,
+   "renderer_think_false": {
+    "prompt_tokens": 780,
+    "content": "```python\nimport bpy\nimport math\n\nSETTINGS_s3 = {\n    \"camera_focal_length\": 85,\n    \"camera_aperture\": 2.8,\n    \"camera_",
+    "thinking": "",
+    "done_reason": "length"
+   },
+   "renderer_think_unset": {
+    "prompt_tokens": 778,
+    "content": "",
+    "thinking": "*   Project: Perf",
+    "done_reason": "length"
+   },
+   "raw_hf_text": {
+    "prompt_tokens": 780,
+    "content": "```python\nimport bpy\nimport math\n\nSETTINGS_s3 = {\n    \"camera_focal_length\": 85,\n    \"camera_aperture\": 2.8,\n    \"camera_",
+    "done_reason": "length"
+   },
+   "worker_no_think_field": {
+    "prompt_tokens": 778,
+    "content": "",
+    "thinking": "*   Project: Perfume product shot.\n    *   Step s3: Camera on the product.\n    *   Task: Add an 85mm camera, frame the product from the front/slightly above",
+    "done_reason": "length"
+   },
+   "raw_hf_text_on_worker": {
+    "prompt_tokens": 780,
+    "content": "```python\nimport bpy\nimport math\n\nSETTINGS_s3 = {\n    \"camera_focal_length\": 85,\n    \"camera_aperture\": 2.8,\n    \"camera_",
+    "done_reason": "length"
+   },
+   "checks": {
+    "renderer_count_is_hf": true,
+    "renderer_reply_is_raw": true,
+    "raw_count_is_hf": true,
+    "worker_count_is_hf": false,
+    "worker_reply_is_raw": false,
+    "worker_no_thinking": false,
+    "unset_thinks": true
+   },
+   "mlx_stock": {
+    "full_tokens": 779,
+    "offset": 780,
+    "prompt_is_prefix": false,
+    "prompt_is_inference_prompt": true,
+    "target_is_answer_then_end": false,
+    "target_tail": ""
+   },
+   "mlx_worker": {
+    "full_tokens": 783,
+    "offset": 780,
+    "prompt_is_prefix": true,
+    "prompt_is_inference_prompt": true,
+    "target_is_answer_then_end": true,
+    "target_tail": "<turn|>\n"
+   }
+  },
+  {
+   "id": "w4l-02",
+   "messages": [
+    "system",
+    "user"
+   ],
+   "content_with_outer_whitespace": [],
+   "hf_tokens": 7799,
+   "hf_tokens_thinking": 7797,
+   "ends_with_empty_thought": true,
+   "num_ctx": 16384,
+   "renderer_think_false": {
+    "prompt_tokens": 7799,
+    "content": "## Staff briefing\n\n**Overview**\nWe are launching a new waste reduction plan to cut our annual losses (currently estimated at £9,000–£11,000) and improve our community standing. Our goal",
+    "thinking": "",
+    "done_reason": "length"
+   },
+   "renderer_think_unset": {
+    "prompt_tokens": 7797,
+    "content": "",
+    "thinking": "Staff briefing for Crumb",
+    "done_reason": "length"
+   },
+   "raw_hf_text": {
+    "prompt_tokens": 7799,
+    "content": "## Staff briefing\n\n**Overview**\nWe are launching a new waste reduction plan to cut our annual losses (currently estimated at £9,000–£11,000) and improve our community standing. Our goal",
+    "done_reason": "length"
+   },
+   "worker_no_think_field": {
+    "prompt_tokens": 7797,
+    "content": "",
+    "thinking": "Staff briefing for Crumb & Co (a small bakery).\nSix staff members.\n\n        *   Five actions from the action plan (with who and by when).\n        *   Closing-time routine.\n        ",
+    "done_reason": "length"
+   },
+   "raw_hf_text_on_worker": {
+    "prompt_tokens": 7799,
+    "content": "## Staff briefing\n\n**Overview**\nWe are launching a new waste reduction plan to cut our annual losses (currently estimated at £9,000–£11,000) and improve our community standing. Our goal",
+    "done_reason": "length"
+   },
+   "checks": {
+    "renderer_count_is_hf": true,
+    "renderer_reply_is_raw": true,
+    "raw_count_is_hf": true,
+    "worker_count_is_hf": false,
+    "worker_reply_is_raw": false,
+    "worker_no_thinking": false,
+    "unset_thinks": true
+   },
+   "mlx_stock": {
+    "full_tokens": 7798,
+    "offset": 7799,
+    "prompt_is_prefix": false,
+    "prompt_is_inference_prompt": true,
+    "target_is_answer_then_end": false,
+    "target_tail": ""
+   },
+   "mlx_worker": {
+    "full_tokens": 7802,
+    "offset": 7799,
+    "prompt_is_prefix": true,
+    "prompt_is_inference_prompt": true,
+    "target_is_answer_then_end": true,
+    "target_tail": "<turn|>\n"
+   }
+  },
+  {
+   "id": "bw-01/s1",
+   "messages": [
+    "system",
+    "user"
+   ],
+   "content_with_outer_whitespace": [],
+   "hf_tokens": 1436,
+   "hf_tokens_thinking": 1434,
+   "ends_with_empty_thought": true,
+   "num_ctx": 8192,
+   "renderer_think_false": {
+    "prompt_tokens": 1436,
+    "content": "```python\nimport bpy\n\n# SETTINGS_s1 contains the primary variables for the perfume bottle scene.\nSETTINGS_s1 = {\n    \"BOTTLE_HEIGHT\": 100,  # in mm\n",
+    "thinking": "",
+    "done_reason": "length"
+   },
+   "renderer_think_unset": {
+    "prompt_tokens": 1434,
+    "content": "",
+    "thinking": "*   Project: Perf",
+    "done_reason": "length"
+   },
+   "raw_hf_text": {
+    "prompt_tokens": 1436,
+    "content": "```python\nimport bpy\n\n# SETTINGS_s1 contains the primary variables for the perfume bottle scene.\nSETTINGS_s1 = {\n    \"BOTTLE_HEIGHT\": 100,  # in mm\n",
+    "done_reason": "length"
+   },
+   "worker_no_think_field": {
+    "prompt_tokens": 1434,
+    "content": "",
+    "thinking": "*   Project: Perfume Bottle Product Shot (Blender 5 Python script).\n    *   Step s1: Define bottle height and light strengths.\n    *   Requirements:\n        *   One Python code",
+    "done_reason": "length"
+   },
+   "raw_hf_text_on_worker": {
+    "prompt_tokens": 1436,
+    "content": "```python\nimport bpy\n\n# SETTINGS_s1 contains the primary variables for the perfume bottle scene.\nSETTINGS_s1 = {\n    \"BOTTLE_HEIGHT\": 100,  # in mm\n",
+    "done_reason": "length"
+   },
+   "checks": {
+    "renderer_count_is_hf": true,
+    "renderer_reply_is_raw": true,
+    "raw_count_is_hf": true,
+    "worker_count_is_hf": false,
+    "worker_reply_is_raw": false,
+    "worker_no_thinking": false,
+    "unset_thinks": true
+   },
+   "mlx_stock": {
+    "full_tokens": 1435,
+    "offset": 1436,
+    "prompt_is_prefix": false,
+    "prompt_is_inference_prompt": true,
+    "target_is_answer_then_end": false,
+    "target_tail": ""
+   },
+   "mlx_worker": {
+    "full_tokens": 1439,
+    "offset": 1436,
+    "prompt_is_prefix": true,
+    "prompt_is_inference_prompt": true,
+    "target_is_answer_then_end": true,
+    "target_tail": "<turn|>\n"
+   }
+  },
+  {
+   "id": "res-01/s5",
+   "messages": [
+    "system",
+    "user"
+   ],
+   "content_with_outer_whitespace": [],
+   "hf_tokens": 2830,
+   "hf_tokens_thinking": 2828,
+   "ends_with_empty_thought": true,
+   "num_ctx": 8192,
+   "renderer_think_false": {
+    "prompt_tokens": 2830,
+    "content": "## Recommendation: LoRA vs. Full Fine-Tuning on M3 Ultra\n\nThis report evaluates the optimal training strategy for a ~4B parameter model using Apple's MLX framework on M3 Ultra hardware. Based on memory requirements",
+    "thinking": "",
+    "done_reason": "length"
+   },
+   "renderer_think_unset": {
+    "prompt_tokens": 2828,
+    "content": "",
+    "thinking": "Draft a one-page",
+    "done_reason": "length"
+   },
+   "raw_hf_text": {
+    "prompt_tokens": 2830,
+    "content": "## Recommendation: LoRA vs. Full Fine-Tuning on M3 Ultra\n\nThis report evaluates the optimal training strategy for a ~4B parameter model using Apple's MLX framework on M3 Ultra hardware. Based on memory requirements",
+    "done_reason": "length"
+   },
+   "worker_no_think_field": {
+    "prompt_tokens": 2828,
+    "content": "",
+    "thinking": "Draft a one-page recommendation (300-400 words) comparing LoRA vs. Full Fine-Tuning on an M3 Ultra for a ~4B parameter model using MLX.\n\n        *",
+    "done_reason": "length"
+   },
+   "raw_hf_text_on_worker": {
+    "prompt_tokens": 2830,
+    "content": "## Recommendation: LoRA vs. Full Fine-Tuning on M3 Ultra\n\nThis report evaluates the optimal training strategy for a ~4B parameter model using Apple's MLX framework on M3 Ultra hardware. Based on memory requirements",
+    "done_reason": "length"
+   },
+   "checks": {
+    "renderer_count_is_hf": true,
+    "renderer_reply_is_raw": true,
+    "raw_count_is_hf": true,
+    "worker_count_is_hf": false,
+    "worker_reply_is_raw": false,
+    "worker_no_thinking": false,
+    "unset_thinks": true
+   },
+   "mlx_stock": {
+    "full_tokens": 2829,
+    "offset": 2830,
+    "prompt_is_prefix": false,
+    "prompt_is_inference_prompt": true,
+    "target_is_answer_then_end": false,
+    "target_tail": ""
+   },
+   "mlx_worker": {
+    "full_tokens": 2833,
+    "offset": 2830,
+    "prompt_is_prefix": true,
+    "prompt_is_inference_prompt": true,
+    "target_is_answer_then_end": true,
+    "target_tail": "<turn|>\n"
+   }
+  }
+ ],
+ "started": "2026-10-30T14:31:51",
+ "eval_only": "EVAL ONLY: never training data",
+ "worker_model": {
+  "blob": "sha256:bb722270d54346adc198f213851dbe0207e87c3ecf2a0aff4d92262726215391",
+  "status": "success",
+  "parameters": {
+   "stop": [
+    "<turn|>"
+   ]
+  }
+ },
+ "finished": "2026-10-30T14:35:00"
+}

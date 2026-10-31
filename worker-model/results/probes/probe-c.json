@@ -1,0 +1,549 @@
+{
+ "hf": "/Users/fx/.cache/huggingface/hub/models--google--gemma-4-12B-it/snapshots/43c9d014b231474fa7212dbb48a762566c2b255d/",
+ "ollama_model": "gemma4:12b-it-q4_K_M",
+ "worker_tag": "wm-probe-gemma4-worker:c-q5",
+ "cases": [
+  {
+   "id": "w2-01",
+   "messages": [
+    "system",
+    "user"
+   ],
+   "content_with_outer_whitespace": [],
+   "hf_tokens": 804,
+   "hf_tokens_thinking": 802,
+   "ends_with_empty_thought": true,
+   "num_ctx": 8192,
+   "renderer_think_false": {
+    "prompt_tokens": 804,
+    "content": "```python\nimport bpy\n\nSETTINGS_s1 = {\n    \"glass_ior\": 1.45,\n    \"glass_roughness\": 0.02,\n    \"gold_color\": (1",
+    "thinking": "",
+    "done_reason": "length"
+   },
+   "renderer_think_unset": {
+    "prompt_tokens": 802,
+    "content": "",
+    "thinking": "*   Project: Perf",
+    "done_reason": "length"
+   },
+   "raw_hf_text": {
+    "prompt_tokens": 804,
+    "content": "```python\nimport bpy\n\nSETTINGS_s1 = {\n    \"glass_ior\": 1.45,\n    \"glass_roughness\": 0.02,\n    \"gold_color\": (1",
+    "done_reason": "length"
+   },
+   "worker_no_think_field": {
+    "prompt_tokens": 804,
+    "content": "```python\nimport bpy\n\nSETTINGS_s1 = {\n    \"glass_ior\": 1.45,\n    \"glass_roughness\": 0.02,\n    \"gold_color\": (1",
+    "thinking": "",
+    "done_reason": "length"
+   },
+   "raw_hf_text_on_worker": {
+    "prompt_tokens": 804,
+    "content": "```python\nimport bpy\n\nSETTINGS_s1 = {\n    \"glass_ior\": 1.45,\n    \"glass_roughness\": 0.02,\n    \"gold_color\": (1",
+    "done_reason": "length"
+   },
+   "checks": {
+    "renderer_count_is_hf": true,
+    "renderer_reply_is_raw": true,
+    "raw_count_is_hf": true,
+    "worker_count_is_hf": true,
+    "worker_reply_is_raw": true,
+    "worker_no_thinking": true,
+    "unset_thinks": true
+   },
+   "mlx_stock": {
+    "full_tokens": 852,
+    "offset": 802,
+    "prompt_is_inference_prompt": false,
+    "target_is_answer_then_end": true,
+    "has_think_token": true
+   },
+   "mlx_worker": {
+    "full_tokens": 854,
+    "offset": 804,
+    "prompt_is_inference_prompt": true,
+    "target_is_answer_then_end": true,
+    "has_think_token": false
+   }
+  },
+  {
+   "id": "w2-10",
+   "messages": [
+    "system",
+    "user"
+   ],
+   "content_with_outer_whitespace": [],
+   "hf_tokens": 728,
+   "hf_tokens_thinking": 726,
+   "ends_with_empty_thought": true,
+   "num_ctx": 8192,
+   "renderer_think_false": {
+    "prompt_tokens": 728,
+    "content": "```python\nimport bpy\n\nSETTINGS_s3 = {\n    \"distortion\": 0.02,\n    \"dispersion\": 0.01,\n    \"contrast\": 5.0,\n    \"",
+    "thinking": "",
+    "done_reason": "length"
+   },
+   "renderer_think_unset": {
+    "prompt_tokens": 726,
+    "content": "",
+    "thinking": "*   Project: Moody",
+    "done_reason": "length"
+   },
+   "raw_hf_text": {
+    "prompt_tokens": 728,
+    "content": "```python\nimport bpy\n\nSETTINGS_s3 = {\n    \"distortion\": 0.02,\n    \"dispersion\": 0.01,\n    \"contrast\": 5.0,\n    \"",
+    "done_reason": "length"
+   },
+   "worker_no_think_field": {
+    "prompt_tokens": 728,
+    "content": "```python\nimport bpy\n\nSETTINGS_s3 = {\n    \"distortion\": 0.02,\n    \"dispersion\": 0.01,\n    \"contrast\": 5.0,\n    \"",
+    "thinking": "",
+    "done_reason": "length"
+   },
+   "raw_hf_text_on_worker": {
+    "prompt_tokens": 728,
+    "content": "```python\nimport bpy\n\nSETTINGS_s3 = {\n    \"distortion\": 0.02,\n    \"dispersion\": 0.01,\n    \"contrast\": 5.0,\n    \"",
+    "done_reason": "length"
+   },
+   "checks": {
+    "renderer_count_is_hf": true,
+    "renderer_reply_is_raw": true,
+    "raw_count_is_hf": true,
+    "worker_count_is_hf": true,
+    "worker_reply_is_raw": true,
+    "worker_no_thinking": true,
+    "unset_thinks": true
+   },
+   "mlx_stock": {
+    "full_tokens": 776,
+    "offset": 726,
+    "prompt_is_inference_prompt": false,
+    "target_is_answer_then_end": true,
+    "has_think_token": true
+   },
+   "mlx_worker": {
+    "full_tokens": 778,
+    "offset": 728,
+    "prompt_is_inference_prompt": true,
+    "target_is_answer_then_end": true,
+    "has_think_token": false
+   }
+  },
+  {
+   "id": "w3-04",
+   "messages": [
+    "system",
+    "user"
+   ],
+   "content_with_outer_whitespace": [],
+   "hf_tokens": 1374,
+   "hf_tokens_thinking": 1372,
+   "ends_with_empty_thought": true,
+   "num_ctx": 8192,
+   "renderer_think_false": {
+    "prompt_tokens": 1374,
+    "content": "```python\nimport bpy\nfrom mathutils import Vector\n\nSETTINGS_s2 = {\"key\": 1000.0, \"fill\": 400.0, \"rim\": 600.0,",
+    "thinking": "",
+    "done_reason": "length"
+   },
+   "renderer_think_unset": {
+    "prompt_tokens": 1372,
+    "content": "",
+    "thinking": "*   Task: Build",
+    "done_reason": "length"
+   },
+   "raw_hf_text": {
+    "prompt_tokens": 1374,
+    "content": "```python\nimport bpy\nfrom mathutils import Vector\n\nSETTINGS_s2 = {\"key\": 1000.0, \"fill\": 400.0, \"rim\": 600.0,",
+    "done_reason": "length"
+   },
+   "worker_no_think_field": {
+    "prompt_tokens": 1374,
+    "content": "```python\nimport bpy\nfrom mathutils import Vector\n\nSETTINGS_s2 = {\"key\": 1000.0, \"fill\": 400.0, \"rim\": 600.0,",
+    "thinking": "",
+    "done_reason": "length"
+   },
+   "raw_hf_text_on_worker": {
+    "prompt_tokens": 1374,
+    "content": "```python\nimport bpy\nfrom mathutils import Vector\n\nSETTINGS_s2 = {\"key\": 1000.0, \"fill\": 400.0, \"rim\": 600.0,",
+    "done_reason": "length"
+   },
+   "checks": {
+    "renderer_count_is_hf": true,
+    "renderer_reply_is_raw": true,
+    "raw_count_is_hf": true,
+    "worker_count_is_hf": true,
+    "worker_reply_is_raw": true,
+    "worker_no_thinking": true,
+    "unset_thinks": true
+   },
+   "mlx_stock": {
+    "full_tokens": 1422,
+    "offset": 1372,
+    "prompt_is_inference_prompt": false,
+    "target_is_answer_then_end": true,
+    "has_think_token": true
+   },
+   "mlx_worker": {
+    "full_tokens": 1424,
+    "offset": 1374,
+    "prompt_is_inference_prompt": true,
+    "target_is_answer_then_end": true,
+    "has_think_token": false
+   }
+  },
+  {
+   "id": "w3-12",
+   "messages": [
+    "system",
+    "user"
+   ],
+   "content_with_outer_whitespace": [],
+   "hf_tokens": 1605,
+   "hf_tokens_thinking": 1603,
+   "ends_with_empty_thought": true,
+   "num_ctx": 8192,
+   "renderer_think_false": {
+    "prompt_tokens": 1605,
+    "content": "```python\nimport bpy\nimport bmesh\nimport random\nfrom mathutils import Vector\n\nSETTINGS_s2 = {\n    \"rock_count\": 15,\n    \"seed\": 6,\n    \"spread",
+    "thinking": "",
+    "done_reason": "length"
+   },
+   "renderer_think_unset": {
+    "prompt_tokens": 1603,
+    "content": "",
+    "thinking": "*   Task: Scatter",
+    "done_reason": "length"
+   },
+   "raw_hf_text": {
+    "prompt_tokens": 1605,
+    "content": "```python\nimport bpy\nimport bmesh\nimport random\nfrom mathutils import Vector\n\nSETTINGS_s2 = {\n    \"rock_count\": 15,\n    \"seed\": 6,\n    \"spread",
+    "done_reason": "length"
+   },
+   "worker_no_think_field": {
+    "prompt_tokens": 1605,
+    "content": "```python\nimport bpy\nimport bmesh\nimport random\nfrom mathutils import Vector\n\nSETTINGS_s2 = {\n    \"rock_count\": 15,\n    \"seed\": 42,\n    \"",
+    "thinking": "",
+    "done_reason": "length"
+   },
+   "raw_hf_text_on_worker": {
+    "prompt_tokens": 1605,
+    "content": "```python\nimport bpy\nimport bmesh\nimport random\nfrom mathutils import Vector\n\nSETTINGS_s2 = {\n    \"rock_count\": 15,\n    \"seed\": 42,\n    \"",
+    "done_reason": "length"
+   },
+   "checks": {
+    "renderer_count_is_hf": true,
+    "renderer_reply_is_raw": true,
+    "raw_count_is_hf": true,
+    "worker_count_is_hf": true,
+    "worker_reply_is_raw": true,
+    "worker_no_thinking": true,
+    "unset_thinks": true
+   },
+   "mlx_stock": {
+    "full_tokens": 1653,
+    "offset": 1603,
+    "prompt_is_inference_prompt": false,
+    "target_is_answer_then_end": true,
+    "has_think_token": true
+   },
+   "mlx_worker": {
+    "full_tokens": 1655,
+    "offset": 1605,
+    "prompt_is_inference_prompt": true,
+    "target_is_answer_then_end": true,
+    "has_think_token": false
+   }
+  },
+  {
+   "id": "w4f-01",
+   "messages": [
+    "system",
+    "user"
+   ],
+   "content_with_outer_whitespace": [],
+   "hf_tokens": 780,
+   "hf_tokens_thinking": 778,
+   "ends_with_empty_thought": true,
+   "num_ctx": 8192,
+   "renderer_think_false": {
+    "prompt_tokens": 780,
+    "content": "```python\nimport bpy\nimport math\n\nSETTINGS_s3 = {\n    \"camera_focal_length\": 85,\n    \"camera_aperture\": 2.8,\n    \"camera_",
+    "thinking": "",
+    "done_reason": "length"
+   },
+   "renderer_think_unset": {
+    "prompt_tokens": 778,
+    "content": "",
+    "thinking": "*   Project: Perf",
+    "done_reason": "length"
+   },
+   "raw_hf_text": {
+    "prompt_tokens": 780,
+    "content": "```python\nimport bpy\nimport math\n\nSETTINGS_s3 = {\n    \"camera_focal_length\": 85,\n    \"camera_aperture\": 2.8,\n    \"camera_",
+    "done_reason": "length"
+   },
+   "worker_no_think_field": {
+    "prompt_tokens": 780,
+    "content": "```python\nimport bpy\nimport math\n\nSETTINGS_s3 = {\n    \"focal_length\": 85,\n    \"f_stop\": 2.8,\n    \"camera_height\": 1",
+    "thinking": "",
+    "done_reason": "length"
+   },
+   "raw_hf_text_on_worker": {
+    "prompt_tokens": 780,
+    "content": "```python\nimport bpy\nimport math\n\nSETTINGS_s3 = {\n    \"focal_length\": 85,\n    \"f_stop\": 2.8,\n    \"camera_height\": 1",
+    "done_reason": "length"
+   },
+   "checks": {
+    "renderer_count_is_hf": true,
+    "renderer_reply_is_raw": true,
+    "raw_count_is_hf": true,
+    "worker_count_is_hf": true,
+    "worker_reply_is_raw": true,
+    "worker_no_thinking": true,
+    "unset_thinks": true
+   },
+   "mlx_stock": {
+    "full_tokens": 828,
+    "offset": 778,
+    "prompt_is_inference_prompt": false,
+    "target_is_answer_then_end": true,
+    "has_think_token": true
+   },
+   "mlx_worker": {
+    "full_tokens": 830,
+    "offset": 780,
+    "prompt_is_inference_prompt": true,
+    "target_is_answer_then_end": true,
+    "has_think_token": false
+   }
+  },
+  {
+   "id": "w4l-02",
+   "messages": [
+    "system",
+    "user"
+   ],
+   "content_with_outer_whitespace": [],
+   "hf_tokens": 7799,
+   "hf_tokens_thinking": 7797,
+   "ends_with_empty_thought": true,
+   "num_ctx": 16384,
+   "renderer_think_false": {
+    "prompt_tokens": 7799,
+    "content": "## Staff briefing\n\n**Overview**\nWe are launching a new waste reduction plan to cut our annual losses (currently estimated at £9,000–£11,000) and improve our community standing. Our goal",
+    "thinking": "",
+    "done_reason": "length"
+   },
+   "renderer_think_unset": {
+    "prompt_tokens": 7797,
+    "content": "",
+    "thinking": "Staff briefing for Crumb",
+    "done_reason": "length"
+   },
+   "raw_hf_text": {
+    "prompt_tokens": 7799,
+    "content": "## Staff briefing\n\n**Overview**\nWe are launching a new waste reduction plan to cut our annual losses (currently estimated at £9,000–£11,000) and improve our community standing. Our goal",
+    "done_reason": "length"
+   },
+   "worker_no_think_field": {
+    "prompt_tokens": 7799,
+    "content": "## Staff briefing\n\n**Our Goal**\nWe are launching a new waste reduction plan to make Crumb & Co more efficient and sustainable. By reducing our waste from 12–15% down to under 9%, we can",
+    "thinking": "",
+    "done_reason": "length"
+   },
+   "raw_hf_text_on_worker": {
+    "prompt_tokens": 7799,
+    "content": "## Staff briefing\n\n**Our Goal**\nWe are launching a new waste reduction plan to make Crumb & Co more efficient and sustainable. By reducing our waste from 12–15% down to under 9%, we can",
+    "done_reason": "length"
+   },
+   "checks": {
+    "renderer_count_is_hf": true,
+    "renderer_reply_is_raw": true,
+    "raw_count_is_hf": true,
+    "worker_count_is_hf": true,
+    "worker_reply_is_raw": true,
+    "worker_no_thinking": true,
+    "unset_thinks": true
+   },
+   "mlx_stock": {
+    "full_tokens": 7847,
+    "offset": 7797,
+    "prompt_is_inference_prompt": false,
+    "target_is_answer_then_end": true,
+    "has_think_token": true
+   },
+   "mlx_worker": {
+    "full_tokens": 7849,
+    "offset": 7799,
+    "prompt_is_inference_prompt": true,
+    "target_is_answer_then_end": true,
+    "has_think_token": false
+   }
+  },
+  {
+   "id": "bw-01/s1",
+   "messages": [
+    "system",
+    "user"
+   ],
+   "content_with_outer_whitespace": [],
+   "hf_tokens": 1436,
+   "hf_tokens_thinking": 1434,
+   "ends_with_empty_thought": true,
+   "num_ctx": 8192,
+   "renderer_think_false": {
+    "prompt_tokens": 1436,
+    "content": "```python\nimport bpy\n\n# SETTINGS_s1 contains the primary variables for the perfume bottle scene.\nSETTINGS_s1 = {\n    \"BOTTLE_HEIGHT\": 100,  # in mm\n",
+    "thinking": "",
+    "done_reason": "length"
+   },
+   "renderer_think_unset": {
+    "prompt_tokens": 1434,
+    "content": "",
+    "thinking": "*   Project: Perf",
+    "done_reason": "length"
+   },
+   "raw_hf_text": {
+    "prompt_tokens": 1436,
+    "content": "```python\nimport bpy\n\n# SETTINGS_s1 contains the primary variables for the perfume bottle scene.\nSETTINGS_s1 = {\n    \"BOTTLE_HEIGHT\": 100,  # in mm\n",
+    "done_reason": "length"
+   },
+   "worker_no_think_field": {
+    "prompt_tokens": 1436,
+    "content": "```python\nimport bpy\n\n# SETTINGS_s1 contains the primary variables for the perfume bottle scene.\nSETTINGS_s1 = {\n    \"BOTTLE_HEIGHT\": 100,  # in mm\n",
+    "thinking": "",
+    "done_reason": "length"
+   },
+   "raw_hf_text_on_worker": {
+    "prompt_tokens": 1436,
+    "content": "```python\nimport bpy\n\n# SETTINGS_s1 contains the primary variables for the perfume bottle scene.\nSETTINGS_s1 = {\n    \"BOTTLE_HEIGHT\": 100,  # in mm\n",
+    "done_reason": "length"
+   },
+   "checks": {
+    "renderer_count_is_hf": true,
+    "renderer_reply_is_raw": true,
+    "raw_count_is_hf": true,
+    "worker_count_is_hf": true,
+    "worker_reply_is_raw": true,
+    "worker_no_thinking": true,
+    "unset_thinks": true
+   },
+   "mlx_stock": {
+    "full_tokens": 1483,
+    "offset": 1434,
+    "prompt_is_inference_prompt": false,
+    "target_is_answer_then_end": true,
+    "has_think_token": true
+   },
+   "mlx_worker": {
+    "full_tokens": 1485,
+    "offset": 1436,
+    "prompt_is_inference_prompt": true,
+    "target_is_answer_then_end": true,
+    "has_think_token": false
+   }
+  },
+  {
+   "id": "res-01/s5",
+   "messages": [
+    "system",
+    "user"
+   ],
+   "content_with_outer_whitespace": [],
+   "hf_tokens": 2830,
+   "hf_tokens_thinking": 2828,
+   "ends_with_empty_thought": true,
+   "num_ctx": 8192,
+   "renderer_think_false": {
+    "prompt_tokens": 2830,
+    "content": "## Recommendation: LoRA vs. Full Fine-Tuning on M3 Ultra\n\nThis report evaluates the optimal training strategy for a ~4B parameter model using Apple's MLX framework on M3 Ultra hardware. Based on memory requirements",
+    "thinking": "",
+    "done_reason": "length"
+   },
+   "renderer_think_unset": {
+    "prompt_tokens": 2828,
+    "content": "",
+    "thinking": "Draft a one-page",
+    "done_reason": "length"
+   },
+   "raw_hf_text": {
+    "prompt_tokens": 2830,
+    "content": "## Recommendation: LoRA vs. Full Fine-Tuning on M3 Ultra\n\nThis report evaluates the optimal training strategy for a ~4B parameter model using Apple's MLX framework on M3 Ultra hardware. Based on memory requirements",
+    "done_reason": "length"
+   },
+   "worker_no_think_field": {
+    "prompt_tokens": 2830,
+    "content": "## Recommendation: LoRA vs. Full Fine-Tuning on M3 Ultra\n\n### Overview\nFor a ~4B parameter model using the MLX framework on an M3 Ultra, both Low-Rank Adaptation (LoRA) and",
+    "thinking": "",
+    "done_reason": "length"
+   },
+   "raw_hf_text_on_worker": {
+    "prompt_tokens": 2830,
+    "content": "## Recommendation: LoRA vs. Full Fine-Tuning on M3 Ultra\n\n### Overview\nFor a ~4B parameter model using the MLX framework on an M3 Ultra, both Low-Rank Adaptation (LoRA) and",
+    "done_reason": "length"
+   },
+   "checks": {
+    "renderer_count_is_hf": true,
+    "renderer_reply_is_raw": true,
+    "raw_count_is_hf": true,
+    "worker_count_is_hf": true,
+    "worker_reply_is_raw": true,
+    "worker_no_thinking": true,
+    "unset_thinks": true
+   },
+   "mlx_stock": {
+    "full_tokens": 2878,
+    "offset": 2828,
+    "prompt_is_inference_prompt": false,
+    "target_is_answer_then_end": true,
+    "has_think_token": true
+   },
+   "mlx_worker": {
+    "full_tokens": 2880,
+    "offset": 2830,
+    "prompt_is_inference_prompt": true,
+    "target_is_answer_then_end": true,
+    "has_think_token": false
+   }
+  }
+ ],
+ "started": "2026-10-30T17:31:02",
+ "eval_only": "EVAL ONLY: never training data",
+ "worker_model": {
+  "blob": "sha256:ddc7f4499e1b47630fee334386c7621ec20100341b5487d76779cb3181b330e6",
+  "status": "success",
+  "renderer": "gemma4-large",
+  "parser": "gemma4-no-thinking",
+  "thinking": {
+   "values": [
+    false
+   ],
+   "default": false
+  },
+  "capabilities": [
+   "completion",
+   "tools"
+  ],
+  "modelfile_lines": [
+   "RENDERER gemma4-large",
+   "PARSER gemma4-no-thinking"
+  ]
+ },
+ "every_request": {
+  "requests": 176,
+  "render_is_hf_text": 176,
+  "mlx_stock_prompt_is_render": 0,
+  "mlx_worker_prompt_is_render": 176,
+  "mlx_worker_target_ok": 176,
+  "other_than_system_user": 0,
+  "mismatches": []
+ },
+ "verdict": {
+  "ollama_side": true,
+  "mlx_side": true,
+  "every_request": true,
+  "pass": true
+ },
+ "finished": "2026-10-30T17:34:23"
+}

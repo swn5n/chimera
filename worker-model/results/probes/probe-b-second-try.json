@@ -1,0 +1,631 @@
+{
+ "started": "2026-10-30T15:11:44",
+ "official": "gemma4:12b-it-q4_K_M",
+ "steps": {
+  "empty_adapter": "/Users/fx/chimera-tools/worker-train/probes/round-trip/empty-adapters",
+  "fused_config": {
+   "architectures": [
+    "Gemma4UnifiedForConditionalGeneration"
+   ],
+   "model_type": "gemma4_unified"
+  },
+  "named_specials_added": 18,
+  "gguf": {
+   "Q5_K_M": 8.55,
+   "Q4_K_M": 7.38
+  }
+ },
+ "models": {
+  "Q5_K_M": "wm-probe-gemma4-rt:q5_k_m",
+  "Q4_K_M": "wm-probe-gemma4-rt:q4_k_m",
+  "bf16": "wm-probe-gemma4-rt:bf16",
+  "template": "wm-probe-gemma4-rt:template"
+ },
+ "show": {
+  "gemma4:12b-it-q4_K_M": {
+   "thinking": {
+    "values": [
+     false,
+     true
+    ],
+    "default": true
+   },
+   "details": {
+    "parent_model": "imatrix-20260927-12b/model-q4_K_M.gguf",
+    "format": "gguf",
+    "family": "gemma4",
+    "families": [
+     "gemma4"
+    ],
+    "parameter_size": "11.9B",
+    "quantization_level": "Q4_K_M",
+    "runner": "llamacpp"
+   },
+   "capabilities": [
+    "completion",
+    "vision",
+    "audio",
+    "tools",
+    "thinking"
+   ]
+  },
+  "wm-probe-gemma4-rt:q5_k_m": {
+   "thinking": {
+    "values": [
+     false,
+     true
+    ],
+    "default": true
+   },
+   "details": {
+    "parent_model": "rt2-q5_k_m.gguf",
+    "format": "gguf",
+    "family": "gemma4",
+    "families": [
+     "gemma4"
+    ],
+    "parameter_size": "11.9B",
+    "quantization_level": "Q5_K_M",
+    "runner": "llamacpp"
+   },
+   "capabilities": [
+    "completion",
+    "tools",
+    "thinking"
+   ]
+  },
+  "wm-probe-gemma4-rt:q4_k_m": {
+   "thinking": {
+    "values": [
+     false,
+     true
+    ],
+    "default": true
+   },
+   "details": {
+    "parent_model": "rt2-q4_k_m.gguf",
+    "format": "gguf",
+    "family": "gemma4",
+    "families": [
+     "gemma4"
+    ],
+    "parameter_size": "11.9B",
+    "quantization_level": "Q4_K_M",
+    "runner": "llamacpp"
+   },
+   "capabilities": [
+    "completion",
+    "tools",
+    "thinking"
+   ]
+  },
+  "wm-probe-gemma4-rt:bf16": {
+   "thinking": {
+    "values": [
+     false,
+     true
+    ],
+    "default": true
+   },
+   "details": {
+    "parent_model": "rt2-bf16.gguf",
+    "format": "gguf",
+    "family": "gemma4",
+    "families": [
+     "gemma4"
+    ],
+    "parameter_size": "11.9B",
+    "quantization_level": "BF16",
+    "runner": "llamacpp"
+   },
+   "capabilities": [
+    "completion",
+    "tools",
+    "thinking"
+   ]
+  },
+  "wm-probe-gemma4-rt:template": {
+   "thinking": {
+    "values": [
+     false,
+     true
+    ],
+    "default": true
+   },
+   "details": {
+    "parent_model": "rt2-q5_k_m.gguf",
+    "format": "gguf",
+    "family": "gemma4",
+    "families": [
+     "gemma4"
+    ],
+    "parameter_size": "11.9B",
+    "quantization_level": "Q5_K_M",
+    "runner": "llamacpp"
+   },
+   "capabilities": [
+    "completion",
+    "tools",
+    "thinking"
+   ]
+  }
+ },
+ "cases": [
+  {
+   "id": "w2-01",
+   "hf_tokens": 804,
+   "mlx_reference": "```python\nimport bpy\n\nSETTINGS_s1 = {\n    \"glass_ior\": 1.45,\n    \"glass_roughness\": 0.02,\n    \"gold_metallic\": 1.0,\n    \"gold_roughness\": 0.15,\n    \"gold_color\": (1.0, 0.77, 0.34),\n}\n\ndef build_s1(ctx):\n    # Create Glass Material\n    glass_mat = bpy.data.materials.new(name=\"chimera_glass_material\")\n    glass_mat.use_nodes = True\n    nodes = glass_mat.node_tree.nodes\n    nodes.clear()\n",
+   "official": {
+    "prompt_tokens": 804,
+    "content": "```python\nimport bpy\n\nSETTINGS_s1 = {\n    \"glass_ior\": 1.45,\n    \"glass_roughness\": 0.02,\n    \"gold_color\": (1.0, 0.77, 0.34),\n    \"gold_roughness\": 0.15,\n}\n\ndef build_s1(ctx):\n    # Create a collection for materials to keep the scene organized\n    chimera_mat_col = bpy.data.collections.new(\"chimera_materials\")\n    ctx[\"collection\"].children.link(chimera_mat_col)\n    \n    # Create Glass Material\n    glass_mat = bpy.data.materials.",
+    "thinking": "",
+    "done_reason": "length"
+   },
+   "official_vs_mlx": {
+    "first_diff": 44,
+    "compared": 160
+   },
+   "Q5_K_M": {
+    "prompt_tokens": 800,
+    "content": "```python\nimport bpy\n\nSETTINGS_s1 = {\n    \"glass_ior\": 1.45,\n    \"glass_roughness\": 0.02,\n    \"gold_color\": (1.0, 0.77, 0.34),\n    \"gold_roughness\": 0.15,\n}\n\ndef build_s1(ctx):\n    # Create Glass Material\n    glass_mat = bpy.data.materials.new(name=\"chimera_glass_material\")\n    glass_mat.use_nodes = True\n    nodes = glass_mat.node_tree.nodes\n    bsdf = nodes.get(\"Principled BSDF\")\n",
+    "thinking": "",
+    "done_reason": "length",
+    "first_diff": 92,
+    "compared": 156,
+    "same_prompt_count": false,
+    "first_diff_vs_mlx": 44,
+    "compared_vs_mlx": 156
+   },
+   "Q4_K_M": {
+    "prompt_tokens": 800,
+    "content": "```python\nimport bpy\n\nSETTINGS_s1 = {\n    \"output\": None\n}\n\ndef build_s1(ctx):\n    # Create a collection for the materials\n    collection = ctx[\"collection\"]\n    mat_col = bpy.data.collections.new(\"chimera_materials\")\n    collection.children.append(mat_col)\n    \n    # Create Glass Material\n    glass_mat = bpy.data.materials.new(name=\"chimera_glass_material\")\n    glass_mat.use_nodes = True\n    nodes = glass_mat.node_tree.nodes\n    bsdf = nodes.get(\"Principled BSDF\")\n    \n    if bsdf:\n        ",
+    "thinking": "",
+    "done_reason": "length",
+    "first_diff": 15,
+    "compared": 156,
+    "same_prompt_count": false,
+    "first_diff_vs_mlx": 15,
+    "compared_vs_mlx": 156
+   },
+   "bf16": {
+    "prompt_tokens": 800,
+    "content": "```python\nimport bpy\n\nSETTINGS_s1 = {\n    \"glass_ior\": 1.45,\n    \"glass_roughness\": 0.02,\n    \"gold_metallic\": 1.0,\n    \"gold_roughness\": 0.15,\n    \"gold_color\": (1.0, 0.77, 0.34),\n}\n\ndef build_s1(ctx):\n    # Create Glass Material\n    glass_mat = bpy.data.materials.new(name=\"chimera_glass_material\")\n    glass_mat.use_nodes = True\n    nodes = glass_mat.node_tree.nodes\n    nodes",
+    "thinking": "",
+    "done_reason": "length",
+    "first_diff": 44,
+    "compared": 156,
+    "same_prompt_count": false,
+    "first_diff_vs_mlx": 156,
+    "compared_vs_mlx": 156
+   },
+   "template_no_think_field": {
+    "prompt_tokens": 802,
+    "content": "",
+    "thinking": "*   Project: Perfume bottle product shot.\n    *   Step s1: Glass and gold materials [blender].\n    *   Task: Create two materials (clear glass and polished gold) and register them",
+    "done_reason": "length",
+    "count_is_hf": false,
+    "leaks": []
+   }
+  },
+  {
+   "id": "w2-10",
+   "hf_tokens": 728,
+   "mlx_reference": "```python\nimport bpy\n\nSETTINGS_s3 = {\n    \"distortion\": 0.02,\n    \"dispersion\": 0.01,\n    \"contrast\": 5.0,\n    \"output_path\": \"render_output.png\"\n}\n\ndef build_s3(ctx):\n    scene = ctx[\"scene\"]\n    \n    # Ensure compositor is enabled\n    scene.use_nodes = True\n    tree = scene.node_tree\n    nodes = tree.nodes\n    links = tree.links\n    \n    # Clear existing nodes to ensure a clean slate for this step\n    for node in nodes:\n        if \"chimera_s3\" not in node.name:\n            ",
+   "official": {
+    "prompt_tokens": 728,
+    "content": "```python\nimport bpy\n\nSETTINGS_s3 = {\n    \"distortion\": 0.02,\n    \"dispersion\": 0.01,\n    \"contrast\": 5.0,\n    \"brightness\": 1.0,\n    \"output\": {\"file_path\": \"render.png\"}\n}\n\ndef build_s3(ctx):\n    # Ensure compositor is enabled\n    ctx[\"scene\"].use_nodes = True\n    tree = ctx[\"scene\"].node_tree\n    \n    # Clear existing nodes to ensure a clean slate for this step\n    # (Chimera handles the scene, but we manage the compositor logic)\n    for node in tree.nodes:\n        tree.nodes.remove(",
+    "thinking": "",
+    "done_reason": "length"
+   },
+   "official_vs_mlx": {
+    "first_diff": 48,
+    "compared": 160
+   },
+   "Q5_K_M": {
+    "prompt_tokens": 724,
+    "content": "```python\nimport bpy\n\nSETTINGS_s3 = {\n    \"distortion\": 0.02,\n    \"dispersion\": 0.01,\n    \"contrast\": 5.0,\n    \"output_path\": \"render_output.png\"\n}\n\ndef build_s3(ctx):\n    scene = ctx[\"scene\"]\n    \n    # Ensure compositor is enabled\n    scene.use_nodes = True\n    tree = scene.node_tree\n    nodes = tree.nodes\n    links = tree.links\n    \n    # Clear default nodes to ensure a clean slate for the specific chain\n    for node in nodes:\n        if node.name.startswith(\"chimera_s",
+    "thinking": "",
+    "done_reason": "length",
+    "first_diff": 48,
+    "compared": 156,
+    "same_prompt_count": false,
+    "first_diff_vs_mlx": 125,
+    "compared_vs_mlx": 156
+   },
+   "Q4_K_M": {
+    "prompt_tokens": 724,
+    "content": "```python\nimport bpy\n\n# SETTINGS_s3 allows for easy adjustment of the final look\nSETTINGS_s3 = {\n    \"lens_distortion\": 0.02,\n    \"lens_dispersion\": 0.01,\n    \"brightness_contrast\": 5.0,\n    \"output_path\": \"render_output.png\"\n}\n\ndef build_s3(ctx):\n    # Access the scene and collection from the context\n    scene = ctx[\"scene\"]\n    \n    # Ensure the compositor is enabled\n    scene.use_nodes = True\n    tree = scene.node_tree\n    nodes = tree.nodes\n    links = tree.links\n\n    # Clear",
+    "thinking": "",
+    "done_reason": "length",
+    "first_diff": 6,
+    "compared": 156,
+    "same_prompt_count": false,
+    "first_diff_vs_mlx": 6,
+    "compared_vs_mlx": 156
+   },
+   "bf16": {
+    "prompt_tokens": 724,
+    "content": "```python\nimport bpy\n\nSETTINGS_s3 = {\n    \"distortion\": 0.02,\n    \"dispersion\": 0.01,\n    \"contrast\": 5.0,\n    \"output_path\": \"render_output.png\"\n}\n\ndef build_s3(ctx):\n    scene = ctx[\"scene\"]\n    \n    # Ensure compositor is enabled\n    scene.use_nodes = True\n    tree = scene.node_tree\n    nodes = tree.nodes\n    links = tree.links\n    \n    # Clear existing nodes to ensure a clean slate for this step\n    for node in nodes:\n        if \"chimera_s3\" not in node.",
+    "thinking": "",
+    "done_reason": "length",
+    "first_diff": 48,
+    "compared": 156,
+    "same_prompt_count": false,
+    "first_diff_vs_mlx": 156,
+    "compared_vs_mlx": 156
+   },
+   "template_no_think_field": {
+    "prompt_tokens": 726,
+    "content": "",
+    "thinking": "*   Project: Moody product render of a watch with a subtle lens look.\n    *   Step s3: Compositor finishing (Blender).\n    *   Task: Set up the compositor with Render Layers ->",
+    "done_reason": "length",
+    "count_is_hf": false,
+    "leaks": []
+   }
+  },
+  {
+   "id": "w3-04",
+   "hf_tokens": 1374,
+   "mlx_reference": "```python\nimport bpy\nfrom mathutils import Vector\n\nSETTINGS_s2 = {\"key\": 1000.0, \"fill\": 400.0, \"rim\": 600.0, \"size\": 2.0}\n\ndef build_s2(ctx):\n    s = SETTINGS_s2\n    # Create a dedicated collection for the lights\n    rig_col = bpy.data.collections.new(\"chimera_lights\")\n    ctx[\"collection\"].children.link(rig_col)\n    \n    # Define positions and names\n    placements = {\n        \"key\": (4.0, -4.0, 4.0), \n        \"fill\": (-4",
+   "official": {
+    "prompt_tokens": 1374,
+    "content": "```python\nimport bpy\nfrom mathutils import Vector\n\nSETTINGS_s2 = {\"key\": 1000.0, \"fill\": 400.0, \"rim\": 600.0, \"size\": 2.0}\n\ndef build_s2(ctx):\n    s = SETTINGS_s2\n    # Create a new collection for the lights\n    rig_col = bpy.data.collections.new(\"chimera_lights\")\n    ctx[\"collection\"].children.link(rig_col)\n    \n    # Define placements and target (origin)\n    placements = {\n        \"key\": (4.0, -4.0, 4.0), \n        \"fill",
+    "thinking": "",
+    "done_reason": "length"
+   },
+   "official_vs_mlx": {
+    "first_diff": 79,
+    "compared": 160
+   },
+   "Q5_K_M": {
+    "prompt_tokens": 1370,
+    "content": "```python\nimport bpy\nfrom mathutils import Vector\n\nSETTINGS_s2 = {\"key\": 1000.0, \"fill\": 400.0, \"rim\": 600.0, \"size\": 2.0}\n\n\ndef build_s2(ctx):\n    s = SETTINGS_s2\n    # Create the lights collection\n    rig_col = bpy.data.collections.new(\"chimera_lights\")\n    ctx[\"collection\"].children.link(rig_col)\n    \n    placements = {\n        \"key\": (4.0, -4.0, 4.0), \n        \"fill\": (-4.0, -3.",
+    "thinking": "",
+    "done_reason": "length",
+    "first_diff": 56,
+    "compared": 156,
+    "same_prompt_count": false,
+    "first_diff_vs_mlx": 56,
+    "compared_vs_mlx": 156
+   },
+   "Q4_K_M": {
+    "prompt_tokens": 1370,
+    "content": "```python\nimport bpy\nfrom mathutils import Vector\n\nSETTINGS_s2 = {\"key\": 1000.0, \"fill\": 400.0, \"rim\": 600.0, \"size\": 2.0}\n\n\ndef build_s2(ctx):\n    s = SETTINGS_s2\n    # Create the collection for lights\n    rig = bpy.data.collections.new(\"chimera_lights\")\n    ctx[\"collection\"].children.link(rig)\n    \n    placements = {\"key\": (4.0, -4.0, 4.0), \"fill\": (-4.0, -3.0, 2.0), \"rim",
+    "thinking": "",
+    "done_reason": "length",
+    "first_diff": 56,
+    "compared": 156,
+    "same_prompt_count": false,
+    "first_diff_vs_mlx": 56,
+    "compared_vs_mlx": 156
+   },
+   "bf16": {
+    "prompt_tokens": 1370,
+    "content": "```python\nimport bpy\nfrom mathutils import Vector\n\nSETTINGS_s2 = {\"key\": 1000.0, \"fill\": 400.0, \"rim\": 600.0, \"size\": 2.0}\n\ndef build_s2(ctx):\n    s = SETTINGS_s2\n    # Create a dedicated collection for the lights\n    rig_col = bpy.data.collections.new(\"chimera_lights\")\n    ctx[\"collection\"].children.link(rig_col)\n    \n    # Define positions and names\n    placements = {\n        \"key\": (4.0, -4.0, 4.0), \n        \"",
+    "thinking": "",
+    "done_reason": "length",
+    "first_diff": 79,
+    "compared": 156,
+    "same_prompt_count": false,
+    "first_diff_vs_mlx": 156,
+    "compared_vs_mlx": 156
+   },
+   "template_no_think_field": {
+    "prompt_tokens": 1372,
+    "content": "",
+    "thinking": "*   Task: Build a three-point area light rig (key, fill, rim) for a product-shot studio in Blender 5.\n    *   Context: Part of a multi-step process (Chim",
+    "done_reason": "length",
+    "count_is_hf": false,
+    "leaks": []
+   }
+  },
+  {
+   "id": "w3-12",
+   "hf_tokens": 1605,
+   "mlx_reference": "```python\nimport bpy\nimport bmesh\nimport random\nfrom mathutils import kdtree\n\nSETTINGS_s2 = {\n    \"rock_count\": 15,\n    \"seed\": 42,\n    \"spread\": 4.0\n}\n\ndef build_s2(ctx):\n    s = SETTINGS_s2\n    random.seed(s[\"seed\"])\n    \n    # Retrieve island and material from s1\n    island = ctx[\"objects\"].get(\"island\")\n    rock_mat = ctx[\"objects\"].get(\"rock_material\")\n    \n    # Fallback if s1 didn't provide them (for standalone testing)\n    if not island:\n        print(\"chimera: stand",
+   "official": {
+    "prompt_tokens": 1605,
+    "content": "```python\nimport bpy\nimport bmesh\nimport random\nfrom mathutils import Vector\n\nSETTINGS_s2 = {\n    \"rock_count\": 15,\n    \"seed\": 6,\n    \"spread\": 4.0\n}\n\ndef build_s2(ctx):\n    s = SETTINGS_s2\n    random.seed(s[\"seed\"])\n    \n    # Get dependencies from ctx\n    island = ctx[\"objects\"].get(\"island\")\n    rock_mat = ctx[\"objects\"].get(\"rock_material\")\n    \n    # Fallback if s1 failed to provide objects\n    if not island:\n        print(\"chimera: stand-in island\")\n        island = None\n    if",
+    "thinking": "",
+    "done_reason": "length"
+   },
+   "official_vs_mlx": {
+    "first_diff": 17,
+    "compared": 160
+   },
+   "Q5_K_M": {
+    "prompt_tokens": 1601,
+    "content": "```python\nimport bpy\nimport bmesh\nimport random\nfrom mathutils import Vector\n\nSETTINGS_s2 = {\n    \"rock_count\": 15,\n    \"seed\": 42,\n    \"spread\": 4.0,\n}\n\ndef build_s2(ctx):\n    s = SETTINGS_s2\n    random.seed(s[\"seed\"])\n    \n    # Retrieve dependencies from ctx\n    island = ctx[\"objects\"].get(\"island\")\n    rock_mat = ctx[\"objects\"].get(\"rock_material\")\n    \n    # Fallback if s1 didn't provide them (though it should)\n    if island is None:\n        print(\"chimera:",
+    "thinking": "",
+    "done_reason": "length",
+    "first_diff": 42,
+    "compared": 156,
+    "same_prompt_count": false,
+    "first_diff_vs_mlx": 17,
+    "compared_vs_mlx": 156
+   },
+   "Q4_K_M": {
+    "prompt_tokens": 1601,
+    "content": "```python\nimport bpy\nimport bmesh\nimport random\nimport math\n\nSETTINGS_s2 = {\n    \"rock_count\": 12,\n    \"seed\": 42,\n    \"spread\": 10.0\n}\n\ndef build_s2(ctx):\n    s = SETTINGS_s2\n    random.seed(s[\"seed\"])\n    \n    # Use the material provided by s1 if available, otherwise create a fallback\n    rock_mat = None\n    if \"rock_material\" in ctx[\"objects\"]:\n        rock_mat = ctx[\"objects\"][\"rock_material\"]\n    else:\n        # Fallback logic if s1's material isn't found\n",
+    "thinking": "",
+    "done_reason": "length",
+    "first_diff": 13,
+    "compared": 156,
+    "same_prompt_count": false,
+    "first_diff_vs_mlx": 13,
+    "compared_vs_mlx": 156
+   },
+   "bf16": {
+    "prompt_tokens": 1601,
+    "content": "```python\nimport bpy\nimport bmesh\nimport random\nfrom mathutils import Vector\n\nSETTINGS_s2 = {\n    \"rock_count\": 15,\n    \"seed\": 42,\n    \"spread\": 7.0,\n    \"rock_min_radius\": 0.2,\n    \"rock_max_radius\": 0.6\n}\n\ndef build_s2(ctx):\n    s = SETTINGS_s2\n    random.seed(s[\"seed\"])\n    \n    # Retrieve dependencies from ctx\n    island = ctx[\"objects\"].get(\"island\")\n    rock_mat = ctx[\"objects\"].get(\"rock_material\")\n    \n    # Fallback",
+    "thinking": "",
+    "done_reason": "length",
+    "first_diff": 42,
+    "compared": 156,
+    "same_prompt_count": false,
+    "first_diff_vs_mlx": 17,
+    "compared_vs_mlx": 156
+   },
+   "template_no_think_field": {
+    "prompt_tokens": 1603,
+    "content": "",
+    "thinking": "*   Task: Scatter rocks on an island mesh (s2 of 4).\n    *   Input from s1: `ctx[\"objects\"][\"island\"]` (chimera_island) and `ctx[\"objects",
+    "done_reason": "length",
+    "count_is_hf": false,
+    "leaks": []
+   }
+  },
+  {
+   "id": "w4f-01",
+   "hf_tokens": 780,
+   "mlx_reference": "```python\nimport bpy\nimport math\n\nSETTINGS_s3 = {\n    \"camera_focal_length\": 85.0,\n    \"camera_aperture\": 2.8,\n    \"camera_location\": (0, -5, 1.5),\n    \"camera_rotation\": (math.radians(80), 0, 0),\n    \"render_resolution\": (1080, 1080)\n}\n\ndef build_s3(ctx):\n    # Dependency check: s1 provided ctx['objects']['product']\n    # Since s1 failed, we create a stand-in product to ensure the camera has a target.\n    if \"product\" not in",
+   "official": {
+    "prompt_tokens": 780,
+    "content": "```python\nimport bpy\nimport math\n\nSETTINGS_s3 = {\n    \"camera_focal_length\": 85,\n    \"camera_aperture\": 2.8,\n    \"camera_location\": (0, -5, 1.5),\n    \"camera_rotation\": (1.1, 0, 0), # Radians\n}\n\ndef build_s3(ctx):\n    # Dependency check: s1 failed, creating a stand-in for the product\n    product = ctx[\"objects\"].get(\"product\")\n    if product is None:\n        print(\"chimera: stand-in\", \"product\")\n        # Create a simple cylinder as a stand-in for the bottle\n",
+    "thinking": "",
+    "done_reason": "length"
+   },
+   "official_vs_mlx": {
+    "first_diff": 28,
+    "compared": 160
+   },
+   "Q5_K_M": {
+    "prompt_tokens": 776,
+    "content": "```python\nimport bpy\nimport math\n\nSETTINGS_s3 = {\n    \"focal_length\": 85,\n    \"f_stop\": 2.8,\n    \"camera_height\": 1.5,\n    \"camera_distance\": 3.0,\n}\n\ndef build_s3(ctx):\n    # Dependency check: s1 provided 'product'\n    # Since s1 failed, we assume a stand-in for the product to position the camera\n    product = ctx[\"objects\"].get(\"product\")\n    if product is None:\n        print(\"chimera: stand-in product\")\n        # Create a simple stand-in cube to act as the product's center",
+    "thinking": "",
+    "done_reason": "length",
+    "first_diff": 18,
+    "compared": 156,
+    "same_prompt_count": false,
+    "first_diff_vs_mlx": 18,
+    "compared_vs_mlx": 156
+   },
+   "Q4_K_M": {
+    "prompt_tokens": 776,
+    "content": "```python\nimport bpy\nfrom mathutils import Vector\n\nSETTINGS_s3 = {\n    \"camera_name\": \"chimera_camera_product\",\n    \"focal_length\": 85.0,\n    \"f_stop\": 2.8,\n    \"target_location\": (0, 0, 1.0) # Assumed center of the product\n}\n\ndef build_s3(ctx):\n    # Dependency check\n    product = ctx[\"objects\"].get(\"product\")\n    if not product:\n        print(\"chimera: stand-in product\")\n        # Create a dummy cube to represent the product if s1 failed\n        bpy.data.objects.new(\"chim",
+    "thinking": "",
+    "done_reason": "length",
+    "first_diff": 6,
+    "compared": 156,
+    "same_prompt_count": false,
+    "first_diff_vs_mlx": 6,
+    "compared_vs_mlx": 156
+   },
+   "bf16": {
+    "prompt_tokens": 776,
+    "content": "```python\nimport bpy\nimport math\n\nSETTINGS_s3 = {\n    \"camera_focal_length\": 85.0,\n    \"camera_aperture\": 2.8,\n    \"camera_location\": (0, -5, 1.5),\n    \"camera_rotation\": (math.radians(85), 0, 0),\n    \"render_resolution\": (1080, 1080)\n}\n\ndef build_s3(ctx):\n    # Dependency check: s1 provided ctx['objects']['product']\n    # Since s1 failed, we create a stand-in product to ensure the camera has a target.\n    if \"",
+    "thinking": "",
+    "done_reason": "length",
+    "first_diff": 28,
+    "compared": 156,
+    "same_prompt_count": false,
+    "first_diff_vs_mlx": 76,
+    "compared_vs_mlx": 156
+   },
+   "template_no_think_field": {
+    "prompt_tokens": 778,
+    "content": "",
+    "thinking": "*   Project: Perfume product shot.\n    *   Step s3: Camera on the product (Blender).\n    *   Input from s1: `ctx['objects']['product']` (failed,",
+    "done_reason": "length",
+    "count_is_hf": false,
+    "leaks": []
+   }
+  },
+  {
+   "id": "w4l-02",
+   "hf_tokens": 7799,
+   "mlx_reference": "## Staff briefing\n\n**Our Goal**\nWe are launching a new waste management plan to reduce the amount of food we throw away. Currently, we lose about 12–15% of our bake—roughly £9,000–£11,000 a year. By measuring our waste, adjusting our bake lists, and finding new ways to use leftovers, we can turn that loss into profit and support our local community.\n\n**The Action Plan**\nWe are starting with five key actions. Please note your responsibilities:\n\n| # | Action | Who | By when |\n|---|---|---|---|\n| 1 | Record all waste at closing time for four weeks, then weekly | Closing staff (Priya to set up the sheet) |",
+   "official": {
+    "prompt_tokens": 7799,
+    "content": "## Staff briefing\n\n**Overview**\nWe are launching a new waste reduction plan to cut our annual losses (currently estimated at £9,000–£11,000) and improve our community standing. Our goal is to reduce waste from 13% to under 9% within six months. This isn't about policing individual mistakes; it’s about baking the right amount of bread and pastries to match our actual demand.\n\n**The Action Plan**\nWe will be implementing the following five actions immediately:\n1. **Waste Recording:** Every item thrown out at closing must be recorded on the waste sheet. (Priya to set up the sheet; all closing staff to complete). **Starts: 2 November.**\n2. **Daily Bake Lists",
+    "thinking": "",
+    "done_reason": "length"
+   },
+   "official_vs_mlx": {
+    "first_diff": 5,
+    "compared": 160
+   },
+   "Q5_K_M": {
+    "prompt_tokens": 7795,
+    "content": "## Staff briefing\n\n**Our Goal**\nWe are launching a new waste reduction plan to make Crumb & Co more efficient and sustainable. By reducing our waste from 12–15% down to under 9%, we can save thousands of pounds a year and ensure we are baking exactly what our customers want.\n\n**The Action Plan**\nTo get started, we are implementing five key actions immediately:\n1. **Waste Recording:** Every item thrown out at closing must be recorded on the waste sheet. (Priya to set up the sheet; all closing staff to complete).\n2. **Daily Bake Lists:** We will move to specific bake lists for each day of the week based on our new data. (Dan to complete by 30 November",
+    "thinking": "",
+    "done_reason": "length",
+    "first_diff": 5,
+    "compared": 156,
+    "same_prompt_count": false,
+    "first_diff_vs_mlx": 15,
+    "compared_vs_mlx": 156
+   },
+   "Q4_K_M": {
+    "prompt_tokens": 7795,
+    "content": "## Staff briefing\n\n**Goal:** To reduce waste, improve our margins, and better serve our community.\n\n### The Action Plan\nWe are implementing the following five changes immediately. These are designed to streamline our operations and ensure we aren't throwing away profit.\n\n| # | Action | Who | By when |\n|---|---|---|---|\n| 1 | Record all waste at closing time for four weeks, then weekly | Closing staff (Priya to set up the sheet) | Start Monday 2 November |\n| 2 | Set a separate bake list for each day of the week from the records | Dan (head baker) | 30 November |\n| 3 | Start the second, late-morning bake for bread | Dan and the",
+    "thinking": "",
+    "done_reason": "length",
+    "first_diff": 5,
+    "compared": 156,
+    "same_prompt_count": false,
+    "first_diff_vs_mlx": 5,
+    "compared_vs_mlx": 156
+   },
+   "bf16": {
+    "prompt_tokens": 7795,
+    "content": "## Staff briefing\n\n**Our Goal**\nWe are launching a new waste management plan to reduce the amount of food we throw away. Currently, we lose about 12–15% of our bake—roughly £9,000–£11,000 a year. By measuring our waste, adjusting our bake lists, and finding new ways to use leftovers, we can turn that loss into profit and support our local community.\n\n**The Action Plan**\nWe are starting with five key actions. Please note your responsibilities:\n\n| # | Action | Who | By when |\n|---|---|---|---|\n| 1 | Record all waste at closing time for four weeks, then weekly | Closing staff (Priya to set up",
+    "thinking": "",
+    "done_reason": "length",
+    "first_diff": 5,
+    "compared": 156,
+    "same_prompt_count": false,
+    "first_diff_vs_mlx": 156,
+    "compared_vs_mlx": 156
+   },
+   "template_no_think_field": {
+    "prompt_tokens": 7797,
+    "content": "",
+    "thinking": "Worker in Chimera (sub-agent).\nStep s7 of 7: Staff briefing.\nA one-page briefing for six staff members.\n\n        *   Five actions from the action plan (with who and",
+    "done_reason": "length",
+    "count_is_hf": false,
+    "leaks": []
+   }
+  },
+  {
+   "id": "bw-01/s1",
+   "hf_tokens": 1436,
+   "mlx_reference": "```python\nimport bpy\n\n# SETTINGS_s1 contains the primary variables for the perfume bottle scene.\nSETTINGS_s1 = {\n    \"BOTTLE_HEIGHT\": 100,  # in mm\n    \"KEY_LIGHT_STRENGTH\": 1000,\n    \"FILL_LIGHT_STRENGTH\": 500,\n    \"RIM_LIGHT_STRENGTH\": 800,\n    \"FOCAL_LENGTH_MM\": 85,\n    \"output\": \"perfume_bottle_shot.png\"\n}\n\ndef build_s1(ctx):\n    \"\"\"\n    Step s1: Define bottle height and light strengths.\n    This step initializes the configuration variables used by",
+   "official": {
+    "prompt_tokens": 1436,
+    "content": "```python\nimport bpy\n\n# SETTINGS_s1 contains the primary variables for the perfume bottle scene.\nSETTINGS_s1 = {\n    \"BOTTLE_HEIGHT\": 100,  # in mm\n    \"KEY_LIGHT_STRENGTH\": 1000,\n    \"FILL_LIGHT_STRENGTH\": 500,\n    \"RIM_LIGHT_STRENGTH\": 800,\n    \"output\": \"perfume_bottle_shot.png\"\n}\n\ndef build_s1(ctx):\n    \"\"\"\n    Step s1: Define bottle height and light strengths.\n    This step initializes the configuration variables used by subsequent steps.\n    \"\"\"\n    # The variables are already defined in",
+    "thinking": "",
+    "done_reason": "length"
+   },
+   "official_vs_mlx": {
+    "first_diff": 96,
+    "compared": 160
+   },
+   "Q5_K_M": {
+    "prompt_tokens": 1432,
+    "content": "```python\nimport bpy\n\n# SETTINGS_s1 contains the primary variables for the perfume bottle scene.\nSETTINGS_s1 = {\n    \"BOTTLE_HEIGHT\": 100,  # in mm\n    \"KEY_LIGHT_STRENGTH\": 1000,\n    \"FILL_LIGHT_STRENGTH\": 500,\n    \"RIM_LIGHT_STRENGTH\": 800,\n    \"FOCAL_LENGTH_MM\": 85,\n    \"output\": \"perfume_bottle_shot.png\"\n}\n\ndef build_s1(ctx):\n    \"\"\"\n    Step 1: Define bottle height and light strengths.\n    This step initializes the",
+    "thinking": "",
+    "done_reason": "length",
+    "first_diff": 96,
+    "compared": 156,
+    "same_prompt_count": false,
+    "first_diff_vs_mlx": 140,
+    "compared_vs_mlx": 156
+   },
+   "Q4_K_M": {
+    "prompt_tokens": 1432,
+    "content": "```python\nimport bpy\n\n# SETTINGS_s1 contains the primary configuration variables for the scene.\nSETTINGS_s1 = {\n    \"BOTTLE_HEIGHT\": 100,\n    \"KEY_LIGHT_STRENGTH\": 1000,\n    \"FILL_LIGHT_STRENGTH\": 500,\n    \"RIM_LIGHT_STRENGTH\": 800,\n    \"output\": \"perfume_bottle_shot.png\"\n}\n\ndef build_s1(ctx):\n    \"\"\"\n    Step 1: Define bottle height and light strengths.\n    These values are stored in the SETTINGS_s1 dictionary to be accessed \n    by subsequent steps (s2",
+    "thinking": "",
+    "done_reason": "length",
+    "first_diff": 15,
+    "compared": 156,
+    "same_prompt_count": false,
+    "first_diff_vs_mlx": 15,
+    "compared_vs_mlx": 156
+   },
+   "bf16": {
+    "prompt_tokens": 1432,
+    "content": "```python\nimport bpy\n\n# SETTINGS_s1 contains the primary variables for the perfume bottle scene.\nSETTINGS_s1 = {\n    \"BOTTLE_HEIGHT\": 100,  # in mm\n    \"KEY_LIGHT_STRENGTH\": 1000,\n    \"FILL_LIGHT_STRENGTH\": 500,\n    \"RIM_LIGHT_STRENGTH\": 800,\n    \"FOCAL_LENGTH_MM\": 85,\n    \"output\": \"perfume_bottle_shot.png\"\n}\n\ndef build_s1(ctx):\n    \"\"\"\n    Step s1: Define bottle height and light strengths.\n    This step initializes the",
+    "thinking": "",
+    "done_reason": "length",
+    "first_diff": 96,
+    "compared": 156,
+    "same_prompt_count": false,
+    "first_diff_vs_mlx": 156,
+    "compared_vs_mlx": 156
+   },
+   "template_no_think_field": {
+    "prompt_tokens": 1434,
+    "content": "",
+    "thinking": "*   Project: Perfume Bottle Product Shot (Blender 5 Python script).\n    *   Task: Step s1 of 7.\n    *   Step s1 description: Define bottle height and light strengths",
+    "done_reason": "length",
+    "count_is_hf": false,
+    "leaks": []
+   }
+  },
+  {
+   "id": "res-01/s5",
+   "hf_tokens": 2830,
+   "mlx_reference": "## Recommendation: LoRA vs. Full Fine-Tuning on M3 Ultra\n\nThis report evaluates the optimal training strategy for a ~4B parameter model using Apple's MLX framework on M3 Ultra hardware. Based on memory requirements, training throughput, and quality trade-offs, the following analysis provides a clear path forward.\n\n### Memory Requirements\nBoth methods are highly feasible on the M3 Ultra’s 128GB unified memory pool. \n- **Full Fine-Tuning:** Requires approximately **36 GB** of memory. This includes ~8 GB for weights, ~16 GB for Adam optimizer states, and ~12 GB for activations at a conservative batch size of 3.\n- **LoRA Fine-Tuning:** Requires approximately **3",
+   "official": {
+    "prompt_tokens": 2830,
+    "content": "## Recommendation: LoRA vs. Full Fine-Tuning on M3 Ultra\n\nThis report evaluates the optimal training strategy for a ~4B parameter model using Apple's MLX framework on M3 Ultra hardware. Based on memory requirements, training throughput, and quality trade-offs, the following analysis provides a clear path forward.\n\n### Memory Footprint and Hardware Compatibility\nBoth methods are highly feasible on the M3 Ultra’s 128GB unified memory architecture. \n- **Full Fine-Tuning** requires approximately **36 GB** of memory. This includes the 8 GB for weights, 16 GB for Adam optimizer states, and roughly 12 GB for activations at a conservative batch size of 3.\n- **LoRA Fine-T",
+    "thinking": "",
+    "done_reason": "length"
+   },
+   "official_vs_mlx": {
+    "first_diff": 70,
+    "compared": 160
+   },
+   "Q5_K_M": {
+    "prompt_tokens": 2826,
+    "content": "## Recommendation: LoRA vs. Full Fine-Tuning on M3 Ultra\n\n### Overview\nFor a ~4B parameter model using the MLX framework on an M3 Ultra, both Low-Rank Adaptation (LoRA) and full fine-tuning are highly viable. The M3 Ultra’s unified memory architecture provides ample headroom for either approach, making the choice dependent on specific project goals rather than hardware limitations.\n\n### Resource and Performance Comparison\n*   **Memory Requirements:** Both methods fit comfortably within the M3 Ultra's 128GB unified memory. Full fine-tuning requires approximately **36 GB** (including weights, Adam optimizer states, and activations), while LoRA requires approximately **38 GB**. The slight increase in LoRA'",
+    "thinking": "",
+    "done_reason": "length",
+    "first_diff": 17,
+    "compared": 156,
+    "same_prompt_count": false,
+    "first_diff_vs_mlx": 17,
+    "compared_vs_mlx": 156
+   },
+   "Q4_K_M": {
+    "prompt_tokens": 2826,
+    "content": "## Recommendation: LoRA vs. Full Fine-Tuning on M3 Ultra\n\nThis report evaluates the optimal training strategy for a ~4B parameter model using the MLX framework on Apple’s M3 Ultra hardware.\n\n### Memory Footprint\nBoth methods are well within the M3 Ultra’s 128GB unified memory capacity. \n- **Full Fine-Tuning:** Requires approximately **36 GB** of memory. While it uses a smaller batch size (approx. 3) due to the overhead of maintaining optimizer states for all parameters, it remains highly feasible on this hardware.\n- **LoRA Fine-Tuning:** Requires approximately **38 GB** of memory. Although it supports a larger batch size (approx. 1",
+    "thinking": "",
+    "done_reason": "length",
+    "first_diff": 32,
+    "compared": 156,
+    "same_prompt_count": false,
+    "first_diff_vs_mlx": 32,
+    "compared_vs_mlx": 156
+   },
+   "bf16": {
+    "prompt_tokens": 2826,
+    "content": "## Recommendation: LoRA vs. Full Fine-Tuning on M3 Ultra\n\nThis report evaluates the optimal training strategy for a ~4B parameter model using Apple's MLX framework on M3 Ultra hardware. Based on memory requirements, training throughput, and quality trade-offs, the following analysis provides a clear path forward.\n\n### Memory Footprint\nBoth methods are highly feasible on the M3 Ultra’s 128GB unified memory. \n- **Full Fine-Tuning:** Requires approximately **36 GB** of memory. This includes ~8 GB for weights, ~16 GB for Adam optimizer states, and ~12 GB for activations at a batch size of 3.\n- **LoRA Fine-Tuning:** Requires",
+    "thinking": "",
+    "done_reason": "length",
+    "first_diff": 72,
+    "compared": 156,
+    "same_prompt_count": false,
+    "first_diff_vs_mlx": 70,
+    "compared_vs_mlx": 156
+   },
+   "template_no_think_field": {
+    "prompt_tokens": 2828,
+    "content": "",
+    "thinking": "*   Role: Sub-agent in Chimera.\n    *   Task: Step s5 of 5 (Draft one-page recommendation).\n    *   Input: Results from s2 (Memory), s3",
+    "done_reason": "length",
+    "count_is_hf": false,
+    "leaks": []
+   }
+  }
+ ],
+ "verdict": {
+  "same_prompt_counts": false,
+  "q4_first_32_same": 2,
+  "q5_first_16_same": 7,
+  "pass": false,
+  "bf16_vs_mlx_first_diff": [
+   156,
+   156,
+   156,
+   17,
+   76,
+   156,
+   156,
+   70
+  ],
+  "official_vs_mlx_first_diff": [
+   44,
+   48,
+   79,
+   17,
+   28,
+   5,
+   96,
+   70
+  ],
+  "template_honoured": false
+ },
+ "finished": "2026-10-30T15:20:11"
+}

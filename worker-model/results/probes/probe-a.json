@@ -1,0 +1,142 @@
+{
+ "exit": 0,
+ "iters_done": 40,
+ "examples": 40,
+ "tokens_all": 157371,
+ "tokens_mean": 3934,
+ "tokens_max": 11824,
+ "answer_tokens_trained": 42247,
+ "train_seconds": 815.1,
+ "wall_seconds": 834.2,
+ "tok_s_all": 193.1,
+ "tok_s_answers": 51.8,
+ "peak_gb": 65.186598732,
+ "memory": {
+  "active_plus_cache_gb": 66.660675804,
+  "wired_gb": 78.875394048,
+  "kind": "memory",
+  "cache_limit_gb": 8.0
+ },
+ "reports": [
+  {
+   "iter": 4,
+   "loss": 2.1464555263519287,
+   "it_s": 0.051865599144669275,
+   "answer_tok_s": 61.22733979028208,
+   "trained": 4722,
+   "peak_gb": 49.803004356
+  },
+  {
+   "iter": 8,
+   "loss": 2.0211567878723145,
+   "it_s": 0.09149663254870245,
+   "answer_tok_s": 69.51456657887668,
+   "trained": 7761,
+   "peak_gb": 49.803004356
+  },
+  {
+   "iter": 12,
+   "loss": 1.648193597793579,
+   "it_s": 0.03571495404122471,
+   "answer_tok_s": 32.723826640272144,
+   "trained": 11426,
+   "peak_gb": 64.711822964
+  },
+  {
+   "iter": 16,
+   "loss": 1.8017394542694092,
+   "it_s": 0.03468665930081785,
+   "answer_tok_s": 40.92158631013986,
+   "trained": 16145,
+   "peak_gb": 65.186598732
+  },
+  {
+   "iter": 20,
+   "loss": 1.2983801364898682,
+   "it_s": 0.05143187006713,
+   "answer_tok_s": 65.8327936859264,
+   "trained": 21265,
+   "peak_gb": 65.186598732
+  },
+  {
+   "iter": 24,
+   "loss": 1.2708423137664795,
+   "it_s": 0.022416616138828737,
+   "answer_tok_s": 30.54263948915415,
+   "trained": 26715,
+   "peak_gb": 65.186598732
+  },
+  {
+   "iter": 28,
+   "loss": 1.4104280471801758,
+   "it_s": 0.056904953788758525,
+   "answer_tok_s": 65.91016272582957,
+   "trained": 31348,
+   "peak_gb": 65.186598732
+  },
+  {
+   "iter": 32,
+   "loss": 1.2803393602371216,
+   "it_s": 0.07774611448487032,
+   "answer_tok_s": 89.69957958691913,
+   "trained": 35963,
+   "peak_gb": 65.186598732
+  },
+  {
+   "iter": 36,
+   "loss": 1.2257513999938965,
+   "it_s": 0.11090238371230737,
+   "answer_tok_s": 98.73084709988163,
+   "trained": 39524,
+   "peak_gb": 65.186598732
+  },
+  {
+   "iter": 40,
+   "loss": 1.6476459503173828,
+   "it_s": 0.07559701823866331,
+   "answer_tok_s": 51.46267016597005,
+   "trained": 42247,
+   "peak_gb": 65.186598732
+  }
+ ],
+ "settings": {
+  "num_layers": 48,
+  "rank": 32,
+  "scale": 20.0,
+  "dropout": 0.05,
+  "lr": 2e-05,
+  "batch": 1,
+  "grad_accum": 8
+ },
+ "max_seq": 12288,
+ "shape": [
+  [
+   30,
+   1500,
+   3200,
+   300,
+   1200
+  ],
+  [
+   6,
+   5000,
+   8000,
+   800,
+   2500
+  ],
+  [
+   4,
+   11600,
+   12200,
+   1500,
+   3400
+  ]
+ ],
+ "log": "/Users/fx/chimera-tools/worker-train/probes/pilot-train.log",
+ "config": "/Users/fx/chimera-tools/worker-train/probes/pilot.yaml",
+ "bar": {
+  "tok_s_all_min": 60,
+  "peak_gb_max": 75
+ },
+ "pass": true
+}

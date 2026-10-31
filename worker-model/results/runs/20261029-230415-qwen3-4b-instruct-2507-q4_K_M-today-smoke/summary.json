@@ -1,0 +1,127 @@
+{
+ "meta": {
+  "model": "qwen3:4b-instruct-2507-q4_K_M",
+  "prompt": "today",
+  "digest": "0edcdef34593eac1aa2be9c7d06c432dcf81945adca5eca2f27662c18f168ba0",
+  "details": {
+   "parent_model": "",
+   "format": "gguf",
+   "family": "qwen3",
+   "families": [
+    "qwen3"
+   ],
+   "parameter_size": "4.0B",
+   "quantization_level": "Q4_K_M"
+  },
+  "context_length": 262144,
+  "ctx_max": 262144,
+  "ollama_version": "0.40.1",
+  "host": "http://127.0.0.1:11434",
+  "eval_version": "w1.0",
+  "chimera_version_of_requests": "0.7.0",
+  "samples": 1,
+  "prose_samples": 1,
+  "seed": null,
+  "think": "unset",
+  "temperature": "unset (model default)",
+  "cases": [
+   "w2-01",
+   "w2-04",
+   "w2-08"
+  ],
+  "w1_skipped": [],
+  "warmup_s": 0.1,
+  "blender_versions": [
+   "5.2.2",
+   "5.0.1"
+  ],
+  "blender_sandboxed_probe": true,
+  "started": "2026-10-29T23:04:15-05:00",
+  "python": "3.13.12",
+  "machine": "Mac.lan",
+  "differences_from_chimera": [
+   "a reply is cut after 16384 tokens (runaway guard; Chimera sends no num_predict and has no cap)"
+  ],
+  "max_reply_tokens": 16384,
+  "eval_only": "EVAL ONLY: replies to eval cases, never training data",
+  "finished": "2026-10-29T23:04:35-05:00"
+ },
+ "summary": {
+  "all": {
+   "n": 3,
+   "errors": 0,
+   "contract_ok": 0.0,
+   "piece_ok": 0.0,
+   "cut_off": 0.0,
+   "runaway": 0,
+   "tokens_median": 598,
+   "prompt_tokens_median": 263,
+   "tok_s_median": 142.2,
+   "wall_s_median": 4.227,
+   "wall_s_total": 12.0,
+   "blender_n": 3,
+   "strict_5.2.2": 0.0,
+   "crash_5.2.2": 33.3,
+   "strict_5.0.1": 0.0,
+   "crash_5.0.1": 33.3,
+   "strict_both": 0.0,
+   "joined": 0.0,
+   "assertions_5.2.2": 0.0,
+   "lint_errors_mean": 3.33,
+   "lint_any": 100.0,
+   "provides_found": null
+  },
+  "by_part": {
+   "w2": {
+    "n": 3,
+    "errors": 0,
+    "contract_ok": 0.0,
+    "piece_ok": 0.0,
+    "cut_off": 0.0,
+    "runaway": 0,
+    "tokens_median": 598,
+    "prompt_tokens_median": 263,
+    "tok_s_median": 142.2,
+    "wall_s_median": 4.227,
+    "wall_s_total": 12.0,
+    "blender_n": 3,
+    "strict_5.2.2": 0.0,
+    "crash_5.2.2": 33.3,
+    "strict_5.0.1": 0.0,
+    "crash_5.0.1": 33.3,
+    "strict_both": 0.0,
+    "joined": 0.0,
+    "assertions_5.2.2": 0.0,
+    "lint_errors_mean": 3.33,
+    "lint_any": 100.0,
+    "provides_found": null
+   }
+  },
+  "by_mode": {
+   "blender": {
+    "n": 3,
+    "errors": 0,
+    "contract_ok": 0.0,
+    "piece_ok": 0.0,
+    "cut_off": 0.0,
+    "runaway": 0,
+    "tokens_median": 598,
+    "prompt_tokens_median": 263,
+    "tok_s_median": 142.2,
+    "wall_s_median": 4.227,
+    "wall_s_total": 12.0,
+    "blender_n": 3,
+    "strict_5.2.2": 0.0,
+    "crash_5.2.2": 33.3,
+    "strict_5.0.1": 0.0,
+    "crash_5.0.1": 33.3,
+    "strict_both": 0.0,
+    "joined": 0.0,
+    "assertions_5.2.2": 0.0,
+    "lint_errors_mean": 3.33,
+    "lint_any": 100.0,
+    "provides_found": null
+   }
+  }
+ }
+}

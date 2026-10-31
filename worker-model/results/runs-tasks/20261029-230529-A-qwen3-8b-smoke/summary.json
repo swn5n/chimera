@@ -1,0 +1,93 @@
+{
+ "meta": {
+  "arm": "A",
+  "prompt": "today",
+  "joining": "combine",
+  "workers": "qwen3:8b",
+  "arm_default_workers": "qwen3.8:27b",
+  "combine_model": "qwen3.8:27b",
+  "seam": "none",
+  "models": {
+   "qwen3.8:27b": {
+    "digest": "47951e4a666180bc2aedfc93c169472f2de783696fe196efbf063f5730ecf163",
+    "details": {
+     "parent_model": "",
+     "format": "safetensors",
+     "family": "qwen3_5",
+     "families": null,
+     "parameter_size": "27.8B",
+     "quantization_level": "nvfp4",
+     "runner": "mlx"
+    },
+    "context_length": 262144
+   },
+   "qwen3:8b": {
+    "digest": "500a1f067a9f782620b40bee6f7b0c89e17ae61f686b92c24933e4ca4b2b8b41",
+    "details": {
+     "parent_model": "",
+     "format": "gguf",
+     "family": "qwen3",
+     "families": [
+      "qwen3"
+     ],
+     "parameter_size": "8.2B",
+     "quantization_level": "Q4_K_M"
+    },
+    "context_length": 40960
+   }
+  },
+  "ollama_version": "0.40.1",
+  "host": "http://127.0.0.1:11434",
+  "eval_version": "w1.0",
+  "tasks": [
+   "w2-01"
+  ],
+  "task_sources": {
+   "w2-01": "case-plan"
+  },
+  "samples": 1,
+  "review": 0,
+  "review_model": null,
+  "chimera_version_of_requests": "0.7.0",
+  "blender_versions": [
+   "5.2.2",
+   "5.0.1"
+  ],
+  "started": "2026-10-29T23:05:29-05:00",
+  "python": "3.13.12",
+  "machine": "Mac.lan",
+  "differences_from_chimera": [
+   "steps run one at a time (onePass with parallelism 1)",
+   "no library references or library reuse",
+   "every step on the one worker model, the combine on a fixed model"
+  ],
+  "eval_only": "EVAL ONLY: model output for eval plans, never training data",
+  "finished": "2026-10-29T23:08:24-05:00"
+ },
+ "summary": {
+  "n": 1,
+  "errors": 0,
+  "how": {
+   "combine": 1
+  },
+  "outcomes": {
+   "checked": 1
+  },
+  "blender_n": 1,
+  "python_n": 0,
+  "fallback": null,
+  "seams_mean": null,
+  "cut": 0.0,
+  "steps_contract_ok": 0.0,
+  "wall_s_median": 173.74,
+  "wall_s_total": 173.7,
+  "tokens_total": 14222,
+  "one_script": 100.0,
+  "pass_5.2.2": 0.0,
+  "pass_5.0.1": 0.0,
+  "pass_both": 0.0,
+  "python_pass": null,
+  "assertions_5.2.2": null,
+  "review_done": null
+ }
+}
