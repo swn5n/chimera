@@ -1,0 +1,491 @@
+{
+  "meta": {
+    "model": "qwen3-embedding:0.6b",
+    "digest": "ac6da0dfba84a81fdbfbaf330198c33cd77c4cdfc53e8bc50eb581914a15621d",
+    "details": {
+      "parent_model": "/Users/ollama/.ollama/models/blobs/sha256-06507c7b42688469c4e7298b0a1e16deff06caf291cf0a5b278c308249c3e439",
+      "format": "gguf",
+      "family": "qwen3",
+      "families": [
+        "qwen3"
+      ],
+      "parameter_size": "595.78M",
+      "quantization_level": "Q8_0"
+    },
+    "context_length": 32768,
+    "capabilities": [
+      "tools",
+      "thinking",
+      "embedding"
+    ],
+    "ollama_version": "0.40.1",
+    "host": "http://127.0.0.1:11434",
+    "jobs": [
+      "embed"
+    ],
+    "eval_version": "v1.1",
+    "chimera_version_of_prompts": "0.6.1",
+    "chimera_git_of_prompts": "c2aef2ca87e9",
+    "seed": "7",
+    "think": "unset",
+    "samples": 1,
+    "ctx_max": 32768,
+    "limit": 0,
+    "started": "2026-10-28T00:41:46-05:00",
+    "python": "3.13.12",
+    "machine": "Mac.lan",
+    "differences_from_chimera": [
+      "fixed seed"
+    ],
+    "finished": "2026-10-28T00:41:49-05:00",
+    "rescored_from": "v1"
+  },
+  "summary": {
+    "embed": {
+      "gate_auc": 0.6574,
+      "gate_pairs": 43,
+      "kind_accuracy": 0.6818,
+      "kind_cases": 44,
+      "pairs": [
+        {
+          "id": "res-04/text-to-3d",
+          "use": false,
+          "cosine": 0.7366
+        },
+        {
+          "id": "res-07/text-to-3d",
+          "use": false,
+          "cosine": 0.3447
+        },
+        {
+          "id": "bl-05/acestep-music",
+          "use": false,
+          "cosine": 0.5902
+        },
+        {
+          "id": "bl-09/text-to-3d",
+          "use": false,
+          "cosine": 0.6662
+        },
+        {
+          "id": "bl-10/text-to-3d",
+          "use": false,
+          "cosine": 0.4848
+        },
+        {
+          "id": "batch-07/comfyui-image",
+          "use": false,
+          "cosine": 0.4834
+        },
+        {
+          "id": "chat-01/comfyui-image",
+          "use": false,
+          "cosine": 0.2206
+        },
+        {
+          "id": "chat-02/comfyui-image",
+          "use": false,
+          "cosine": 0.6205
+        },
+        {
+          "id": "chat-03/comfyui-image",
+          "use": false,
+          "cosine": 0.4419
+        },
+        {
+          "id": "chat-04/demo-poster",
+          "use": false,
+          "cosine": 0.5072
+        },
+        {
+          "id": "chat-05/comfyui-image",
+          "use": false,
+          "cosine": 0.4555
+        },
+        {
+          "id": "chat-06/comfyui-image",
+          "use": false,
+          "cosine": 0.3937
+        },
+        {
+          "id": "chat-07/comfyui-image",
+          "use": false,
+          "cosine": 0.5426
+        },
+        {
+          "id": "chat-08/comfyui-image",
+          "use": false,
+          "cosine": 0.4414
+        },
+        {
+          "id": "chat-09/acestep-music",
+          "use": false,
+          "cosine": 0.4513
+        },
+        {
+          "id": "chat-10/comfyui-image",
+          "use": false,
+          "cosine": 0.3731
+        },
+        {
+          "id": "chat-11/comfyui-image",
+          "use": false,
+          "cosine": 0.4948
+        },
+        {
+          "id": "chat-11/text-to-3d",
+          "use": false,
+          "cosine": 0.5228
+        },
+        {
+          "id": "chat-13/comfyui-image",
+          "use": false,
+          "cosine": 0.613
+        },
+        {
+          "id": "chat-14/comfyui-image",
+          "use": false,
+          "cosine": 0.368
+        },
+        {
+          "id": "chat-15/comfyui-image",
+          "use": false,
+          "cosine": 0.7604
+        },
+        {
+          "id": "chat-16/text-to-3d",
+          "use": false,
+          "cosine": 0.6914
+        },
+        {
+          "id": "chat-17/comfyui-image",
+          "use": false,
+          "cosine": 0.6213
+        },
+        {
+          "id": "chat-18/comfyui-image",
+          "use": false,
+          "cosine": 0.5467
+        },
+        {
+          "id": "chat-19/comfyui-image",
+          "use": false,
+          "cosine": 0.4708
+        },
+        {
+          "id": "chat-20/text-to-3d",
+          "use": false,
+          "cosine": 0.4235
+        },
+        {
+          "id": "chat-21/acestep-music",
+          "use": false,
+          "cosine": 0.6155
+        },
+        {
+          "id": "head-01/comfyui-image",
+          "use": true,
+          "cosine": 0.6815
+        },
+        {
+          "id": "head-02/comfyui-image",
+          "use": true,
+          "cosine": 0.5882
+        },
+        {
+          "id": "head-03/comfyui-image",
+          "use": true,
+          "cosine": 0.5996
+        },
+        {
+          "id": "head-04/comfyui-image",
+          "use": true,
+          "cosine": 0.5876
+        },
+        {
+          "id": "head-05/demo-poster",
+          "use": true,
+          "cosine": 0.6144
+        },
+        {
+          "id": "head-05/comfyui-image",
+          "use": true,
+          "cosine": 0.5045
+        },
+        {
+          "id": "head-06/acestep-music",
+          "use": true,
+          "cosine": 0.6495
+        },
+        {
+          "id": "head-07/acestep-music",
+          "use": true,
+          "cosine": 0.6185
+        },
+        {
+          "id": "head-08/text-to-3d",
+          "use": true,
+          "cosine": 0.6232
+        },
+        {
+          "id": "head-09/comfyui-image",
+          "use": true,
+          "cosine": 0.4197
+        },
+        {
+          "id": "head-10/comfyui-image",
+          "use": true,
+          "cosine": 0.6333
+        },
+        {
+          "id": "head-11/comfyui-image",
+          "use": true,
+          "cosine": 0.4466
+        },
+        {
+          "id": "head-12/comfyui-image",
+          "use": true,
+          "cosine": 0.7306
+        },
+        {
+          "id": "head-13/acestep-music",
+          "use": true,
+          "cosine": 0.6108
+        },
+        {
+          "id": "head-14/text-to-3d",
+          "use": true,
+          "cosine": 0.611
+        },
+        {
+          "id": "head-15/comfyui-image",
+          "use": true,
+          "cosine": 0.3947
+        }
+      ],
+      "kinds": [
+        {
+          "id": "code-01",
+          "nearest": "code",
+          "ok": true
+        },
+        {
+          "id": "code-02",
+          "nearest": "blender",
+          "ok": false
+        },
+        {
+          "id": "code-03",
+          "nearest": "code",
+          "ok": true
+        },
+        {
+          "id": "code-04",
+          "nearest": "writing",
+          "ok": false
+        },
+        {
+          "id": "code-05",
+          "nearest": "writing",
+          "ok": false
+        },
+        {
+          "id": "code-06",
+          "nearest": "code",
+          "ok": true
+        },
+        {
+          "id": "code-07",
+          "nearest": "writing",
+          "ok": false
+        },
+        {
+          "id": "code-08",
+          "nearest": "code",
+          "ok": true
+        },
+        {
+          "id": "code-09",
+          "nearest": "writing",
+          "ok": false
+        },
+        {
+          "id": "code-10",
+          "nearest": "writing",
+          "ok": false
+        },
+        {
+          "id": "code-11",
+          "nearest": "writing",
+          "ok": false
+        },
+        {
+          "id": "code-12",
+          "nearest": "code",
+          "ok": true
+        },
+        {
+          "id": "res-01",
+          "nearest": "writing",
+          "ok": true
+        },
+        {
+          "id": "res-02",
+          "nearest": "research",
+          "ok": true
+        },
+        {
+          "id": "res-03",
+          "nearest": "writing",
+          "ok": true
+        },
+        {
+          "id": "res-04",
+          "nearest": "blender",
+          "ok": false
+        },
+        {
+          "id": "res-05",
+          "nearest": "research",
+          "ok": false
+        },
+        {
+          "id": "res-06",
+          "nearest": "writing",
+          "ok": true
+        },
+        {
+          "id": "res-07",
+          "nearest": "blender",
+          "ok": false
+        },
+        {
+          "id": "res-08",
+          "nearest": "research",
+          "ok": true
+        },
+        {
+          "id": "res-09",
+          "nearest": "writing",
+          "ok": true
+        },
+        {
+          "id": "res-10",
+          "nearest": "writing",
+          "ok": true
+        },
+        {
+          "id": "res-11",
+          "nearest": "writing",
+          "ok": true
+        },
+        {
+          "id": "bl-01",
+          "nearest": "blender",
+          "ok": true
+        },
+        {
+          "id": "bl-02",
+          "nearest": "blender",
+          "ok": true
+        },
+        {
+          "id": "bl-03",
+          "nearest": "blender",
+          "ok": true
+        },
+        {
+          "id": "bl-04",
+          "nearest": "blender",
+          "ok": true
+        },
+        {
+          "id": "bl-05",
+          "nearest": "blender",
+          "ok": true
+        },
+        {
+          "id": "bl-06",
+          "nearest": "blender",
+          "ok": true
+        },
+        {
+          "id": "bl-07",
+          "nearest": "blender",
+          "ok": true
+        },
+        {
+          "id": "bl-08",
+          "nearest": "blender",
+          "ok": true
+        },
+        {
+          "id": "bl-09",
+          "nearest": "blender",
+          "ok": true
+        },
+        {
+          "id": "bl-10",
+          "nearest": "blender",
+          "ok": true
+        },
+        {
+          "id": "bl-11",
+          "nearest": "blender",
+          "ok": true
+        },
+        {
+          "id": "batch-01",
+          "nearest": "writing",
+          "ok": true
+        },
+        {
+          "id": "batch-02",
+          "nearest": "code",
+          "ok": false
+        },
+        {
+          "id": "batch-03",
+          "nearest": "code",
+          "ok": false
+        },
+        {
+          "id": "batch-04",
+          "nearest": "code",
+          "ok": true
+        },
+        {
+          "id": "batch-05",
+          "nearest": "blender",
+          "ok": false
+        },
+        {
+          "id": "batch-06",
+          "nearest": "code",
+          "ok": true
+        },
+        {
+          "id": "batch-07",
+          "nearest": "writing",
+          "ok": true
+        },
+        {
+          "id": "batch-08",
+          "nearest": "writing",
+          "ok": true
+        },
+        {
+          "id": "batch-09",
+          "nearest": "writing",
+          "ok": true
+        },
+        {
+          "id": "batch-10",
+          "nearest": "writing",
+          "ok": false
+        }
+      ],
+      "wall_s": 2.925
+    }
+  }
+}

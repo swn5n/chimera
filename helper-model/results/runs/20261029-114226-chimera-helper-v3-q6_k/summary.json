@@ -1,0 +1,125 @@
+{
+  "meta": {
+    "model": "chimera-helper:v3-q6_k",
+    "digest": "97db0e389ea981beb4b5271e423ead5c34e3a13c87fcdc80eef657affd56d700",
+    "details": {
+      "parent_model": "helper-q6_k.gguf",
+      "format": "gguf",
+      "family": "qwen3",
+      "families": [
+        "qwen3"
+      ],
+      "parameter_size": "4.0B",
+      "quantization_level": "Q6_K",
+      "runner": "llamacpp"
+    },
+    "context_length": 262144,
+    "capabilities": [
+      "completion",
+      "tools"
+    ],
+    "ollama_version": "0.40.1",
+    "host": "http://127.0.0.1:11434",
+    "jobs": [
+      "planner",
+      "reviewer",
+      "gate"
+    ],
+    "eval_version": "v1.1",
+    "chimera_version_of_prompts": "0.6.1",
+    "chimera_git_of_prompts": "c2aef2ca87e9",
+    "seed": "7",
+    "think": "unset",
+    "variant": null,
+    "samples": 1,
+    "ctx_max": 262144,
+    "limit": 0,
+    "started": "2026-10-29T11:42:26-05:00",
+    "python": "3.13.12",
+    "machine": "Mac.lan",
+    "differences_from_chimera": [
+      "fixed seed"
+    ],
+    "warmup_s": 0.58,
+    "finished": "2026-10-29T11:46:29-05:00"
+  },
+  "summary": {
+    "planner": {
+      "n": 44,
+      "chimera_ok": 1.0,
+      "valid": 0.8864,
+      "call_errors": 0,
+      "latency_p50_s": 4.524,
+      "latency_p95_s": 7.482,
+      "latency_max_s": 8.817,
+      "eval_tokens_mean": 574.6364,
+      "thinks": 0.0,
+      "thinking_chars_mean": 0.0,
+      "issues": {
+        "step_count": 3,
+        "schema:pattern": 3,
+        "meta_step": 2,
+        "schema:maxItems": 2,
+        "schema:required": 1,
+        "schema:enum": 1,
+        "schema:minItems": 1,
+        "kind_mismatch": 1
+      },
+      "valid_tidied": 0.9091,
+      "quality": 0.9251,
+      "coverage": 0.9892,
+      "steps_ok": 0.8864,
+      "kind_ok": 0.9091,
+      "parallel_ok": 0.8864,
+      "no_meta": 0.9545,
+      "steps_mean": 3.4773
+    },
+    "reviewer": {
+      "n": 24,
+      "chimera_ok": 1.0,
+      "valid": 1.0,
+      "call_errors": 0,
+      "latency_p50_s": 1.224,
+      "latency_p95_s": 1.841,
+      "latency_max_s": 2.011,
+      "eval_tokens_mean": 135.125,
+      "thinks": 0.0,
+      "thinking_chars_mean": 0.0,
+      "issues": {},
+      "done_accuracy": 0.875,
+      "flaws_caught": 0.8667,
+      "good_accepted": 0.8889,
+      "score_in_band": 0.8333,
+      "main_flaw_named": 0.9231,
+      "check_first": 1.0,
+      "check_chars_median": 292
+    },
+    "gate": {
+      "n": 44,
+      "chimera_ok": 1.0,
+      "valid": 1.0,
+      "call_errors": 0,
+      "latency_p50_s": 0.089,
+      "latency_p95_s": 0.113,
+      "latency_max_s": 0.154,
+      "eval_tokens_mean": 6.0,
+      "thinks": 0.0,
+      "thinking_chars_mean": 0.0,
+      "issues": {},
+      "pairs": 43,
+      "accuracy": 1.0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "reached_accuracy": 1.0,
+      "pipeline_accuracy": 0.9302,
+      "word_rule_accuracy": 0.5814,
+      "over_8s": 0,
+      "low_confidence_answers": {
+        "chat-12/demo-poster": true
+      }
+    }
+  }
+}

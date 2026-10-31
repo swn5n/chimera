@@ -1,0 +1,44 @@
+{
+  "model": "chimera-helper:v3-q5_k_m",
+  "digest": "e7e96a78f43d80b2c38843206e8e7d2355868664b9052d91d7a4e9295b98581c",
+  "details": {
+    "parent_model": "helper-q5_k_m.gguf",
+    "format": "gguf",
+    "family": "qwen3",
+    "families": [
+      "qwen3"
+    ],
+    "parameter_size": "4.0B",
+    "quantization_level": "Q5_K_M",
+    "runner": "llamacpp"
+  },
+  "context_length": 262144,
+  "capabilities": [
+    "completion",
+    "tools"
+  ],
+  "ollama_version": "0.40.1",
+  "host": "http://127.0.0.1:11434",
+  "jobs": [
+    "planner",
+    "reviewer",
+    "gate"
+  ],
+  "eval_version": "v1.1",
+  "chimera_version_of_prompts": "0.6.1",
+  "chimera_git_of_prompts": "c2aef2ca87e9",
+  "seed": "7",
+  "think": "unset",
+  "variant": null,
+  "samples": 1,
+  "ctx_max": 262144,
+  "limit": 0,
+  "started": "2026-10-29T11:38:10-05:00",
+  "python": "3.13.12",
+  "machine": "Mac.lan",
+  "differences_from_chimera": [
+    "fixed seed"
+  ],
+  "warmup_s": 0.58,
+  "finished": "2026-10-29T11:42:13-05:00"
+}

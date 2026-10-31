@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "chimera-helper/gate.schema.json",
+  "title": "Head gate answer: strict target for the helper gate",
+  "description": "headGateSchema (app/plugin_chat.go, Chimera 0.6.1), which is also sent to Ollama as the format, plus additionalProperties:false. headGate decodes it into struct{Use bool}; a reply that doesn't decode counts as use=false.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["use"],
+  "properties": {"use": {"type": "boolean"}}
+}

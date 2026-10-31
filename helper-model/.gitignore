@@ -1,0 +1,8 @@
+# Raw replies are large and reproducible; summaries and BASELINES.md are kept.
+results/runs/*/raw.jsonl
+results/runs-long/*/raw.jsonl
+results/runs-temp/*/raw.jsonl
+# Generated training data (large, and rebuilt by datagen).
+data/
+__pycache__/
+*.pyc

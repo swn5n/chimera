@@ -1,0 +1,43 @@
+{
+  "model": "chimera-helper:v2",
+  "digest": "6b8d96ff77dc024eaaa646efcc48db696894f56fc503ae3db49d0cfbe739533c",
+  "details": {
+    "parent_model": "helper-q4_k_m.gguf",
+    "format": "gguf",
+    "family": "qwen3",
+    "families": [
+      "qwen3"
+    ],
+    "parameter_size": "4.0B",
+    "quantization_level": "Q4_K_M",
+    "runner": "llamacpp"
+  },
+  "context_length": 262144,
+  "capabilities": [
+    "completion",
+    "tools"
+  ],
+  "ollama_version": "0.40.1",
+  "host": "http://127.0.0.1:11434",
+  "jobs": [
+    "reviewer"
+  ],
+  "eval_version": "v1.1",
+  "chimera_version_of_prompts": "0.6.1",
+  "chimera_git_of_prompts": "c2aef2ca87e9",
+  "seed": "7",
+  "think": "unset",
+  "variant": "check-working",
+  "samples": 1,
+  "ctx_max": 262144,
+  "limit": 0,
+  "started": "2026-10-28T22:55:56-05:00",
+  "python": "3.13.12",
+  "machine": "Mac.lan",
+  "differences_from_chimera": [
+    "fixed seed",
+    "variant=check-working (reviewer: as check-first, but the check lists the task's requirements first and redoes counts and calculations (the note v3's teacher gets))"
+  ],
+  "warmup_s": 0.58,
+  "finished": "2026-10-28T23:06:22-05:00"
+}

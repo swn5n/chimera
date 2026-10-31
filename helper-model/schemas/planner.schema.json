@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "chimera-helper/planner.schema.json",
+  "title": "Hydra plan: strict target for the helper planner",
+  "description": "The object hydraPlannerPrompt asks for (app/prompts.go) and onePass decodes into hydraPlan (app/hydra.go, Chimera 0.6.1). Chimera itself accepts more than this and repairs some mistakes; schemas/SOURCES.md lists exactly what it tolerates. 'integer' follows Go's encoding/json here: 1.0 is not an integer. Ordering rules (ids s1..sN in order, depends_on only on earlier steps, no cycles) are checked by helper/validate.py, not by this file.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["title", "kind", "summary", "steps"],
+  "properties": {
+    "title": {"type": "string", "minLength": 1, "description": "short project name"},
+    "kind": {"$ref": "#/$defs/kind"},
+    "summary": {"type": "string", "minLength": 1, "description": "2 to 3 sentences describing the whole project and the finished result"},
+    "steps": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 7,
+      "description": "The prompt asks for 2 to 7 steps. Chimera runs a 1-step plan without combining and truncates anything past 8.",
+      "items": {"$ref": "#/$defs/step"}
+    }
+  },
+  "$defs": {
+    "kind": {"enum": ["code", "writing", "research", "blender", "general"]},
+    "id": {"type": "string", "pattern": "^s[1-7]$"},
+    "step": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title", "kind", "instructions", "depends_on"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "title": {"type": "string", "minLength": 1, "description": "short title"},
+        "kind": {"$ref": "#/$defs/kind"},
+        "instructions": {"type": "string", "minLength": 1, "description": "exactly what this worker should produce, including format and any names or interfaces other steps rely on"},
+        "depends_on": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/id"}}
+      }
+    }
+  }
+}

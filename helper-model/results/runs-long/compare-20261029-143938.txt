@@ -1,0 +1,22 @@
+## reviewer
+
+| case | expected | hydra:1.0 | gpt-oss:120b |
+|---|---|---|---|
+| rev-long-01 | done | done 100 | done 100 |
+| rev-long-02 | not done | not 70 | not 70 |
+| rev-long-03 | not done | done 95 ✗ | not 45 |
+| rev-long-04 | done | done 100 | not 85 ✗ |
+| rev-long-05 | done | not 75 ✗ | done 85 |
+| rev-long-06 | not done | not 65 | not 68 |
+| rev-long-07 | done | done 95 | done 92 |
+| rev-long-08 | not done | not 70 | not 45 |
+| rev-long-09 | done | done 95 | done 95 |
+| rev-long-10 | not done | not 50 | not 70 |
+| rev-long-11 | done | done 100 | done 95 |
+| rev-long-12 | not done | not 80 | not 80 |
+| rev-long-13 | done | done 95 | done 95 |
+| rev-long-14 | not done | not 75 | not 78 |
+| rev-long-15 | done | done 100 | done 95 |
+| rev-long-16 | not done | done 95 ✗ | not 85 |
+| **right** | | **13/16** | **15/16** |
+

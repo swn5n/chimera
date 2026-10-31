@@ -1,0 +1,116 @@
+{
+  "meta": {
+    "model": "qwen3:4b",
+    "digest": "359d7dd4bcdab3d86b87d73ac27966f4dbb9f5efdfcc75d34a8764a09474fae7",
+    "details": {
+      "parent_model": "",
+      "format": "gguf",
+      "family": "qwen3",
+      "families": [
+        "qwen3"
+      ],
+      "parameter_size": "4.0B",
+      "quantization_level": "Q4_K_M"
+    },
+    "context_length": 262144,
+    "capabilities": [
+      "completion",
+      "tools",
+      "thinking"
+    ],
+    "ollama_version": "0.40.1",
+    "host": "http://127.0.0.1:11434",
+    "jobs": [
+      "planner",
+      "reviewer",
+      "gate"
+    ],
+    "eval_version": "v0-draft",
+    "chimera_version_of_prompts": "0.6.1",
+    "chimera_git_of_prompts": "c2aef2ca87e9",
+    "seed": "7",
+    "think": "unset",
+    "samples": 1,
+    "ctx_max": 262144,
+    "limit": 0,
+    "started": "2026-10-27T17:25:13-05:00",
+    "python": "3.13.12",
+    "machine": "Mac.lan",
+    "differences_from_chimera": [
+      "fixed seed"
+    ],
+    "warmup_s": 2.02,
+    "finished": "2026-10-27T17:41:12-05:00"
+  },
+  "summary": {
+    "planner": {
+      "n": 19,
+      "chimera_ok": 1.0,
+      "valid": 0.9474,
+      "call_errors": 0,
+      "latency_p50_s": 30.948,
+      "latency_p95_s": 46.235,
+      "latency_max_s": 46.235,
+      "eval_tokens_mean": 4160.4737,
+      "thinks": 1.0,
+      "thinking_chars_mean": 16149.0526,
+      "issues": {
+        "schema:required": 1,
+        "kind_mismatch": 1
+      },
+      "valid_tidied": 1.0,
+      "quality": 0.9558,
+      "coverage": 0.9895,
+      "steps_ok": 1.0,
+      "kind_ok": 0.8947,
+      "parallel_ok": 0.8947,
+      "no_meta": 1.0,
+      "steps_mean": 3.5263
+    },
+    "reviewer": {
+      "n": 14,
+      "chimera_ok": 1.0,
+      "valid": 1.0,
+      "call_errors": 0,
+      "latency_p50_s": 18.237,
+      "latency_p95_s": 51.4,
+      "latency_max_s": 51.4,
+      "eval_tokens_mean": 2691.4286,
+      "thinks": 1.0,
+      "thinking_chars_mean": 9926.3571,
+      "issues": {},
+      "done_accuracy": 0.9286,
+      "flaws_caught": 1.0,
+      "good_accepted": 0.8,
+      "score_in_band": 0.9286,
+      "main_flaw_named": 0.7778
+    },
+    "gate": {
+      "n": 30,
+      "chimera_ok": 1.0,
+      "valid": 1.0,
+      "call_errors": 0,
+      "latency_p50_s": 1.905,
+      "latency_p95_s": 3.202,
+      "latency_max_s": 4.766,
+      "eval_tokens_mean": 268.6667,
+      "thinks": 1.0,
+      "thinking_chars_mean": 1195.6667,
+      "issues": {},
+      "pairs": 29,
+      "accuracy": 1.0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "reached_accuracy": 1.0,
+      "pipeline_accuracy": 0.931,
+      "word_rule_accuracy": 0.6552,
+      "over_8s": 0,
+      "low_confidence_answers": {
+        "chat-12/demo-poster": false
+      }
+    }
+  }
+}

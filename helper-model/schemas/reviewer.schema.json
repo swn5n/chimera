@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "chimera-helper/reviewer.schema.json",
+  "title": "Hydra review verdict: strict target for the helper reviewer",
+  "description": "The object hydraReviewPrompt asks for (app/prompts.go) and review() decodes into reviewVerdict (app/hydra.go, Chimera 0.6.1). score must be a JSON integer literal: Go rejects 85.0 and 85.5, and a reply that fails to decode ends the loop as if done. Chimera never reads score today. The helper may also write \"check\" (its requirement-by-requirement check, before the verdict): reviewVerdict has no such field and json.Unmarshal ignores unknown fields, so Chimera reads the same verdict.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "done",
+    "score",
+    "critique"
+  ],
+  "properties": {
+    "check": {
+      "type": "string",
+      "description": "optional, the helper's own: each requirement of the task and whether the result meets it, written before the verdict; Chimera ignores it"
+    },
+    "done": {
+      "type": "boolean"
+    },
+    "score": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "critique": {
+      "type": "string",
+      "description": "if not done: the specific things still missing or wrong and what the next round should fix; if done: empty"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "done": {
+            "const": false
+          }
+        },
+        "required": [
+          "done"
+        ]
+      },
+      "then": {
+        "properties": {
+          "critique": {
+            "minLength": 1
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "done": {
+            "const": true
+          }
+        },
+        "required": [
+          "done"
+        ]
+      },
+      "then": {
+        "properties": {
+          "critique": {
+            "maxLength": 0
+          }
+        }
+      }
+    }
+  ]
+}

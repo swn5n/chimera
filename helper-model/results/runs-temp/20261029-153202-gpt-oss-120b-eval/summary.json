@@ -1,0 +1,67 @@
+{
+  "meta": {
+    "model": "gpt-oss:120b",
+    "digest": "714d86958b6e870a9320e78126ac1ce3477727a1cd9bf7194b8ace0d84c62fd8",
+    "details": {
+      "parent_model": "dhiltgen/gpt-oss:120b-llamacpp",
+      "format": "gguf",
+      "family": "gpt-oss",
+      "families": [
+        "gpt-oss"
+      ],
+      "parameter_size": "116.8B",
+      "quantization_level": "MXFP4",
+      "runner": "llamacpp"
+    },
+    "context_length": 131072,
+    "capabilities": [
+      "completion",
+      "tools",
+      "thinking"
+    ],
+    "ollama_version": "0.40.1",
+    "host": "http://127.0.0.1:11434",
+    "jobs": [
+      "reviewer"
+    ],
+    "eval_version": "v1.1",
+    "chimera_version_of_prompts": "0.6.1",
+    "chimera_git_of_prompts": "c2aef2ca87e9",
+    "seed": "none",
+    "think": "unset",
+    "temperature": "unset",
+    "variant": null,
+    "samples": 10,
+    "ctx_max": 131072,
+    "limit": 0,
+    "started": "2026-10-29T15:32:02-05:00",
+    "python": "3.13.12",
+    "machine": "Mac.lan",
+    "differences_from_chimera": [],
+    "warmup_s": 4.67,
+    "finished": "2026-10-29T15:48:26-05:00"
+  },
+  "summary": {
+    "reviewer": {
+      "n": 240,
+      "chimera_ok": 1.0,
+      "valid": 0.9958,
+      "call_errors": 0,
+      "latency_p50_s": 3.523,
+      "latency_p95_s": 8.475,
+      "latency_max_s": 26.851,
+      "eval_tokens_mean": 289.9958,
+      "thinks": 1.0,
+      "thinking_chars_mean": 883.325,
+      "issues": {
+        "schema:required": 3,
+        "schema:additionalProperties": 1
+      },
+      "done_accuracy": 0.9292,
+      "flaws_caught": 0.9333,
+      "good_accepted": 0.9222,
+      "score_in_band": 0.9417,
+      "main_flaw_named": 0.9929
+    }
+  }
+}

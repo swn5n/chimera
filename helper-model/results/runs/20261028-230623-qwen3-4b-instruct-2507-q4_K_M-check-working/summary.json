@@ -1,0 +1,67 @@
+{
+  "meta": {
+    "model": "qwen3:4b-instruct-2507-q4_K_M",
+    "digest": "0edcdef34593eac1aa2be9c7d06c432dcf81945adca5eca2f27662c18f168ba0",
+    "details": {
+      "parent_model": "",
+      "format": "gguf",
+      "family": "qwen3",
+      "families": [
+        "qwen3"
+      ],
+      "parameter_size": "4.0B",
+      "quantization_level": "Q4_K_M"
+    },
+    "context_length": 262144,
+    "capabilities": [
+      "tools",
+      "thinking",
+      "completion"
+    ],
+    "ollama_version": "0.40.1",
+    "host": "http://127.0.0.1:11434",
+    "jobs": [
+      "reviewer"
+    ],
+    "eval_version": "v1.1",
+    "chimera_version_of_prompts": "0.6.1",
+    "chimera_git_of_prompts": "c2aef2ca87e9",
+    "seed": "7",
+    "think": "unset",
+    "variant": "check-working",
+    "samples": 1,
+    "ctx_max": 262144,
+    "limit": 0,
+    "started": "2026-10-28T23:06:23-05:00",
+    "python": "3.13.12",
+    "machine": "Mac.lan",
+    "differences_from_chimera": [
+      "fixed seed",
+      "variant=check-working (reviewer: as check-first, but the check lists the task's requirements first and redoes counts and calculations (the note v3's teacher gets))"
+    ],
+    "warmup_s": 1.35,
+    "finished": "2026-10-28T23:07:10-05:00"
+  },
+  "summary": {
+    "reviewer": {
+      "n": 24,
+      "chimera_ok": 1.0,
+      "valid": 1.0,
+      "call_errors": 0,
+      "latency_p50_s": 1.581,
+      "latency_p95_s": 3.259,
+      "latency_max_s": 4.103,
+      "eval_tokens_mean": 246.7083,
+      "thinks": 0.0,
+      "thinking_chars_mean": 0.0,
+      "issues": {},
+      "done_accuracy": 0.9167,
+      "flaws_caught": 0.8667,
+      "good_accepted": 1.0,
+      "score_in_band": 0.9167,
+      "main_flaw_named": 1.0,
+      "check_first": 1.0,
+      "check_chars_median": 518
+    }
+  }
+}
