@@ -6,6 +6,14 @@ Share idle GPUs — and the tools on them — with friends through Ollama, Sheep
 
 - **Hydra 1.0, the network's own helper model.** Planning a long task, the review in **Keep going until done**, and the "should a Head do this?" check now run on **Hydra 1.0** (`hydra:1.0`, 2.9 GB): a small model trained for exactly those three jobs, small enough for every computer to run. Long tasks no longer wait for the biggest model to plan or review, and the Head check gets the model that was trained for it. When no computer the task may use has Hydra 1.0, or a task is too big for it (roughly 13,000 characters going into a plan, 16,000 into a review), these go to the biggest model, as before. If Chimera can't read Hydra's plan or review, it asks once more without it. Hydra 1.0 never answers chats or works on steps, and the chat's model picker doesn't list it. The task card says which computer and model planned, combined and reviewed.
 - **Get it from the host, inside Chimera.** On each computer: **Models → Helper → Get from host**. It copies the host's Hydra 1.0 straight into that computer's Ollama; nothing is downloaded from the internet. The host needs Chimera 0.7.0 and Hydra 1.0 in its own Ollama. Only install it on computers that run 0.7.0: an older Chimera treats it as an ordinary chat model.
+- **Or download it.** Hydra 1.0 is also on the [v0.7.0 release](https://github.com/swn5n/chimera/releases/tag/v0.7.0), for a first computer with no host to copy from. It comes in two parts because GitHub limits a release file to 2 GB. Put both parts and `Modelfile` in one folder, then run these two commands (on Windows, replace the first with `copy /b hydra-1.0-q5_k_m.gguf.part-aa + hydra-1.0-q5_k_m.gguf.part-ab hydra-1.0-q5_k_m.gguf`):
+
+  ```bash
+  cat hydra-1.0-q5_k_m.gguf.part-* > hydra-1.0-q5_k_m.gguf
+  ollama create hydra:1.0 -f Modelfile
+  ```
+- **Long tasks check their own scripts.** In **Keep going until done**, a round's Blender or Python script now runs before the review, in a sandbox on the computer that started the task. If it crashes or the result was cut off, the next round is told exactly what went wrong. Turn it off with **Settings → Lending → Run my long tasks' scripts here to check them**. Not on Windows.
+- **Make a Head without code.** **Settings → Heads → Make a Head** turns a program or a local server on your computer into a Head from a form, and **Try** runs it once the way the pool would. Start from an example, or follow `heads/MAKE-A-HEAD.md`.
 
 ## New in 0.6
 
@@ -120,8 +128,7 @@ Never port-forward 7480 straight from your router: that exposes the hub with no 
 - **One picture per message; long tasks don't call Heads yet; no video/audio player inline** (those files download).
 - The `comfyui-image` and `hunyuan3d-mesh` reference Heads haven't met a real ComfyUI / Hunyuan3D server yet.
 
-- **Privacy.** The pool is open and unencrypted: the host can see prompts, and anyone you let in can too. Fine for friends; not for anything sensitive. Encrypting traffic and hiding prompts from the host is a later job.
-- The window is still a web app (in a Chrome/Edge window, or the Dock app once you install it). A fully native Mac window would need a separate build on the Mac — say the word if you want it.
+- **Privacy.** The pool is open and unencrypted: the host can see prompts, and anyone you let in can too. Fine for friends; not for anything sensitive. Encrypting traffic and hiding prompts from the host is something we are working on.
 - Chimera finds and links tools like Blender and ComfyUI but doesn't install them; Ollama models it downloads itself.
 - The library stores text (code, scripts, lessons). Generated 3D meshes and images aren't stored yet.
 

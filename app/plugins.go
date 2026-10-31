@@ -52,6 +52,8 @@ const (
 var pluginIDRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,47}$`)
 var envNameRe = regexp.MustCompile(`^[A-Z_][A-Z0-9_]{0,63}$`)
 
+const noSandboxNote = "this computer can't sandbox Heads (it needs macOS, or bwrap or unshare on Linux). On Windows you can choose to run them without one: Settings → Heads."
+
 // PluginManifest is the part of plugin.json Chimera reads.
 type PluginManifest struct {
 	Format       int             `json:"chimera_plugin"`
@@ -77,6 +79,9 @@ type PluginManifest struct {
 	// Network: "" (none, the default) or "localhost" — the Head may talk to servers on this
 	// computer only (ComfyUI, a Hunyuan3D server, …). Still no internet.
 	Network string `json:"network,omitempty"`
+	// Maker: what the Head maker asked when it made this Head (see headmaker.go);
+	// absent for a Head written by hand.
+	Maker json.RawMessage `json:"maker,omitempty"`
 }
 
 type pluginProbe struct {
@@ -257,7 +262,7 @@ func (t *ToolScanner) scanPlugins() map[string]*installedPlugin {
 			}
 		}
 		if !sandbox && p.Err == "" && !t.app.config().UnsandboxedHeads {
-			p.Err = "this computer can't sandbox Heads (it needs macOS, or bwrap or unshare on Linux). On Windows you can choose to run them without one: Settings → Heads."
+			p.Err = noSandboxNote
 		}
 		found[m.ID] = p
 	}
@@ -595,14 +600,37 @@ func collectPluginFiles(out string, po pluginOutput) ([]StepFile, error) {
 
 func sniffMIME(name string, data []byte) string {
 	t := http.DetectContentType(data)
+	ext := strings.ToLower(filepath.Ext(name))
+	switch {
+	case ext == ".usdz" && t == "application/zip":
+		return "model/vnd.usdz+zip"
+	case (ext == ".m4a" || ext == ".aac") && t == "video/mp4":
+		return "audio/mp4"
+	case t == "application/ogg" && ext != ".ogv":
+		return "audio/ogg"
+	}
 	if t == "application/octet-stream" || strings.HasPrefix(t, "text/plain") {
-		switch strings.ToLower(filepath.Ext(name)) {
+		switch ext {
 		case ".json":
 			return "application/json"
 		case ".glb":
 			return "model/gltf-binary"
+		case ".gltf":
+			return "model/gltf+json"
 		case ".obj":
 			return "model/obj"
+		case ".stl":
+			return "model/stl"
+		case ".ply":
+			return "model/ply"
+		case ".fbx":
+			return "model/fbx"
+		case ".blend":
+			return "application/x-blender"
+		case ".flac":
+			return "audio/flac"
+		case ".aiff", ".aif", ".aifc": // the Mac's own sound files are often AIFF-C, which isn't sniffed
+			return "audio/aiff"
 		case ".txt", ".md":
 			return "text/plain; charset=utf-8"
 		}

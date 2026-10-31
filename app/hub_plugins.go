@@ -286,9 +286,9 @@ func pluginRelevance(terms []string, p PluginInfo) float64 {
 }
 
 func acceptsType(accepts []string, mime string) bool {
-	mime = strings.ToLower(strings.TrimSpace(mime))
+	mime = mimeBase(mime)
 	for _, a := range accepts {
-		a = strings.ToLower(strings.TrimSpace(a))
+		a = mimeBase(a)
 		if a == mime || a == "*/*" || (strings.HasSuffix(a, "/*") && strings.HasPrefix(mime, strings.TrimSuffix(a, "*"))) {
 			return true
 		}
@@ -303,6 +303,12 @@ func acceptsType(accepts []string, mime string) bool {
 type pluginScope struct {
 	Target  string // a device ID, or "" for any
 	Private bool   // only the asker's own devices
+}
+
+// mimeBase is a MIME type without its parameters: "text/plain; charset=utf-8" is text/plain.
+func mimeBase(t string) string {
+	t, _, _ = strings.Cut(t, ";")
+	return strings.ToLower(strings.TrimSpace(t))
 }
 
 // pluginCandidatesLocked lists the plugins that could run for viewer's request:

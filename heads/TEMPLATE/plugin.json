@@ -11,7 +11,7 @@
 
   "accepts": ["image/png", "image/jpeg", "image/webp"],
   "optional_input": false,
-  "produces": ["image/png"],
+  "produces": ["text/plain"],
 
   "entry": "run.py",
   "interpreter": "python3",
