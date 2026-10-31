@@ -4,15 +4,19 @@ The last probe of the worker base-model rule (`docs/hydra-worker-plan.md`, "Prob
 the worker's model sit fully on the GPU at 8K, 16K and 32K context on these two computers? If it does on both, the base
 is Gemma 4 12B. If it doesn't, the rule says Qwen3-14B.
 
-About 20 minutes per computer one at a time, most of it copying 8.5 GB over Wi-Fi. Both at once takes about 30 minutes
-in all, because they share the Studio's Wi-Fi. `fleet-probe` is one file with nothing to install. It imports the model
-the way Chimera's Get from host will, so it also tries that path on Windows for the first time.
+The two computers are **FX1 (the M4 Pro, 24 GB)** and **FX4 (the 3080 Ti PC)**. FX2, the M4 Max laptop, isn't one of the
+rule's computers, though running it there does no harm.
+
+Allow about an hour per computer. The 8.5 GB copy took 43 minutes over Wi-Fi on the first real run, and two copies at
+once share the Studio's Wi-Fi. The rest takes about 5 minutes. `fleet-probe` is one file with nothing to install. It
+imports the model the way Chimera's Get from host will.
 
 ## Before you start
 
 On each of the two computers:
-- **Ollama is installed, running and up to date.** The Studio's is 0.40.1, so use that or newer. `ollama --version`
-  shows it. If it's missing, install it from ollama.com.
+- **Ollama is installed, running and up to date.** Use the Studio's 0.40.1 or newer; Gemma 4 can't load on anything
+  before 0.30.9. `ollama --version` shows it. To update, open Ollama's menu and choose to restart for the update, or
+  install it again from ollama.com.
 - **In Chimera, click Disconnect** on the Network tab, so nothing else loads a model. If a step is running, choose
   "Finish it, then disconnect" and wait. Don't start long tasks on your other computers during the probe, because
   Chimera reconnects your computers to help with those. Don't reopen Chimera until you've done step 5, because it
@@ -39,7 +43,7 @@ asks.
 cd ~/chimera-tools/worker-train/probes/fleet-out && python3 -m http.server 7490
 ```
 
-## 2. On the M4 Pro
+## 2. On the M4 Pro (FX1)
 
 In Terminal:
 
@@ -51,7 +55,7 @@ chmod +x fleet-probe-mac
 caffeinate -i ./fleet-probe-mac --gguf worker-q5.gguf
 ```
 
-## 3. On the 3080 Ti PC
+## 3. On the 3080 Ti PC (FX4)
 
 In PowerShell (use `curl.exe`, not `curl`, which PowerShell treats as something else):
 
@@ -62,8 +66,8 @@ curl.exe -fO http://192.168.0.25:7490/fleet-probe.exe
 .\fleet-probe.exe --gguf worker-q5.gguf
 ```
 
-If that PC runs Linux, follow the M4 Pro's commands with `fleet-probe-linux` in place of `fleet-probe-mac`, without
-`caffeinate`.
+Double-clicking `fleet-probe.exe` works too, as long as `worker-q5.gguf` is in the same folder. The window stays open
+until you press Enter.
 
 ## 4. Read the results
 
@@ -112,7 +116,8 @@ Then press Ctrl+C on the Studio to stop the file server.
 | Ollama isn't answering | Open Ollama and run the tool again |
 | Ollama has a model loaded | Disconnect in Chimera, run the `ollama stop` lines it shows, and run the tool again |
 | A Fit line fails at **0.0%** | Ollama isn't using the GPU at all, which says nothing about fit. Run `nvidia-smi`, update the NVIDIA driver if that fails, restart Ollama and run the tool again |
-| A Fit line fails with another percentage or an error | Close whatever `nvidia-smi` lists and run the tool again once. If it still fails, send me the line and the `nvidia-smi` output. That's the real result, and the rule then points to Qwen3-14B |
+| This Ollama is too old to load Gemma 4, or a line says `unable to load model` | Update Ollama and run the tool again. The copy isn't needed again: the file is still in the folder. This isn't a fit result |
+| A Fit line fails with another percentage or a memory error | Close whatever `nvidia-smi` lists and run the tool again once. If it still fails, send me the line and the `nvidia-smi` output. That's the real result, and the rule then points to Qwen3-14B |
 | A Fit line says another model was loaded too | That reading doesn't count. Disconnect in Chimera and run the tool again |
 | Worker setup, Replies or a prompt-token line fails | The Fit lines still count. Update Ollama, run the tool again, and send me both sets of results. The tool's first line shows each version |
 | This Ollama doesn't know the worker's renderer | Update Ollama and run the tool again. Tell me the version that failed and the version that worked, so I can set the worker's minimum |
@@ -123,7 +128,8 @@ Then press Ctrl+C on the Studio to stop the file server.
 | `ollama` isn't found | On a Mac use `/Applications/Ollama.app/Contents/Resources/ollama` in its place. On the PC, open a new PowerShell window |
 | Anything else starting with `STOPPED` | Send me that line, the tool's first line, and any `Measuring` lines above it |
 
-A second run on the same computer skips the copy into Ollama.
+A second run on the same computer skips the copy into Ollama, and needs no new download. `fleet-probe` with no options
+uses `worker-q5.gguf` from its own folder.
 
 If the rule points to Qwen3-14B, the tool can measure it the same way once it's installed there:
 `fleet-probe --model qwen3:14b`. Read its 8K and 16K lines: the plan gives Qwen a 16K limit, so a 32K FAIL there is

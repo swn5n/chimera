@@ -231,6 +231,7 @@ func TestBarsCatchWhatMatters(t *testing.T) {
 	if find(bars(r, "windows", wanted(), true), "Speed (3080").OK || find(bars(r, "windows", wanted(), true), "1,500").OK {
 		t.Error("the 3080 Ti's speed bars passed at 20 tok/s")
 	}
+	r.Hardware = "Apple M4 Pro, 24 GB"
 	if !find(bars(r, "darwin", wanted(), true), "Speed (M4").OK {
 		t.Error("the M4 Pro's bar is 15 tok/s")
 	}
@@ -252,6 +253,7 @@ func TestBarsCatchWhatMatters(t *testing.T) {
 	}
 	r = goodReport()
 	r.Step.Tokens = 3
+	r.Hardware = "Apple M4 Pro, 24 GB"
 	if find(bars(r, "darwin", wanted(), true), "Speed (M4").OK {
 		t.Error("three tokens passed the speed bar")
 	}
@@ -333,6 +335,46 @@ func TestAStalledUploadStops(t *testing.T) {
 	err := c.upload(context.Background(), p, "sha256:00", 64<<20)
 	if err == nil || !strings.Contains(err.Error(), "stalled") {
 		t.Fatalf("%v", err)
+	}
+}
+
+func TestOlderThan(t *testing.T) {
+	for _, c := range []struct {
+		v, min string
+		old    bool
+	}{{"0.17.0", "0.30.9", true}, {"0.30.8", "0.30.9", true}, {"0.30.9", "0.30.9", false}, {"0.40.13", "0.40.1", false},
+		{"0.40.1", "0.40.1", false}, {"0.9.0", "0.30.9", true}, {"1.0.0", "0.40.1", false}, {"0.40", "0.40.1", true},
+		{"0.41.0-rc1", "0.40.1", false}, {"dev", "0.40.1", false}} {
+		if got := olderThan(c.v, c.min); got != c.old {
+			t.Errorf("olderThan(%s, %s) = %v", c.v, c.min, got)
+		}
+	}
+}
+
+func TestSpeedBarNamesTheComputer(t *testing.T) {
+	for _, c := range []struct {
+		goos, hw string
+		bar      float64
+		name     string
+	}{{"windows", "NVIDIA GeForce RTX 3080 Ti Laptop GPU", 25, "Speed (3080 Ti)"}, {"darwin", "Apple M4 Pro, 24 GB", 15, "Speed (M4 Pro)"},
+		{"darwin", "Apple M4 Max, 36 GB", 15, "Speed (this Mac, against the M4 Pro's bar)"}} {
+		if b, n := speedBar(c.goos, c.hw); b != c.bar || n != c.name {
+			t.Errorf("%v: %v %v", c, b, n)
+		}
+	}
+}
+
+func TestAFileOllamaCantLoadIsNotCalledAMisfit(t *testing.T) {
+	r := goodReport()
+	r.Fits[0] = fit{NumCtx: 8192, Failure: "/api/chat: HTTP 500: unable to load model: /x/sha256-abc"}
+	var v verdict
+	for _, x := range bars(r, "darwin", wanted(), true) {
+		if x.Name == "Fit at 8K" {
+			v = x
+		}
+	}
+	if v.OK || !strings.Contains(v.Note, "Update Ollama") {
+		t.Errorf("%+v", v)
 	}
 }
 

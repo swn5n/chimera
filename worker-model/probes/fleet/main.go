@@ -1,7 +1,8 @@
 // fleet-probe is probe (d) of the worker base-model rule (docs/hydra-worker-plan.md, docs/probe-d-steps.md): does the
 // worker's Q5_K_M fit a computer's GPU, and how fast does it run there?
 //
-//	fleet-probe --gguf rt2-q5_k_m.gguf        import that GGUF and measure it
+//	fleet-probe                               import worker-q5.gguf from the same folder and measure it
+//	fleet-probe --gguf rt2-q5_k_m.gguf        the same with another path
 //	fleet-probe --model qwen3:14b             measure a model that's already in Ollama
 //
 // One file with nothing to install, for the 3080 Ti PC and the M4 Pro. It imports the GGUF as Chimera's Get from host
@@ -50,6 +51,8 @@ const (
 	stepTokens      = 1500
 	minSpeedTokens  = 200      // a shorter reply says little about speed
 	referenceOllama = "0.40.1" // what the Studio's probes ran on
+	gemmaOllama     = "0.30.9" // the official gemma4 manifest's "requires"; 0.17.0 can't load the file
+	defaultGGUF     = "worker-q5.gguf"
 )
 
 // Set by build.sh, so a cut-off copy of the GGUF is caught before it goes near Ollama.
@@ -582,6 +585,36 @@ func hardware() string {
 	return strings.Join(parts, ", ")
 }
 
+// olderThan compares dotted version numbers ("0.17.0" is older than "0.30.9"; a version it can't read isn't older).
+func olderThan(v, min string) bool {
+	a, b := strings.Split(strings.SplitN(v, "-", 2)[0], "."), strings.Split(min, ".")
+	for i := range b {
+		if i >= len(a) {
+			return true
+		}
+		x, err := strconv.Atoi(a[i])
+		if err != nil {
+			return false
+		}
+		y, _ := strconv.Atoi(b[i])
+		if x != y {
+			return x < y
+		}
+	}
+	return false
+}
+
+// speedBar is the plan's speed bar for this computer. Other Macs get the M4 Pro's number, marked as such.
+func speedBar(goos, hw string) (float64, string) {
+	switch {
+	case goos != "darwin":
+		return 25, "Speed (3080 Ti)"
+	case strings.Contains(hw, "M4 Pro"):
+		return 15, "Speed (M4 Pro)"
+	}
+	return 15, "Speed (this Mac, against the M4 Pro's bar)"
+}
+
 // bars gives the verdicts. The rule's bar is 100% on the GPU at all three sizes, at the context asked for; the fleet
 // numbers are the plan's shipping bar (3080 Ti: 25 tok/s and a 1,500-token step in 75 s; M4 Pro: 15 tok/s), which depend
 // on which computer. Anything not measured is a failed line, not a missing one.
@@ -604,6 +637,9 @@ func bars(r *report, goos string, want requests, importedHere bool) []verdict {
 		switch {
 		case f.Failure != "":
 			got = f.Failure
+			if strings.Contains(f.Failure, "unable to load model") {
+				note = "Ollama couldn't load the file at all. Update Ollama and run this again before reading it as a fit result"
+			}
 		case f.Others != "":
 			got = "not valid: " + f.Others + " was loaded too"
 		case f.SizeGB > 0 && f.VRAMGB == 0:
@@ -635,10 +671,7 @@ func bars(r *report, goos string, want requests, importedHere bool) []verdict {
 		v = append(v, tokensLine("Short prompt tokens", want.Short.PromptTokens, r.Step.PromptTokens, r.StepFailure))
 		v = append(v, tokensLine("Long prompt tokens", want.Long.PromptTokens, r.Long.PromptTokens, r.LongFailure))
 	}
-	bar, name := 25.0, "Speed (3080 Ti)"
-	if goos == "darwin" {
-		bar, name = 15.0, "Speed (M4 Pro)"
-	}
+	bar, name := speedBar(goos, r.Hardware)
 	const shipping = "the plan's shipping bar, measured on the untrained model"
 	got, note := fmt.Sprintf("%.1f tok/s", r.Step.TokS), shipping
 	if r.StepFailure != "" {
@@ -720,7 +753,16 @@ func yesNo(ok bool) string {
 
 func stop(format string, a ...any) {
 	fmt.Fprintf(os.Stderr, "\nSTOPPED: "+format+"\n", a...)
+	pause()
 	os.Exit(1)
+}
+
+// pause keeps a window open that a double-click on Windows would otherwise close before anything can be read.
+func pause() {
+	if runtime.GOOS == "windows" {
+		fmt.Print("\nPress Enter to close.")
+		fmt.Scanln()
+	}
 }
 
 // results is what the run prints at the end.
@@ -758,6 +800,7 @@ func finish(r *report, want requests, path string) {
 	} else {
 		fmt.Printf("\nWrote %s. Copy the results above, or bring that file back to the Studio.\n", path)
 	}
+	pause()
 	if r.Stopped != "" {
 		os.Exit(1)
 	}
@@ -819,8 +862,15 @@ func main() {
 	host := flag.String("host", "http://127.0.0.1:11434", "Ollama's address")
 	out := flag.String("out", "", "the report file (default fleet-probe-<computer>.json)")
 	flag.Parse()
-	if (*gguf == "") == (*model == "") {
-		stop("give --gguf FILE or --model NAME (not both)")
+	if *gguf == "" && *model == "" {
+		if p, ok := findGGUF(); ok {
+			*gguf = p
+		} else {
+			stop("put %s in this folder, or give --gguf FILE or --model NAME", defaultGGUF)
+		}
+	}
+	if *gguf != "" && *model != "" {
+		stop("give --gguf FILE or --model NAME, not both")
 	}
 	var want requests
 	if err := json.Unmarshal(requestsJSON, &want); err != nil {
@@ -835,7 +885,11 @@ func main() {
 		stop("Ollama isn't answering at %s (%v). Open Ollama and run this again.", *host, err)
 	}
 	fmt.Printf("%s, %s, %s; Ollama %s\n", r.Computer, r.OS, r.Hardware, r.OllamaVersion)
-	if r.OllamaVersion != referenceOllama {
+	if *gguf != "" && olderThan(r.OllamaVersion, gemmaOllama) {
+		stop("this Ollama (%s) is too old to load Gemma 4, which needs %s or newer. The Studio's probes ran on %s. Update Ollama and run this again.",
+			r.OllamaVersion, gemmaOllama, referenceOllama)
+	}
+	if olderThan(r.OllamaVersion, referenceOllama) {
 		fmt.Printf("Note: the Studio's probes ran on Ollama %s. Update this one first if you can.\n", referenceOllama)
 	}
 	ms, err := c.ps(ctx)
@@ -946,6 +1000,22 @@ func main() {
 		r.Stopped = "unloading: " + err.Error()
 	}
 	finish(&r, want, *out)
+}
+
+// findGGUF looks for the test model in the current folder, then next to this program (a double-click on Windows can
+// start it anywhere).
+func findGGUF() (string, bool) {
+	dirs := []string{"."}
+	if exe, err := os.Executable(); err == nil {
+		dirs = append(dirs, filepath.Dir(exe))
+	}
+	for _, d := range dirs {
+		p := filepath.Join(d, defaultGGUF)
+		if st, err := os.Stat(p); err == nil && !st.IsDir() {
+			return p, true
+		}
+	}
+	return "", false
 }
 
 // describe is one reading in a line.
