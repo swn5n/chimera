@@ -10,7 +10,17 @@ BLENDERRENDER, BLENDERSLOW, CUTOFF, CUTALWAYS and CUTONCE get a two-step "blende
 "code" plan, titled "Studio v1" (or "Studio v2" once the planner is shown a previous attempt); the combine then writes
 one ```python script chosen by marker and version (see SCRIPTS). A cut combine ends part-way, with done_reason
 "length" and eval_count 4096. Each call's log line also has the request's num_predict and num_ctx and, for the
-planner, the critique it was given."""
+planner, the critique it was given.
+Repairs and later rounds (section 11): a repair (job "mend") answers with edits for BLENDERMEND (one crash), BLENDERMEND2
+(two crashes in turn), BLENDERMENDBAD (the first repair breaks the script, the second is right), BLENDERMENDFAR (a new
+crash each time), BLENDERSTUCK (edits that leave the crash where it was), BLENDERWHOLE (the script written out) and PYMEND;
+everything else gets no edits, so its crash goes on to the next round as in section 10. BLENDEREDIT, BLENDERONE,
+BLENDERWORSE, BLENDERGONE, BLENDERGONE3, BLENDERSTOP, BLENDERLIMIT and BLENDERMISS start from a script that runs and which
+the reviewer sends back; their later combine answers with edits: a fill light (BLENDERONE's later plan has one step), a
+crash, or for BLENDERMISS a FIND that's nowhere. BLENDERGONE's later plan is unreadable, whichever model is asked, as is
+BLENDERGONE3's third. BLENDERSTOP's repair takes 4 s, for cancelling it, as does BLENDERSTOPCUT's, whose first result was cut
+off. BLENDERUNCH crashes and its edits never land. BLENDERBADLATER goes from a crash to a script that doesn't start. BLENDERPROSE's first combine has no script. BLENDERLONG has six steps, the first with a long output.
+BLENDERNAMES crashes on a misspelt attribute of one of bpy's objects. BLENDEROFFSHOT prints a scene its camera can't see, as the check's measuring would, and a repair moves the camera; BLENDERSTAYSOFF's repairs change nothing. BLENDERUNSURE is sent back with a script the check is unsure of. PYKIND's later plan is labelled general. TEALOOP is a guide, with no script, that the reviewer sends back once."""
 import hashlib, json, os, sys, threading, time
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 
@@ -45,6 +55,45 @@ backdrop = bpy.data.objects.new("chimera_backdrop", None)
 backdrop.rotation_euler = (math.radians(180), 0.0, 0.0)  # flip normal
 scene.collection.objects.link(backdrop)
 print("chimera_backdrop ready")""",
+    "crash2": """import bpy
+import mathutils
+
+scene = bpy.context.scene
+backdrop = bpy.data.objects.new("chimera_backdrop", None)
+backdrop.rotation_euler = (mathutils.radians(180), 0.0, 0.0)  # flip normal
+scene.collection.objects.link(backdrop)
+backdrop.scale = (mathutils.degrees(1.0), 1.0, 1.0)
+print("chimera_backdrop ready")""",
+    "far": """import bpy
+import mathutils
+
+scene = bpy.context.scene
+a = mathutils.step_1
+b = mathutils.step_2
+c = mathutils.step_3
+d = mathutils.step_4
+e = mathutils.step_5
+f = mathutils.step_6
+g = mathutils.step_7
+h = mathutils.step_8
+i = mathutils.step_9
+j = mathutils.step_10
+print("ran to the end")""",
+    "names": """import bpy
+
+scene = bpy.context.scene
+backdrop = bpy.data.objects.new("chimera_backdrop", None)
+scene.collection.objects.link(backdrop)
+spot = backdrop.locaton
+print(spot)
+print("chimera_backdrop ready")""",
+    "offshot": """import bpy
+
+scene = bpy.context.scene
+backdrop = bpy.data.objects.new("chimera_backdrop", None)
+scene.collection.objects.link(backdrop)
+seen = 0
+print('chimera-check: scene {"camera": {"name": "chimera_cam", "at": [0, -5, 2], "ahead": [0, 1, 0], "lens": 50, "type": "PERSP"}, "objects": [{"name": "chimera_backdrop", "at": [9, 9, 9], "size": [2, 2, 2], "hits": %d, "frame": %s}], "total": 1, "seen": %d, "out": %d, "filled": %s, "cube": false, "empty": [], "animated": false, "span": [[8, 8, 8], [10, 10, 10]], "pose": {"at": [9, -3, 9], "rotation": [1.5708, 0, 0], "sees": 1}}' % (seen * 500, "true" if seen else "false", seen, 1 - seen, seen * 0.3))""",
     "save": """import bpy
 
 scene = bpy.context.scene
@@ -104,25 +153,129 @@ print("Bye.")""",
 # Marker -> the script for round 1 and for later rounds ("cut": the combine stops at its output limit).
 BLENDER_MARKS = {"BLENDERCRASH": ("crash", "fixed"), "BLENDERSAME": ("crash", "crash"), "BLENDERSAVE": ("save", "save"),
                  "BLENDERSCENE": ("scene", "scene"), "BLENDERRENDER": ("render", "render"), "BLENDERSLOW": ("slow", "slow"),
-                 "CUTOFF": ("cut", "fixed"), "CUTALWAYS": ("cut", "cut"), "CUTONCE": ("cut", "cut")}
-CODE_MARKS = {"PYCRASH": ("py_crash", "py_fixed"), "PYINPUT": ("py_input", "py_input")}
+                 "CUTOFF": ("cut", "fixed"), "CUTALWAYS": ("cut", "cut"), "CUTONCE": ("cut", "cut"),
+                 "BLENDERMEND2": ("crash2", "crash2"), "BLENDERMENDBAD": ("crash", "crash"), "BLENDERMENDFAR": ("far", "far"),
+                 "BLENDERMEND": ("crash", "crash"), "BLENDEREDIT": ("fixed", "fixed"), "BLENDERONE": ("fixed", "fixed"),
+                 "BLENDERWORSE": ("fixed", "fixed"), "BLENDERGONE": ("fixed", "fixed"), "BLENDERGONE3": ("fixed", "fixed"),
+                 "BLENDERSTOP": ("fixed", "fixed"), "BLENDERLIMIT": ("fixed", "fixed"), "BLENDERMISS": ("fixed", "fixed"),
+                 "BLENDERSTUCK": ("crash", "crash"), "BLENDERWHOLE": ("crash", "crash"), "BLENDERBADLATER": ("crash", "crash"),
+                 "BLENDERPROSE": ("crash", "crash"), "BLENDERLONG": ("fixed", "fixed"), "BLENDERUNCH": ("crash", "crash"),
+                 "BLENDERSTOPCUT": ("cut", "crash"), "BLENDERUNSURE": ("scene", "scene"), "BLENDERNAMES": ("names", "names"),
+                 "BLENDEROFFSHOT": ("offshot", "offshot"), "BLENDERSTAYSOFF": ("offshot", "offshot")}
+CODE_MARKS = {"PYCRASH": ("py_crash", "py_fixed"), "PYINPUT": ("py_input", "py_input"), "PYMEND": ("py_crash", "py_crash"),
+              "PYKIND": ("py_crash", "py_crash")}
+SENT_BACK = ("BLENDEREDIT", "BLENDERONE", "BLENDERWORSE", "BLENDERGONE", "BLENDERGONE3", "BLENDERSTOP", "BLENDERMISS",
+             "BLENDERUNSURE")
+
+
+# Edits for the later round's combine.
+FILL_EDIT = """<<<<<<< FIND
+scene.collection.objects.link(backdrop)
+=======
+scene.collection.objects.link(backdrop)
+fill = bpy.data.objects.new("chimera_fill", None)
+scene.collection.objects.link(fill)
+>>>>>>> END"""
+CRASH_EDIT = """<<<<<<< FIND
+scene.collection.objects.link(backdrop)
+=======
+scene.collection.objects.link(backdrop)
+fill = bpy.data.objects.new("chimera_fill", None)
+fill.scale = mathutils.make_it_bigger(2.0)
+>>>>>>> END"""
+RADIANS_EDIT = """<<<<<<< FIND
+import mathutils
+=======
+import mathutils
+import math
+>>>>>>> END
+
+<<<<<<< FIND
+backdrop.rotation_euler = (mathutils.radians(180), 0.0, 0.0)  # flip normal
+=======
+backdrop.rotation_euler = (math.radians(180), 0.0, 0.0)  # flip normal
+>>>>>>> END"""
+SYNTAX_EDIT = "<<<<<<< FIND\nimport mathutils\n=======\nimport mathutils(\n>>>>>>> END"
+PY_EDIT = """<<<<<<< FIND
+print("average:", averge(numbers))
+=======
+print("average:", average(numbers))
+>>>>>>> END"""
+MISS_EDIT = "<<<<<<< FIND\nthis line is in no script\n=======\nfill = 1\n>>>>>>> END"
+mends, plans, combines = {}, {}, {}  # calls so far of each job, per goal marker
 
 
 def marker(user):
-    return next((m for m in list(BLENDER_MARKS) + list(CODE_MARKS) if m in user), None)
+    # Longest first: BLENDERMEND is inside BLENDERMEND2.
+    return next((m for m in sorted(list(BLENDER_MARKS) + list(CODE_MARKS), key=len, reverse=True) if m in user), None)
+
+
+def mend_reply(mark, user):
+    """A repair's reply: edits, or none for the crash to go on to the next round."""
+    with lock:
+        mends[mark] = n = mends.get(mark, 0) + 1
+    if mark in ("BLENDERSTOP", "BLENDERSTOPCUT"):
+        time.sleep(4)
+    if mark == "PYMEND":
+        return PY_EDIT
+    if mark == "BLENDERWHOLE":
+        return "```python\n%s\n```" % SCRIPTS["fixed"]
+    if mark == "BLENDEROFFSHOT":
+        return "<<<<<<< FIND\nseen = 0\n=======\nseen = 1\n>>>>>>> END"
+    if mark == "BLENDERSTUCK":
+        old, new = ('print("chimera_backdrop ready")', 'print("ready")') if n == 1 else ('print("ready")', 'print("ok")')
+        return "<<<<<<< FIND\n%s\n=======\n%s\n>>>>>>> END" % (old, new)
+    if mark not in ("BLENDERMEND", "BLENDERMEND2", "BLENDERMENDBAD", "BLENDERMENDFAR"):
+        return "I can't see what's wrong with it."
+    if mark == "BLENDERMENDBAD" and n == 1:
+        return SYNTAX_EDIT
+    if mark == "BLENDERMENDFAR":
+        if n > 10:
+            return "I can't see what's wrong with it."
+        return "<<<<<<< FIND\n%s = mathutils.step_%d\n=======\n%s = 1\n>>>>>>> END" % ("abcdefghij"[n - 1], n, "abcdefghij"[n - 1])
+    if "has no attribute 'degrees'" in user:
+        return "<<<<<<< FIND\nbackdrop.scale = (mathutils.degrees(1.0), 1.0, 1.0)\n=======\nbackdrop.scale = (math.degrees(1.0), 1.0, 1.0)\n>>>>>>> END"
+    return RADIANS_EDIT
+
+
+def later_plan(mark, user):
+    return "The previous attempt produced this result:" in user
 
 
 def studio_plan(mark, user):
-    kind = "code" if mark in CODE_MARKS else "blender"
     version = 2 if "The previous attempt produced this result:" in user else 1
-    return {"title": "Studio v%d" % version, "kind": kind, "summary": "A small studio script in two parts.",
-            "steps": [{"id": "s1", "title": "Studio part one", "kind": kind, "instructions": "Write the first part.", "depends_on": []},
-                      {"id": "s2", "title": "Studio part two", "kind": kind, "instructions": "Write the second part.", "depends_on": []}]}
+    kind = "code" if mark in CODE_MARKS else "blender"
+    if mark == "PYKIND" and version == 2:
+        kind = "general"
+    steps = [{"id": "s1", "title": "Studio part one", "kind": kind, "instructions": "Write the first part.", "depends_on": []},
+             {"id": "s2", "title": "Studio part two", "kind": kind, "instructions": "Write the second part.", "depends_on": []}]
+    if mark == "BLENDERONE" and version == 2:
+        steps = steps[:1]
+    if mark == "BLENDERLONG":
+        steps = [dict(steps[0], instructions="Write the long part.")] + [
+            dict(steps[1], id="s%d" % i, title="Studio part %d" % i) for i in range(2, 7)]
+    return {"title": "Studio v%d" % version, "kind": kind, "summary": "A small studio script in two parts.", "steps": steps}
 
 
 def studio_combine(mark, user):
     """The combined result for a marker: (text, done_reason)."""
     later = "Project: Studio v2" in user
+    with lock:
+        combines[mark] = n = combines.get(mark, 0) + 1
+    if later and mark in ("BLENDEREDIT", "BLENDERONE"):
+        return (FILL_EDIT, "stop")
+    if later and mark in ("BLENDERWORSE", "BLENDERSTOP", "BLENDERGONE3"):
+        return (CRASH_EDIT, "stop")
+    if later and mark == "BLENDERLIMIT":
+        return (CRASH_EDIT if n == 6 else FILL_EDIT, "stop")
+    if later and mark in ("BLENDERMISS", "BLENDERUNCH"):
+        return (MISS_EDIT, "stop")
+    if later and mark == "BLENDERBADLATER":
+        return (SYNTAX_EDIT, "stop")
+    if later and mark == "PYKIND":
+        return (PY_EDIT, "stop")
+    if not later and mark == "BLENDERPROSE":
+        return ("I would build the studio from a backdrop, a floor and three lights.", "stop")
     name = (BLENDER_MARKS.get(mark) or CODE_MARKS[mark])[1 if later else 0]
     if name == "cut":
         body = "\n".join("cube_%d = bpy.data.objects.new(\"chimera_cube_%d\", None)\nscene.collection.objects.link(cube_%d)" % (i, i, i)
@@ -145,6 +298,7 @@ def job_of(body):
     sys_msg = next((m["content"] for m in body.get("messages", []) if m["role"] == "system"), "")
     for prefix, job in (("You are Hydra, the planner", "planner"), ("You are Hydra's reviewer", "reviewer"),
                         ("You are one worker in Chimera", "worker"), ("You are Hydra's final editor", "combine"),
+                        ("You repair one script in Chimera", "mend"),
                         ("You decide whether a request should be handled by a tool", "gate"),
                         ("You maintain the shared library", "library"), ("You check entries before", "library")):
         if sys_msg.startswith(prefix):
@@ -159,21 +313,42 @@ def reply(model, job, body):
         if helper and "GARBLE" in user:
             return "First I would look at the teas, then write it up."  # not JSON: Chimera must ask again
         mark = marker(user)
+        if mark == "BLENDERGONE" and later_plan(mark, user):
+            return "I would rather not plan this one."
+        if mark == "BLENDERGONE3" and later_plan(mark, user):
+            with lock:
+                plans[mark] = plans.get(mark, 0) + 1
+                if plans[mark] > 1:
+                    return "I would rather not plan this one."
         if mark:
             return json.dumps(studio_plan(mark, user))
         return json.dumps(PLAN)
     if job == "reviewer":
         if helper and "BADREVIEW" in user:
             return "Looks good to me overall."
+        if marker(user) in SENT_BACK and "chimera_fill" not in user:
+            return json.dumps({"check": "1. A fill light: no.", "done": False, "score": 60, "critique": "Add a fill light."})
+        if marker(user) == "BLENDERLIMIT":
+            return json.dumps({"check": "1. More lights: no.", "done": False, "score": 60, "critique": "Add another light."})
+        if marker(user) == "BLENDERPROSE" and "```python" not in user:
+            return json.dumps({"check": "1. A script: no.", "done": False, "score": 10, "critique": "There is no script."})
+        if "TEALOOP" in user and "Second draft" not in user:
+            return json.dumps({"check": "1. Black tea: no.", "done": False, "score": 60, "critique": "Say more about black tea."})
         if helper:
             return json.dumps({"check": "1. Covers green and black tea: yes.", "done": True, "score": 90, "critique": ""})
         return json.dumps({"done": True, "score": 88, "critique": ""})
     if job == "worker":
+        if "Write the long part." in user:
+            return "# filler line for a long piece of work\n" * 500 + "# TAILMARK"
         return "A paragraph about tea, written by %s." % model
+    if job == "mend":
+        return mend_reply(marker(user), user)
     if job == "combine":
         mark = marker(user)
         if mark:
             return studio_combine(mark, user)
+        if "TEALOOP" in user and "The result so far:" in user:
+            return "Second draft of the guide, combined by %s." % model
         return "The finished guide, combined by %s." % model
     if job == "gate":
         req = user.split("Request:")[-1].split("Should this tool")[0].lower()
@@ -295,10 +470,12 @@ class H(BaseHTTPRequestHandler):
             critique = None
             if job == "planner" and "What still needs work:\n" in user:
                 critique = user.split("What still needs work:\n", 1)[1].split("\n\nPlan the steps", 1)[0][:600]
+            sysmsg = next((m["content"] for m in body.get("messages", []) if m["role"] == "system"), "")
             with open(LOG, "a") as f:
                 f.write(json.dumps({"t": time.time(), "model": model, "job": job, "format": "format" in body,
                                     "num_ctx": opts.get("num_ctx"), "num_predict": opts.get("num_predict"),
-                                    "critique": critique, "user": user[:300]}) + "\n")
+                                    "critique": critique, "user": user[:300], "user_all": user if job in ("worker", "combine", "mend", "planner") else "",
+                                    "edits": "<<<<<<< FIND" in sysmsg}) + "\n")
             text, reason = reply(model, job, body), "stop"
             if isinstance(text, tuple):
                 text, reason = text

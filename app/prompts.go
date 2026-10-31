@@ -96,6 +96,29 @@ The plan (you are the step marked →):
 If something you need from another step is missing, make a sensible assumption and state it in one line.`, plan.Title, plan.Summary, outline.String(), rules)
 }
 
+// How a model replies with changes to a script: Chimera applies them
+// (hydra_mend.go), so the rest of it stays exactly as it was.
+const editFormat = `Reply only with edits, as many as you need, each exactly in this form:
+
+<<<<<<< FIND
+the exact lines to change, copied from the script, with their indentation
+=======
+the lines to put there instead
+>>>>>>> END
+
+To add lines, FIND the line they go after and put it back with them. If the lines you FIND appear more than once, include the lines around them to name the place you mean. Put nothing else in your reply.`
+
+// hydraMendPrompt asks for a repair of a script that crashed.
+const hydraMendPrompt = `You repair one script in Chimera. It was run, and the report says what went wrong: it crashed, or the scene it built isn't what the task asked for. Fix that, and anything else in the script that would go wrong the same way, for example the same wrong name used elsewhere. When the report lists the real names, use only those (a list ending in … is only part of them); if none of them does what the script wanted, do it another way or drop that line. When it gives measurements, work from those numbers rather than guessing. Change as little as you can: keep every line that doesn't need to change exactly as it is, and don't restructure, rename or rewrite.
+
+` + editFormat
+
+// synthEditPrompt is the combine's system prompt on a later round of a script:
+// it changes the result so far rather than writing it again.
+const synthEditPrompt = `You are Hydra's final editor in Chimera. The project already has a result, and AI workers on different computers each did one step of improving it. Put their work into that result, resolve any conflicts between them, and fix what still needs work. Change as little as you can: keep every line that doesn't need to change exactly as it is, and don't restructure, rename or rewrite.
+
+` + editFormat
+
 var synthKindRules = map[string]string{
 	"code":     "Produce the final, complete code: merge the pieces, fix mismatched names or interfaces between them, and remove duplication. Give every file in full in fenced code blocks with file names. End with short run instructions.",
 	"blender":  "Produce ONE combined Blender Python script that runs headless (blender -b --python) and builds the whole scene. Merge the pieces, fix conflicts, keep the chimera_ naming. Put it in a single python code block, then a few lines on how to run it.",

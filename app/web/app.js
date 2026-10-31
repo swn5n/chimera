@@ -1078,12 +1078,14 @@ function phaseText(t, pending) {
       const c = lastCheck(t);
       return rp + `Running the script in ${(c && c.runner) || "a sandbox"} here…`;
     }
+    case "mending": return rp + (t.mend_model ? `Repairing the script on ${deviceLabel(t.mend_device, t.mend_owner)} with ${t.mend_model}…` : "Repairing the script…");
     case "done": {
       const devs = new Set(steps.filter((s) => s.device).map((s) => s.device));
       const r = t.rounds > 1 && t.round ? `${plural(t.round, "round")}, ` : "";
       const c = finalCheck(t);
-      const tail = !c ? "" : c.outcome === "failed" ? " · the script still crashes" : c.outcome === "cut_off" ? " · cut off" : "";
-      return `Done: ${r}${plural(steps.length, "step")}${devs.size > 1 ? ` on ${devs.size} computers` : ""}${tail}`;
+      const tail = !c ? "" : c.outcome === "failed" ? " · the script still crashes" : c.outcome === "wrong_scene" ? " · the scene is wrong" : c.outcome === "cut_off" ? " · cut off" : "";
+      const kept = t.kept ? ` · this is round ${t.kept}'s result` : "";
+      return `Done: ${r}${plural(steps.length, "step")}${devs.size > 1 ? ` on ${devs.size} computers` : ""}${kept}${tail}`;
     }
     case "cancelled": return "Stopped";
     case "error": return t.error || "Didn't finish";
@@ -1096,10 +1098,11 @@ function lastCheck(t) {
   return cs.length ? cs[cs.length - 1] : null;
 }
 
-// The check of the final result: the latest one, if it's from the last round.
+// The check of the result the person got: the latest of the round it came
+// from, leaving out repairs that were taken back.
 function finalCheck(t) {
-  const c = lastCheck(t);
-  return c && c.round === t.round ? c : null;
+  const round = t.kept || t.round;
+  return (t.checks || []).findLast((c) => c.round === round && !c.undone) || null;
 }
 
 const openChecks = new Set(); // check outputs the person opened, kept open across updates
@@ -1108,21 +1111,26 @@ const openChecks = new Set(); // check outputs the person opened, kept open acro
 function checkLines(t) {
   const cs = t.checks || [];
   if (!cs.length) return "";
-  const led = { running: "ice pulse", passed: "ice", failed: "brick", cut_off: "brick" };
+  const led = { running: "ice pulse", passed: "ice", failed: "brick", wrong_scene: "brick", cut_off: "brick" };
   const live = !["done", "cancelled", "error"].includes(t.phase);
   let lastSkip = "";
-  const items = cs.map((c) => {
+  const items = cs.map((c, i) => {
     if (c.outcome === "skipped") {
       if (c.summary === lastSkip) return "";
       lastSkip = c.summary;
     }
     const stale = c.outcome === "running" && !live; // the task ended without finishing the check
-    let text = (t.rounds > 1 ? `Round ${c.round}: ` : "") + (stale ? "The check didn't finish." : c.summary);
-    if ((c.outcome === "failed" || c.outcome === "cut_off") && t.rounds > 1) {
-      if (c.stopped) text += " The same problem came back, so Hydra stopped here.";
+    const repair = c.mend ? `, repair ${c.mend}` : "";
+    let text = (t.rounds > 1 ? `Round ${c.round}${repair}: ` : "") + (stale ? "The check didn't finish." : c.summary);
+    const repaired = cs.slice(i + 1).some((x) => x.round === c.round && !x.undone); // this one wasn't the round's last word
+    const mending = t.phase === "mending" && c.round === t.round;
+    if (c.undone) text += " That made it worse, so it was taken back.";
+    else if (["failed", "wrong_scene", "cut_off"].includes(c.outcome) && t.rounds > 1) {
+      if (c.stopped) text += " It wasn't getting better, so Hydra stopped here.";
+      else if (repaired || mending) text += " Sent for repair.";
       else if (c.round < t.round || live) text += " Sent back for another round.";
     }
-    const key = `${t.started}:${c.round}`;
+    const key = `${t.started}:${c.round}:${c.mend || 0}`;
     const out = c.output ? `<details class="check-out" data-check="${esc(key)}"${openChecks.has(key) ? " open" : ""}><summary>Output</summary><pre>${esc(c.output)}</pre></details>` : "";
     return `<li><span class="led ${stale ? "off" : led[c.outcome] || "off"}"></span><div>${esc(text)}${out}</div></li>`;
   }).join("");
@@ -1161,6 +1169,7 @@ function fillTask(el, m) {
   const bad = t.phase === "error";
   const foot = t.phase === "planning" ? [] : [t.planner_model ? `Planned on ${deviceLabel(t.planner_device, t.planner_owner)} with ${t.planner_model}` : "",
     t.synth_model ? `combined on ${deviceLabel(t.synth_device, t.synth_owner)} with ${t.synth_model}` : "",
+    t.mend_model && t.phase !== "mending" ? `repaired on ${deviceLabel(t.mend_device, t.mend_owner)} with ${t.mend_model}` : "",
     t.reviewer_model && t.phase !== "reviewing" ? `reviewed on ${deviceLabel(t.reviewer_device, t.reviewer_owner)} with ${t.reviewer_model}` : "",
     (t.refs || []).length ? `used ${plural(t.refs.length, "library entry", "library entries")} as references` : ""].filter(Boolean);
   plan.hidden = false;
@@ -1311,7 +1320,7 @@ function liveTask(el) {
   return {
     on(ev) {
       switch (ev.type) {
-        case "started": chat.busy = { kind: "task", id: ev.task_id }; m.task_id = ev.task_id; if (!chat.current) chat.current = ev.session_id; break;
+        case "started": chat.busy = { kind: "task", id: ev.task_id }; m.task_id = ev.task_id; if (!chat.current) chat.current = ev.session_id; m.content = ""; break;
         case "task": m.task = ev.task; break;
         case "delta": m.content += ev.content || ""; break;
         case "replay": m.content = ev.content || ""; break;

@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -81,6 +82,25 @@ type TaskRecord struct {
 	Note string `json:"note,omitempty"`
 	// This round's steps whose model stopped at its output limit.
 	CutSteps []string `json:"cut_steps,omitempty"`
+	// The round whose result the person got, when it isn't the last one.
+	Kept int `json:"kept,omitempty"`
+
+	// Who repaired the script last (looping mode).
+	MendDevice string `json:"mend_device,omitempty"`
+	MendOwner  string `json:"mend_owner,omitempty"`
+	MendModel  string `json:"mend_model,omitempty"`
+}
+
+// roundResult is one round's finished result: what the next round works from,
+// and what the person gets if no later round does better.
+type roundResult struct {
+	Round    int
+	Text     string
+	Check    resultCheck
+	Critique string // what still needs work in it
+	missed   bool   // a later round's edits to it changed nothing
+
+	rec TaskRecord // the task as it stood, for the plan and the models behind this result
 }
 
 type taskEvent struct {
@@ -98,6 +118,8 @@ type taskRun struct {
 	rec           TaskRecord
 	final         strings.Builder
 	subs          map[chan taskEvent]struct{}
+	kinds         map[string]bool // see allKinds
+	saved         string          // the best result so far, for the chat file: final may be a worse one
 	finished      bool
 	cancel        context.CancelFunc
 	lastPush      time.Time
@@ -334,43 +356,68 @@ func (t *TaskManager) execute(ctx context.Context, run *taskRun, req taskReq) {
 	run.rec.Rounds = rounds
 	run.mu.Unlock()
 
-	prior, critique := "", ""
+	var best roundResult // what the next round works from
 	room := synthRoom    // reply room for the combine; grows after a cut-off
 	var prev resultCheck // the round before's check: the same fault twice ends the loop
+	worse := 0           // rounds in a row that came out worse than best
+	last := 0            // the last round that finished
+	stop := func() {
+		if run.round() != best.Round && best.grade() >= 0 {
+			t.keepBest(run, best)
+			run.mu.Lock()
+			run.rec.Note = fmt.Sprintf("Stopped: this is round %d's result, the best so far.", best.Round)
+			run.mu.Unlock()
+		}
+		run.mu.Lock()
+		run.rec.Phase = "cancelled"
+		run.mu.Unlock()
+	}
 loop:
 	for round := 1; round <= rounds; round++ {
 		if ctx.Err() != nil {
-			run.mu.Lock()
-			run.rec.Phase = "cancelled"
-			run.mu.Unlock()
+			stop()
 			return
 		}
-		pass, term := t.onePass(ctx, run, req, round, planPrior(prior, critique), critique, room)
+		pass, term := t.onePass(ctx, run, req, round, best, room)
 		switch term.Type {
 		case "error":
-			if round > 1 && prior != "" {
-				// A later round couldn't finish: keep the last round's result
+			if round > 1 && best.Text != "" {
+				// A later round couldn't finish: keep the best result so far
 				// rather than lose it.
-				t.keepRound(run, round-1, prior, term.Error)
+				t.keepRound(run, round, best, term.Error)
+				best = roundResult{}
 				break loop
 			}
 			t.fail(run, term.Error)
 			return
 		case "cancelled":
-			run.mu.Lock()
-			run.rec.Phase = "cancelled"
-			run.mu.Unlock()
+			stop()
 			return
 		}
-		result := pass.Text
-		prior = result
 		// Facts before opinions: a result that was cut off, or a script that
-		// crashes, isn't done, whatever a review would say.
+		// crashes, isn't done, whatever a review would say. A crash gets a few
+		// quick repairs first: a whole round for one wrong name costs far more.
 		chk := t.checkResult(ctx, run, req, round, pass)
+		if pass.Short {
+			room = cutRoom(pass.Tokens, room)
+		}
+		if chk.repairable() {
+			pass, chk = t.mendScript(ctx, run, req, round, pass, chk)
+		}
+		last = round
+		this := t.roundOf(run, round, pass.Text, chk)
+		if best.Round == 0 || (!pass.Unchanged && this.grade() >= best.grade()) { // a tie goes to the later round, which saw the critique
+			best, worse = this, 0
+		} else {
+			worse++
+			best.missed = pass.Unchanged
+			t.showResult(run, best.Text)
+		}
+		run.mu.Lock()
+		run.saved = best.Text
+		run.mu.Unlock()
 		if ctx.Err() != nil {
-			run.mu.Lock()
-			run.rec.Phase = "cancelled"
-			run.mu.Unlock()
+			stop()
 			return
 		}
 		if !req.Loop || round == rounds {
@@ -378,38 +425,41 @@ loop:
 		}
 		next := loopNext(chk, prev)
 		prev = chk
-		if next == "stop" { // the same crash or cut-off again: another round won't fix it
-			t.markStopped(run)
+		if next == "stop" && pass.Unchanged { // the same fault, in the same text: another try at the edits may land
+			next = "again"
+		}
+		if next == "stop" || worse == 2 { // another round won't fix it
+			t.markStopped(run, round)
 			break
 		}
-		if next == "again" {
-			if chk.Outcome == "cut_off" {
-				room = cutRoom(pass.Tokens, room)
+		if next == "again" || worse > 0 {
+			if worse == 0 {
+				best.Critique = chk.Critique
 			}
-			critique = chk.Critique
 			run.mu.Lock()
-			run.rec.Critique = critique
+			run.rec.Critique = best.Critique
 			run.rec.ReviewerDevice, run.rec.ReviewerOwner, run.rec.ReviewerModel = "", "", "" // no review this round
 			run.mu.Unlock()
 			continue
 		}
 		// Review the result against the goal; stop early when it's good enough.
-		v, revTerm := t.review(ctx, run, req, result)
+		v, revTerm := t.review(ctx, run, req, pass.Text)
 		if ctx.Err() != nil {
-			run.mu.Lock()
-			run.rec.Phase = "cancelled"
-			run.mu.Unlock()
+			stop()
 			return
 		}
 		if revTerm.Type != "" || v.Done {
 			break
 		}
-		critique = v.Critique
+		best.Critique = v.Critique + unsureLine(chk)
 		run.mu.Lock()
-		run.rec.Critique = v.Critique
+		run.rec.Critique = best.Critique
 		run.mu.Unlock()
 	}
 
+	if best.Round > 0 && best.Round != last {
+		t.keepBest(run, best)
+	}
 	run.mu.Lock()
 	run.rec.Phase = "done"
 	run.mu.Unlock()
@@ -428,23 +478,67 @@ func planPrior(prior, critique string) string {
 	return prior
 }
 
-// keepRound ends the task on round's result after a later round failed.
-func (t *TaskManager) keepRound(run *taskRun, round int, result, errMsg string) {
-	log.Printf("hydra: round %d didn't finish (%s); keeping round %d's result", round+1, errMsg, round)
+// grade is how far a round got. One with nothing in it is the worst of all.
+func (r roundResult) grade() float64 {
+	if strings.TrimSpace(r.Text) == "" {
+		return -1
+	}
+	return r.Check.grade()
+}
+
+// roundOf records a finished round.
+func (t *TaskManager) roundOf(run *taskRun, round int, text string, chk resultCheck) roundResult {
 	run.mu.Lock()
+	defer run.mu.Unlock()
+	return roundResult{Round: round, Text: text, Check: chk, rec: run.snapshot()}
+}
+
+// round is the round the task has got to.
+func (r *taskRun) round() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.rec.Round
+}
+
+// showResult puts s in the reply.
+func (t *TaskManager) showResult(run *taskRun, s string) {
+	run.mu.Lock()
+	defer run.mu.Unlock()
 	run.final.Reset()
-	run.final.WriteString(result)
-	run.broadcastLocked(taskEvent{Type: "replay", TaskID: run.id, Content: result})
-	run.rec.Round = round
-	run.rec.Note = fmt.Sprintf("Round %d couldn't finish (%s), so this is round %d's result.", round+1, strings.TrimSuffix(errMsg, "."), round)
+	run.final.WriteString(s)
+	run.broadcastLocked(taskEvent{Type: "replay", TaskID: run.id, Content: s})
+}
+
+// keepBest makes r the task's result, with the plan and the combine behind it.
+func (t *TaskManager) keepBest(run *taskRun, r roundResult) {
+	t.showResult(run, r.Text)
+	run.mu.Lock()
+	defer run.mu.Unlock()
+	from := r.rec
+	run.rec.hydraPlan, run.rec.CutSteps = from.hydraPlan, from.CutSteps
+	run.rec.PlannerDevice, run.rec.PlannerOwner, run.rec.PlannerModel = from.PlannerDevice, from.PlannerOwner, from.PlannerModel
+	run.rec.SynthDevice, run.rec.SynthOwner, run.rec.SynthModel = from.SynthDevice, from.SynthOwner, from.SynthModel
+	run.rec.MendDevice, run.rec.MendOwner, run.rec.MendModel = from.MendDevice, from.MendOwner, from.MendModel
+	run.rec.Kept = r.Round
+	run.rec.Note = fmt.Sprintf("This is round %d's result: the rounds after it didn't improve on it.", r.Round)
+}
+
+// keepRound ends the task on the best result so far after round failed.
+func (t *TaskManager) keepRound(run *taskRun, round int, best roundResult, errMsg string) {
+	log.Printf("hydra: round %d didn't finish (%s); keeping round %d's result", round, errMsg, best.Round)
+	t.keepBest(run, best)
+	run.mu.Lock()
+	run.rec.Note = fmt.Sprintf("Round %d couldn't finish (%s), so this is round %d's result.", round, strings.TrimSuffix(errMsg, "."), best.Round)
 	run.mu.Unlock()
 }
 
 // onePass does one plan -> run -> combine cycle and returns the combined
 // result. A non-empty term (error/cancelled) means the pass didn't finish.
-// room is the reply room the combine gets.
-func (t *TaskManager) onePass(ctx context.Context, run *taskRun, req taskReq, round int, prior, critique string, room int) (passResult, genEvent) {
+// base is the result this round improves (empty on the first), and room is the
+// reply room the combine gets.
+func (t *TaskManager) onePass(ctx context.Context, run *taskRun, req taskReq, round int, base roundResult, room int) (passResult, genEvent) {
 	a := t.app
+	prior, critique := planPrior(base.Text, base.Critique), base.Critique
 	setPhase := func(p string) {
 		run.mu.Lock()
 		run.rec.Phase, run.rec.Round = p, round
@@ -500,8 +594,15 @@ func (t *TaskManager) onePass(ctx context.Context, run *taskRun, req taskReq, ro
 	run.mu.Lock()
 	run.rec.hydraPlan = plan
 	run.rec.CutSteps = nil
+	run.rec.SynthDevice, run.rec.SynthOwner, run.rec.SynthModel = "", "", ""
+	run.rec.MendDevice, run.rec.MendOwner, run.rec.MendModel = "", "", ""
+	run.addKinds(plan)
 	run.mu.Unlock()
 	setPhase("working")
+	// A later round changes a script in place: a rewrite brings new faults, and
+	// a script that was cut off is the exception, having no end to keep.
+	_, script, _ := pickScript(run.allKinds(), base.Text)
+	editing := script != "" && base.Check.Outcome != "cut_off"
 
 	// 2. Run the steps, in parallel where they don't depend on each other. A
 	// lone step writes the result itself, so after a cut-off it gets the room.
@@ -539,7 +640,7 @@ func (t *TaskManager) onePass(ctx context.Context, run *taskRun, req taskReq, ro
 		go func(i int) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			t.runStep(ctx, run, i, req.Private, stepRoom)
+			t.runStep(ctx, run, i, req.Private, stepRoom, earlierForWorker(base, editing))
 		}(idx)
 	}
 	wg.Wait()
@@ -565,40 +666,65 @@ func (t *TaskManager) onePass(ctx context.Context, run *taskRun, req taskReq, ro
 		run.broadcastLocked(taskEvent{Type: "replay", TaskID: run.id, Content: s})
 		run.mu.Unlock()
 	}
-	if len(rec.Steps) == 1 {
+	if len(rec.Steps) == 1 && !editing {
 		s := rec.Steps[0]
 		resetFinal(s.Output)
-		return passResult{Text: s.Output, Cut: contains(rec.CutSteps, s.ID), Model: s.Model, Tokens: s.Tokens}, genEvent{}
+		cut := contains(rec.CutSteps, s.ID)
+		return passResult{Text: s.Output, Cut: cut, Short: cut, Model: s.Model, Tokens: s.Tokens}, genEvent{}
 	}
 	setPhase("combining")
-	resetFinal("") // a new round's result replaces the last one
-	var parts strings.Builder
-	fmt.Fprintf(&parts, "Task from the person: %s\n\nProject: %s\n%s\n\nThe workers' outputs:\n", rec.Goal, rec.Title, rec.Summary)
-	budget := 60000 / len(rec.Steps)
-	for i, s := range rec.Steps {
-		out := s.Output
-		if s.Status == "failed" {
-			out = "(this step failed: " + s.Error + ")"
-		}
-		fmt.Fprintf(&parts, "\n## Step %d: %s\n%s\n", i+1, s.Title, truncate(out, budget))
+	if !editing {
+		resetFinal("") // a new round's result replaces the last one
 	}
-	synthMsgs := []ChatMessage{{Role: "system", Content: synthPrompt(rec.Kind)}, {Role: "user", Content: parts.String()}}
+	var parts strings.Builder
+	fmt.Fprintf(&parts, "Task from the person: %s\n\nProject: %s\n%s\n\n", rec.Goal, rec.Title, rec.Summary)
+	if base.Text != "" {
+		fmt.Fprintf(&parts, "The result so far:\n%s\n\nWhat still needs work:\n%s\n\n", truncate(base.Text, earlierLimit), base.Critique)
+	}
+	if base.missed {
+		parts.WriteString("Your last edits changed nothing: copy each FIND from the result exactly as it stands.\n\n")
+	}
+	parts.WriteString("The workers' outputs:\n")
+	outs := make([]string, len(rec.Steps))
+	sizes := make([]int, len(rec.Steps))
+	for i, s := range rec.Steps {
+		outs[i] = s.Output
+		if s.Status == "failed" {
+			outs[i] = "(this step failed: " + s.Error + ")"
+		}
+		sizes[i] = len(outs[i])
+	}
+	limit := pieceCap(sizes, 60000)
+	for i, s := range rec.Steps {
+		fmt.Fprintf(&parts, "\n## Step %d: %s\n%s\n", i+1, s.Title, truncate(outs[i], limit))
+	}
+	system := synthPrompt(rec.Kind)
+	if editing {
+		system = synthEditPrompt
+	}
+	synthMsgs := []ChatMessage{{Role: "system", Content: system}, {Role: "user", Content: parts.String()}}
 	synthReq := submitReq{Private: req.Private, Messages: synthMsgs, Prefer: "largest", TaskWork: true,
 		NeedCtx: historyTokens(synthMsgs) + room, Purpose: "Hydra: combining (round " + itoaSmall(round) + ")"}
 	if room > synthRoom {
 		// The last combine stopped at its output limit: let this one write more.
 		synthReq.Options = map[string]any{"num_predict": room}
 	}
+	var edits strings.Builder // edits are no use to read: the reply keeps showing the result till they're in
 	synthEv := a.runPrompt(ctx, synthReq,
 		func(ev genEvent) {
 			run.mu.Lock()
-			switch ev.Type {
-			case "assigned":
+			switch {
+			case ev.Type == "assigned":
 				run.rec.SynthDevice, run.rec.SynthOwner, run.rec.SynthModel = deviceLabelGo(ev), ev.Owner, ev.Model
-			case "delta":
+			case editing && ev.Type == "delta":
+				edits.WriteString(ev.Content)
+			case editing && (ev.Type == "replay" || ev.Type == "requeued"):
+				edits.Reset()
+				edits.WriteString(ev.Content)
+			case ev.Type == "delta":
 				run.final.WriteString(ev.Content)
 				run.broadcastLocked(taskEvent{Type: "delta", TaskID: run.id, Content: ev.Content})
-			case "replay", "requeued":
+			case ev.Type == "replay" || ev.Type == "requeued":
 				run.final.Reset()
 				run.final.WriteString(ev.Content)
 				run.broadcastLocked(taskEvent{Type: "replay", TaskID: run.id, Content: ev.Content})
@@ -611,12 +737,53 @@ func (t *TaskManager) onePass(ctx context.Context, run *taskRun, req taskReq, ro
 	if synthEv.Type == "error" || synthEv.Type == "cancelled" {
 		return passResult{}, synthEv
 	}
+	short := synthEv.DoneReason == "length"
+	cut, unchanged := short, false
+	if editing {
+		text, whole := editedResult(base.Text, edits.String(), run.allKinds())
+		resetFinal(text)
+		unchanged = text == base.Text && !whole
+		cut = short && (whole || unchanged) // edits that stopped early leave a whole script, without the last ones
+	}
 	run.mu.Lock()
 	run.rec.Tokens += synthEv.Tokens
 	run.rec.Credits += synthEv.Credits
-	pass := passResult{Text: run.final.String(), Cut: synthEv.DoneReason == "length", Model: run.rec.SynthModel, Tokens: synthEv.Tokens}
+	pass := passResult{Text: run.final.String(), Cut: cut, Short: short, Unchanged: unchanged, Model: run.rec.SynthModel, Tokens: synthEv.Tokens}
 	run.mu.Unlock()
 	return pass, genEvent{}
+}
+
+// earlierLimit is how much of the result so far a later round's workers and
+// combine see. The planner's is shorter: Hydra 1.0 was trained on it.
+const earlierLimit = 40000
+
+// earlierForWorker is what a later round's worker is told about the result it
+// improves. Without it a worker only has the planner's words, writes its piece
+// from nothing, and the round rewrites what already worked.
+func earlierForWorker(base roundResult, editing bool) string {
+	if base.Text == "" {
+		return ""
+	}
+	how := "Keep what already works."
+	if editing {
+		how = "Don't write it out again: write only the code your step adds or changes, and say where it goes."
+	}
+	return fmt.Sprintf("\n\n---\nThis round improves an earlier result. %s\n\nThe result so far:\n%s\n\nWhat still needs work:\n%s",
+		how, truncate(base.Text, earlierLimit), base.Critique)
+}
+
+// pieceCap is the length each of the pieces can have for them to fit in limit
+// together: the shortest stay whole, and only the longest are cut.
+func pieceCap(sizes []int, limit int) int {
+	sorted := slices.Sorted(slices.Values(sizes))
+	left := limit
+	for i, n := range sorted {
+		if rest := len(sorted) - i; n*rest > left {
+			return left / rest
+		}
+		left -= n
+	}
+	return limit
 }
 
 // askPlanner sends one planning request and reads the plan. The returned
@@ -870,7 +1037,7 @@ func (t *TaskManager) readySteps(run *taskRun) ([]int, int) {
 	return ready, remaining
 }
 
-func (t *TaskManager) runStep(ctx context.Context, run *taskRun, i int, private bool, room int) {
+func (t *TaskManager) runStep(ctx context.Context, run *taskRun, i int, private bool, room int, earlier string) {
 	a := t.app
 	run.mu.Lock()
 	rec := run.snapshot()
@@ -921,6 +1088,7 @@ func (t *TaskManager) runStep(ctx context.Context, run *taskRun, i int, private 
 			}
 		}
 	}
+	user.WriteString(earlier)
 	msgs := []ChatMessage{{Role: "system", Content: workerPrompt(rec.hydraPlan, step) + refsBlock(useful)}, {Role: "user", Content: user.String()}}
 	var out strings.Builder
 	var lastErr string
@@ -1031,6 +1199,9 @@ func (t *TaskManager) save(run *taskRun, final bool) {
 	run.mu.Lock()
 	rec := run.snapshot()
 	content := run.final.String()
+	if !final && run.saved != "" { // if Chimera closes now, the best result is the one to find
+		content = run.saved
+	}
 	run.mu.Unlock()
 	_, err := t.app.sessions.Update(run.sessionID, func(s *Session) {
 		for i := range s.Messages {
@@ -1065,12 +1236,19 @@ func (t *TaskManager) save(run *taskRun, final bool) {
 						m.Note = "This result was cut off: " + who + " stopped writing at its output limit, so the end is missing."
 					case "failed":
 						m.Note = fmt.Sprintf("This result's script still crashes in %s at line %d: %s", c.Runner, c.Line, sentence(c.Error))
+					case "wrong_scene":
+						m.Note = "This result's script runs, but its scene is wrong. " + c.Error
+					case "unsure":
+						if c.Error != "" {
+							m.Note = fmt.Sprintf("This result's script stopped in %s at line %d: %s The check couldn't tell whether that's the script's fault.", c.Runner, c.Line, sentence(c.Error))
+						}
 					}
 					if rec.Note != "" {
 						m.Note = strings.TrimSpace(rec.Note + " " + m.Note)
 					}
 				case "cancelled":
 					m.Status = "cancelled"
+					m.Note = rec.Note
 				default:
 					m.Status, m.Error = "error", rec.Error
 				}

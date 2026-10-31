@@ -12,6 +12,12 @@ round's planner as its critique, the same crash twice stops, anything the check 
 the sandbox, a missing object, typed input) is left to the reviewer, a render ends the run cleanly, cancelling stops
 the script, and the setting turns it all off; a combine cut off at its output limit is another round with more room
 (looping) or a note on the saved reply (single pass).
+Section 11 checks repairs and later rounds: a crash is repaired by edits inside its round, one crash after another,
+a repair that breaks the script is taken back, a repair that writes the script out leaves the rest of the result alone,
+two tries that get nowhere end it, and the repairs a round gets are limited; a later round's workers and combine see the
+result so far, the combine's edits go into it, even with a one-step plan or a plan of another kind; edits that never land
+stop the loop; and the person gets the best round, with the note and the card describing that one, whether the loop ran
+out, stopped, was cancelled, or a later round couldn't finish. Long worker output reaches the combine whole.
 Usage: python3 hydra_test.py <chimera binary> <workdir>"""
 import hashlib, http.client, json, os, shutil, subprocess, sys, tempfile, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -206,6 +212,11 @@ def saved(evs):
     return poll(get, 15) or {}
 
 
+def saved_any(evs):
+    """The task's chat message as A saved it, whatever its status, once it isn't pending."""
+    return saved(evs)
+
+
 def by_round(cs):
     """Chat calls split into rounds: each one starts with a planner call."""
     rounds = []
@@ -305,6 +316,10 @@ def section10():
               last.get("type") == "done" and rec.get("round") == 1 and c0.get("outcome") == "unsure" and "Hero" in c0.get("summary", "") and
               len(jobs(since(n0), "reviewer")) == 1, brief(rec, last) + " " + c0.get("summary", ""))
 
+        m = saved(evs)
+        check("10.5 the saved reply says the script stopped and the check couldn't tell", "couldn't tell" in (m.get("note") or "") and "Hero" in (m.get("note") or ""),
+              str(m.get("note")))
+
         # ---- 10.6: a render ends the run cleanly ----
         rec, last, evs, secs = run_task(goal % "BLENDERRENDER", loop=True)
         cs, c0, _ = checks_of(rec)
@@ -363,6 +378,8 @@ def section10():
           "num_ctx %s, num_predict %s" % (c1st.get("num_ctx"), c1st.get("num_predict")))
     check("10.10 round 2's combine got more room: num_predict 8192, 32K context", c2nd.get("num_predict") == 8192 and c2nd.get("num_ctx") == 32768,
           "num_ctx %s, num_predict %s" % (c2nd.get("num_ctx"), c2nd.get("num_predict")))
+    check("10.10 a result that was cut off is written out again, not edited", "The result so far:" in c2nd.get("user_all", "") and not c2nd.get("edits"),
+          str(c2nd.get("edits")))
     if can_test:
         check("10.10 round 2's complete script passed", c1.get("outcome") == "passed", json.dumps(c1)[:300])
 
@@ -380,6 +397,287 @@ def section10():
           [c.get("outcome") for c in cs] == ["cut_off"] and not jobs(since(n0), "reviewer"), brief(rec, last))
     m = saved(evs)
     check("10.12 the saved reply's note says it was cut off", "cut off" in (m.get("note") or ""), str(m.get("note")))
+
+
+def section11():
+    goal = "%s: write a Blender script that builds a small photo studio with a backdrop"
+    goalc = goal + ", and a camera that frames everything"
+    if not state(A_UI)["profile"].get("can_test"):
+        print("SKIP 11: A's profile says it can't sandbox scripts (can_test false)", flush=True)
+        return
+
+    # ---- 11.1: a crash is repaired inside the round ----
+    n0 = mark()
+    rec, last, evs, _ = run_task(goal % "BLENDERMEND", loop=True)
+    cs, c0, c1 = checks_of(rec)
+    cc = since(n0)
+    check("11.1 a crash a repair can fix takes one round: [failed, passed in repair 1]", last.get("type") == "done" and rec.get("round") == 1 and
+          [(c.get("outcome"), c.get("mend", 0)) for c in cs] == [("failed", 0), ("passed", 1)], brief(rec, last))
+    check("11.1 no second planner, and the review came after the repair", len(jobs(cc, "planner")) == 1 and len(jobs(cc, "mend")) == 1 and
+          [c["job"] for c in cc][-1] == "reviewer", str([c["job"] for c in cc]))
+    m0 = (jobs(cc, "mend") or [{}])[0]
+    check("11.1 the repair got the script, the error and the goal, and was asked for edits", m0.get("edits") and
+          "module 'mathutils' has no attribute 'radians'" in m0.get("user_all", "") and "scene.collection.objects.link(backdrop)" in m0.get("user_all", "") and
+          "small photo studio" in m0.get("user_all", ""), str(m0.get("user_all"))[:300])
+    m = saved(evs)
+    body = m.get("content", "")
+    check("11.1 the saved reply is the repaired script, with what surrounded it, and no note", "math.radians(180)" in body and
+          "mathutils.radians" not in body and "Run it headless" in body and "<<<<<<<" not in body and not m.get("note"), body[:300] + " note " + str(m.get("note")))
+    check("11.1 the card names who repaired it", rec.get("mend_model") == "big:70b" and rec.get("mend_device"), str(rec.get("mend_model")))
+
+    # ---- 11.2: one crash after another ----
+    n0 = mark()
+    rec, last, evs, _ = run_task(goal % "BLENDERMEND2", loop=True)
+    cs, c0, c1 = checks_of(rec)
+    check("11.2 two crashes, two repairs, one round", last.get("type") == "done" and rec.get("round") == 1 and
+          [(c.get("outcome"), c.get("mend", 0)) for c in cs] == [("failed", 0), ("failed", 1), ("passed", 2)], brief(rec, last))
+    check("11.2 the second repair worked on the first one's script", "math.radians" in (jobs(since(n0), "mend") + [{}, {}])[1].get("user_all", ""),
+          str([c.get("user_all", "")[:80] for c in jobs(since(n0), "mend")]))
+
+    # ---- 11.3: a repair that breaks the script is taken back ----
+    n0 = mark()
+    rec, last, evs, _ = run_task(goal % "BLENDERMENDBAD", loop=True)
+    cs, c0, c1 = checks_of(rec)
+    check("11.3 [failed, repair 1 failed to start and taken back, repair 2 passed]", last.get("type") == "done" and rec.get("round") == 1 and
+          [(c.get("outcome"), c.get("mend", 0), bool(c.get("undone"))) for c in cs] == [("failed", 0, False), ("failed", 1, True), ("passed", 2, False)], brief(rec, last))
+    check("11.3 the failed try's error is a SyntaxError", "SyntaxError" in c1.get("error", ""), json.dumps(c1)[:300])
+    ms = jobs(since(n0), "mend")
+    check("11.3 the second repair started from the script before the bad one", len(ms) == 2 and "import mathutils(" not in ms[1].get("user_all", ""),
+          str([c.get("user_all", "")[:80] for c in ms]))
+    m = saved(evs)
+    check("11.3 the reply has no trace of the bad repair", "import mathutils(" not in m.get("content", "") and "math.radians(180)" in m.get("content", ""), m.get("content", "")[:300])
+
+    # ---- 11.4: repairs are limited ----
+    n0 = mark()
+    rec, last, evs, _ = run_task(goal % "BLENDERMENDFAR", loop=True)
+    cc = since(n0)
+    first = by_round(cc)[0]
+    check("11.4 a round gets 8 repairs", len(jobs(first, "mend")) == 8, str([c["job"] for c in first]))
+    check("11.4 the next round worked from the repaired script", len(by_round(cc)) > 1 and "a = 1" in by_round(cc)[1][0].get("user_all", ""),
+          str(len(by_round(cc))))
+
+    # ---- 11.5: a later round's combine edits the result ----
+    n0 = mark()
+    rec, last, evs, _ = run_task(goal % "BLENDEREDIT", loop=True)
+    cs, c0, c1 = checks_of(rec)
+    rs = by_round(since(n0))
+    check("11.5 a script the reviewer sends back takes 2 rounds, both passed", last.get("type") == "done" and rec.get("round") == 2 and
+          [c.get("outcome") for c in cs] == ["passed", "passed"], brief(rec, last))
+    w2 = jobs(rs[1], "worker") if len(rs) > 1 else []
+    check("11.5 round 1's workers saw nothing earlier", not any("The result so far" in c.get("user_all", "") for c in jobs(rs[0], "worker")))
+    check("11.5 round 2's workers got the script and the critique", w2 and all("The result so far:" in c["user_all"] and "chimera_backdrop" in c["user_all"] and
+          "Add a fill light." in c["user_all"] and "only the code your step adds or changes" in c["user_all"] for c in w2), str([c.get("user_all", "")[:200] for c in w2]))
+    c2 = (jobs(rs[1], "combine") if len(rs) > 1 else [{}])[-1]
+    check("11.5 round 2's combine got the script and was asked for edits; round 1's wasn't", c2.get("edits") and "The result so far:" in c2.get("user_all", "") and
+          not jobs(rs[0], "combine")[-1].get("edits"), str(c2.get("user_all"))[:300])
+    m = saved(evs)
+    body = m.get("content", "")
+    check("11.5 the saved reply is round 1's reply with the edit in it", "chimera_fill" in body and "chimera_backdrop" in body and "math.radians(180)" in body and
+          "Run it headless" in body and "<<<<<<<" not in body, body[:400])
+    typed = "".join(e.get("content", "") for e in evs if e.get("type") == "delta")
+    check("11.5 the edits were never shown as the reply", "<<<<<<<" not in typed, typed[:200])
+
+    # ---- 11.6: a one-step later plan still edits ----
+    n0 = mark()
+    rec, last, evs, _ = run_task(goal % "BLENDERONE", loop=True)
+    rs = by_round(since(n0))
+    m = saved(evs)
+    check("11.6 a one-step later plan goes through the combine, and the script stays whole", last.get("type") == "done" and rec.get("round") == 2 and
+          len(rs) == 2 and len(jobs(rs[1], "combine")) == 1 and "chimera_fill" in m.get("content", "") and "chimera_backdrop" in m.get("content", ""),
+          brief(rec, last) + m.get("content", "")[:200])
+
+    # ---- 11.7: a round that comes out worse doesn't replace a better one ----
+    n0 = mark()
+    rec, last, evs, _ = run_task(goal % "BLENDERWORSE", loop=True)
+    cs, c0, c1 = checks_of(rec)
+    rs = by_round(since(n0))
+    check("11.7 the task keeps round 1's result: [passed, failed, failed]", last.get("type") == "done" and rec.get("kept") == 1 and
+          [c.get("outcome") for c in cs] == ["passed", "failed", "failed"], brief(rec, last) + " kept " + str(rec.get("kept")))
+    check("11.7 round 3 worked from round 1's script and critique, not the crash", len(rs) == 3 and rs[2][0].get("critique") == "Add a fill light." and
+          "make_it_bigger" not in rs[2][0].get("user_all", ""), str([r[0].get("critique") for r in rs]))
+    m = saved(evs)
+    check("11.7 the saved reply is round 1's, says so, and isn't marked as crashing", "make_it_bigger" not in m.get("content", "") and "chimera_backdrop" in m.get("content", "") and
+          "round 1's result" in (m.get("note") or "") and "still crashes" not in (m.get("note") or ""), str(m.get("note")) + " " + m.get("content", "")[:200])
+    check("11.7 the task shows round 1's plan", rec.get("title") == "Studio v1", str(rec.get("title")))
+
+    # ---- 11.8: a later round that can't finish keeps the best one ----
+    rec, last, evs, _ = run_task(goal % "BLENDERGONE", loop=True)
+    m = saved(evs)
+    check("11.8 a later round without a plan keeps round 1's result, and says so", last.get("type") == "done" and rec.get("kept") == 1 and
+          "Round 2 couldn't finish" in (m.get("note") or "") and "chimera_backdrop" in m.get("content", ""), brief(rec, last) + " " + str(m.get("note")))
+
+    # ---- 11.9: plain Python is repaired too ----
+    rec, last, evs, _ = run_task("PYMEND: write a small Python program that prints the average of some numbers", loop=True)
+    cs, c0, c1 = checks_of(rec)
+    check("11.9 a Python crash is repaired in its round", last.get("type") == "done" and rec.get("round") == 1 and
+          [(c.get("outcome"), c.get("mend", 0)) for c in cs] == [("failed", 0), ("passed", 1)], brief(rec, last))
+
+    # ---- 11.9b: a wrong name comes with the real ones ----
+    n0 = mark()
+    rec, last, evs, _ = run_task(goal % "BLENDERNAMES", loop=True)
+    cc = since(n0)
+    ms = jobs(cc, "mend")
+    us = (ms or [{}])[0].get("user_all", "")
+    check("11.9b the repair is told what the object really has, closest first", "Object has no locaton. What it does have: location," in us, us[-400:])
+    rs = by_round(cc)
+    crit = (rs[1][0].get("critique") or "") if len(rs) > 1 else ""
+    check("11.9b so is the next round's planner, in its critique", "What it does have: location," in crit, crit[-300:])
+    cs, c0, _ = checks_of(rec)
+    check("11.9b the check is still a plain failure, and the names aren't on the card", c0.get("outcome") == "failed" and c0.get("line") == 6 and
+          "chimera-check" not in c0.get("output", ""), json.dumps(c0)[:400])
+
+    # ---- 11.9c: a script that runs but builds the wrong scene ----
+    n0 = mark()
+    rec, last, evs, _ = run_task(goalc % "BLENDEROFFSHOT", loop=True)
+    cs, c0, c1 = checks_of(rec)
+    cc = since(n0)
+    check("11.9c a scene the camera can't see goes to a repair, in its round: [wrong_scene, passed]", last.get("type") == "done" and rec.get("round") == 1 and
+          [(c.get("outcome"), c.get("mend", 0)) for c in cs] == [("wrong_scene", 0), ("passed", 1)], brief(rec, last))
+    check("11.9c it wasn't reviewed until the scene was right", [c["job"] for c in cc].index("mend") < [c["job"] for c in cc].index("reviewer"), str([c["job"] for c in cc]))
+    us = (jobs(cc, "mend") or [{}])[0].get("user_all", "")
+    check("11.9c the repair got what was wrong and the measurements", "The camera sees none of the 1 objects." in us and "location = (9.00, -3.00, 9.00)" in us and
+          "chimera_backdrop at (9.00, 9.00, 9.00)" in us, us[-500:])
+    check("11.9c the card says what was measured, and the reply has no note", "1 of its 1 objects are in the camera's frame." in c1.get("summary", "") and not saved(evs).get("note"),
+          c1.get("summary", "") + " note " + str(saved(evs).get("note")))
+
+    n0 = mark()
+    rec, last, evs, _ = run_task(goalc % "BLENDERSTAYSOFF", loop=True)
+    m = saved(evs)
+    rs = by_round(since(n0))
+    crit = (rs[1][0].get("critique") or "") if len(rs) > 1 else ""
+    check("11.9c a scene repairs can't fix goes to the next round's planner with the measurements", "The camera sees none" in crit and "location = (9.00" in crit, crit[:300])
+    check("11.9c the same scene twice stops, and the reply says what's wrong", last.get("type") == "done" and "its scene is wrong" in (m.get("note") or "") and
+          "The camera sees none" in (m.get("note") or ""), brief(rec, last) + " " + str(m.get("note")))
+
+    # ---- 11.10: two replies that change nothing end the repairs ----
+    n0 = mark()
+    rec, last, evs, _ = run_task(goal % "BLENDERCRASH", loop=True)
+    first = by_round(since(n0))[0]
+    ms = jobs(first, "mend")
+    check("11.10 a repair that changes nothing is tried once more, then the round ends", len(ms) == 2 and rec.get("round") == 2, str([c["job"] for c in first]))
+    check("11.10 the second try is told the first changed nothing", len(ms) == 2 and "changed nothing" in ms[1].get("user_all", "") and
+          "changed nothing" not in ms[0].get("user_all", ""), str([c.get("user_all", "")[-120:] for c in ms]))
+
+    # ---- 11.11: the same error on the same line twice ends the repairs ----
+    n0 = mark()
+    rec, last, evs, _ = run_task(goal % "BLENDERSTUCK", loop=True)
+    first = by_round(since(n0))[0]
+    check("11.11 edits that leave the crash where it was stop after 2", len(jobs(first, "mend")) == 2, str([c["job"] for c in first]))
+
+    # ---- 11.12: a repair that writes the script out only replaces the script ----
+    rec, last, evs, _ = run_task(goal % "BLENDERWHOLE", loop=True)
+    m = saved(evs)
+    check("11.12 the repaired script went in, and the rest of the reply stayed", last.get("type") == "done" and rec.get("round") == 1 and
+          "math.radians(180)" in m.get("content", "") and "Run it headless" in m.get("content", ""), brief(rec, last) + " " + m.get("content", "")[:200])
+
+    # ---- 11.13: stopping a later round leaves the best result ----
+    seen = {}
+
+    def on_event(ev):
+        if ev["type"] == "task" and (ev.get("task") or {}).get("phase") == "mending" and "cancel" not in seen:
+            seen["card"] = ev["task"]
+            seen["cancel"] = api(A_UI, "POST", "/api/task/%s/cancel" % ev["task_id"])[0]
+    rec, last, evs, _ = run_task(goal % "BLENDERSTOP", loop=True, on_event=on_event)
+    m = saved_any(evs)
+    check("11.13 the task stopped during round 2's repair", seen.get("cancel") == 200 and last.get("type") == "cancelled", brief(rec, last))
+    check("11.13 the reply is round 1's, says so, and the task keeps it", rec.get("kept") == 1 and "make_it_bigger" not in m.get("content", "") and
+          "chimera_backdrop" in m.get("content", "") and "round 1's result" in (m.get("note") or ""), str(m.get("note")) + " " + m.get("content", "")[:200])
+
+    # ---- 11.13b: a round better than the best so far counts, even if it's stopped during its repair ----
+    seen = {}
+
+    def on_event(ev):
+        if ev["type"] == "task" and (ev.get("task") or {}).get("phase") == "mending" and "cancel" not in seen:
+            seen["cancel"] = api(A_UI, "POST", "/api/task/%s/cancel" % ev["task_id"])[0]
+    rec, last, evs, _ = run_task(goal % "BLENDERSTOPCUT", loop=True, on_event=on_event)
+    m = saved_any(evs)
+    check("11.13b stopped during round 2's repair: the reply is round 2's whole script, not round 1's cut-off one", seen.get("cancel") == 200 and last.get("type") == "cancelled" and
+          not rec.get("kept") and "chimera_backdrop" in m.get("content", "") and "chimera_cube" not in m.get("content", ""), brief(rec, last) + " " + m.get("content", "")[:160])
+
+    # ---- 11.14: a kept round that still crashes says so ----
+    n0 = mark()
+    rec, last, evs, _ = run_task(goal % "BLENDERBADLATER", loop=True)
+    cs, c0, c1 = checks_of(rec)
+    m = saved(evs)
+    check("11.14 a script that runs part-way beats one that doesn't start", last.get("type") == "done" and rec.get("kept") == 1 and "import mathutils(" not in m.get("content", ""),
+          brief(rec, last) + " kept " + str(rec.get("kept")))
+    check("11.14 the note names the round and the crash that's left", "round 1's result" in (m.get("note") or "") and "still crashes" in (m.get("note") or "") and
+          "radians" in (m.get("note") or ""), str(m.get("note")))
+
+    # ---- 11.15: the last round allowed comes out worse ----
+    rec, last, evs, _ = run_task(goal % "BLENDERLIMIT", loop=True)
+    cs, c0, c1 = checks_of(rec)
+    m = saved(evs)
+    check("11.15 six rounds, the last one worse: the task keeps round 5", last.get("type") == "done" and rec.get("round") == 6 and rec.get("kept") == 5 and
+          [c.get("outcome") for c in cs] == ["passed"] * 5 + ["failed"] and "make_it_bigger" not in m.get("content", "") and "round 5's result" in (m.get("note") or ""),
+          brief(rec, last) + " kept " + str(rec.get("kept")) + " " + str(m.get("note")))
+
+    # ---- 11.16: a round that can't finish, with the best further back ----
+    rec, last, evs, _ = run_task(goal % "BLENDERGONE3", loop=True)
+    m = saved(evs)
+    check("11.16 round 3 couldn't finish, and round 2 was worse: the task keeps round 1", last.get("type") == "done" and rec.get("kept") == 1 and
+          "Round 3 couldn't finish" in (m.get("note") or "") and "round 1's result" in (m.get("note") or "") and "make_it_bigger" not in m.get("content", ""),
+          brief(rec, last) + " " + str(m.get("note")))
+
+    # ---- 11.17: a crash beats no script ----
+    rec, last, evs, _ = run_task(goal % "BLENDERPROSE", loop=True)
+    m = saved(evs)
+    check("11.17 a script that crashes isn't thrown away for words with no script", last.get("type") == "done" and "chimera_backdrop" in m.get("content", "") and
+          "still crashes" in (m.get("note") or ""), brief(rec, last) + " " + str(m.get("note")))
+
+    # ---- 11.18: edits that never land ----
+    n0 = mark()
+    rec, last, evs, _ = run_task(goal % "BLENDERMISS", loop=True)
+    cc = since(n0)
+    rs = by_round(cc)
+    m = saved(evs)
+    check("11.18 edits that change nothing stop after 2 rounds and keep round 1", last.get("type") == "done" and len(rs) == 3 and rec.get("kept") == 1, brief(rec, last) + " rounds " + str(len(rs)))
+    check("11.18 the same text wasn't reviewed again", len(jobs(cc, "reviewer")) == 1, str([c["job"] for c in cc]))
+    c3 = (jobs(rs[2], "combine") if len(rs) > 2 else [{}])[-1]
+    check("11.18 the next combine is told its edits changed nothing; the planner's text isn't", "changed nothing" in c3.get("user_all", "") and
+          "changed nothing" not in (rs[2][0].get("user_all", "") if len(rs) > 2 else ""), c3.get("user_all", "")[-200:])
+    check("11.18 the note says so", "didn't improve on it" in (m.get("note") or ""), str(m.get("note")))
+
+    # ---- 11.18b: edits that never land on a crashing script get their second try ----
+    n0 = mark()
+    rec, last, evs, _ = run_task(goal % "BLENDERUNCH", loop=True)
+    rs = by_round(since(n0))
+    c3 = (jobs(rs[2], "combine") if len(rs) > 2 else [{}])[-1]
+    check("11.18b the same crash in the same text doesn't stop the loop at once: 3 rounds, and round 3's combine is told", last.get("type") == "done" and len(rs) == 3 and
+          "changed nothing" in c3.get("user_all", ""), brief(rec, last) + " rounds " + str(len(rs)))
+
+    # ---- 11.19: a later plan labelled something else ----
+    rec, last, evs, _ = run_task("PYKIND: write a small Python program that prints the average of some numbers", loop=True)
+    cs, c0, c1 = checks_of(rec)
+    m = saved(evs)
+    check("11.19 a later plan of another kind still gets its edits in and its script checked", last.get("type") == "done" and rec.get("round") == 2 and
+          [c.get("outcome") for c in cs] == ["failed", "passed"] and "average(numbers)" in m.get("content", "") and "averge(" not in m.get("content", ""), brief(rec, last))
+
+    # ---- 11.19b: an error the check couldn't judge goes on to the next round ----
+    n0 = mark()
+    rec, last, evs, _ = run_task(goal % "BLENDERUNSURE", loop=True)
+    rs = by_round(since(n0))
+    crit = (rs[1][0].get("critique") or "") if len(rs) > 1 else ""
+    check("11.19b the next planner gets the review's critique and the error that stopped the script", "Add a fill light." in crit and "Hero" in crit and "line 4" in crit, crit[:300])
+
+    # ---- 11.20: a long worker output reaches the combine whole ----
+    n0 = mark()
+    rec, last, evs, _ = run_task(goal % "BLENDERLONG", loop=True)
+    comb = jobs(since(n0), "combine")
+    check("11.20 six steps, one of 19,000 characters: nothing cut", len(comb) == 1 and "TAILMARK" in comb[0].get("user_all", "") and "(cut)" not in comb[0].get("user_all", ""),
+          str(len(comb)))
+
+    # ---- 11.21: words get the result so far too, and are written out ----
+    n0 = mark()
+    rec, last, evs, _ = run_task("TEALOOP: write a short guide to brewing green and black tea", loop=True)
+    rs = by_round(since(n0))
+    m = saved(evs)
+    w2 = jobs(rs[1], "worker") if len(rs) > 1 else []
+    c2 = (jobs(rs[1], "combine") if len(rs) > 1 else [{}])[-1]
+    check("11.21 a guide the reviewer sends back: round 2's workers and combine see it, and nobody's asked for edits", last.get("type") == "done" and rec.get("round") == 2 and
+          w2 and all("The finished guide" in c["user_all"] and "Say more about black tea." in c["user_all"] and "Keep what already works." in c["user_all"] for c in w2) and
+          "The result so far:" in c2.get("user_all", "") and not c2.get("edits"), brief(rec, last))
+    check("11.21 the second draft replaced the first", m.get("content", "").startswith("Second draft"), m.get("content", "")[:100])
 
 
 def main():
@@ -493,6 +791,7 @@ def main():
 
     # ---- 10: checking a long task's result (A runs its script, sandboxed; facts before the review) ----
     section10()
+    section11()
 
     ok = all(r["ok"] for r in it.results)
     print("\n%d of %d checks passed" % (sum(r["ok"] for r in it.results), len(it.results)))

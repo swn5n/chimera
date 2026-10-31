@@ -14,10 +14,13 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"maps"
 	"os/exec"
 	"regexp"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -38,7 +41,7 @@ const checkMinLines = 6
 // card; Critique is what the next round's planner gets.
 type resultCheck struct {
 	Round    int     `json:"round"`
-	Outcome  string  `json:"outcome"`          // running, passed, failed, unsure, skipped, cut_off
+	Outcome  string  `json:"outcome"`          // running, passed, failed, wrong_scene, unsure, skipped, cut_off
 	Runner   string  `json:"runner,omitempty"` // "Blender 5.2.2", "Python 3.13.12"
 	Summary  string  `json:"summary"`          // the card's line
 	Error    string  `json:"error,omitempty"`  // the exception line
@@ -49,16 +52,58 @@ type resultCheck struct {
 	Output   string  `json:"output,omitempty"` // the end of what it printed, paths hidden
 	Seconds  float64 `json:"seconds,omitempty"`
 	Stopped  bool    `json:"stopped,omitempty"` // the same fault as the round before, so Hydra stopped
+	Mend     int     `json:"mend,omitempty"`    // which repair of the round's script this ran (0: the round's own)
+	Undone   bool    `json:"undone,omitempty"`  // that repair left the script worse, so it was taken back
+	Names    string  `json:"-"`                 // the real names, when it stopped on a wrong one
+	Measured string  `json:"-"`                 // wrong_scene: what the scene holds, for the critique
+	Seen     float64 `json:"-"`                 // wrong_scene: the share of its objects in frame
+	Faults   int     `json:"-"`                 // wrong_scene: how many things are wrong
+	Partway  bool    `json:"-"`                 // unsure: the script stopped before its end
 	Critique string  `json:"-"`
 }
 
-// notDone says whether the check overrules any review: the script crashed,
-// or the result was cut off.
-func (c resultCheck) notDone() bool { return c.Outcome == "failed" || c.Outcome == "cut_off" }
+// notDone says whether the check overrules any review: the script crashed, it
+// built the wrong scene, or the result was cut off.
+func (c resultCheck) notDone() bool { return c.repairable() || c.Outcome == "cut_off" }
+
+// repairable says whether a repair could help: the script is all there, and
+// something about it is known to be wrong.
+func (c resultCheck) repairable() bool { return c.Outcome == "failed" || c.Outcome == "wrong_scene" }
 
 // sameFault says whether two rounds failed the same way (the line may move).
 func (c resultCheck) sameFault(prev resultCheck) bool {
-	return c.notDone() && prev.notDone() && c.Outcome == prev.Outcome && c.Error == prev.Error
+	if !c.notDone() || !prev.notDone() || c.Outcome != prev.Outcome {
+		return false
+	}
+	if c.Outcome == "wrong_scene" { // its text has counts in it, which can move without anything getting better
+		return digitsRe.ReplaceAllString(c.Error, "#") == digitsRe.ReplaceAllString(prev.Error, "#") && c.grade() <= prev.grade()
+	}
+	return c.Error == prev.Error
+}
+
+// grade says how far a round's result got, for choosing between rounds and
+// repairs: 5 a script with nothing known to be wrong, 4 and a bit one that runs
+// but builds the wrong scene (more for fewer faults, then for more of it in frame),
+// 3.5 one that stopped on an error nobody can judge, 3 one that runs part of the
+// way, 2 one that doesn't start, 1 no script at all, 0 cut off. An unsure script that
+// ran to its end ranks with passed: it's no sign of a fault, and the reviewer still
+// decides. Results with no script tie, as they should: it's a task without one.
+func (c resultCheck) grade() float64 {
+	switch {
+	case c.Outcome == "cut_off":
+		return 0
+	case c.Outcome == "":
+		return 1
+	case c.Outcome == "wrong_scene":
+		return 4 + 0.3*float64(3-clampInt(c.Faults, 1, 3)) + 0.29*c.Seen
+	case c.Outcome == "unsure" && c.Partway:
+		return 3.5
+	case c.Outcome != "failed":
+		return 5
+	case strings.HasPrefix(c.Error, "SyntaxError") || strings.HasPrefix(c.Error, "IndentationError") || strings.HasPrefix(c.Error, "TabError"):
+		return 2
+	}
+	return 3
 }
 
 // passResult is one round's result and whether its model was cut off.
@@ -67,6 +112,10 @@ type passResult struct {
 	Cut    bool
 	Model  string // who wrote it
 	Tokens int
+	Mend   int // which repair this is (0: the round's own result)
+
+	Short     bool // its model stopped at its output limit, whether or not that left the result cut off
+	Unchanged bool // the round's edits to the result changed nothing
 }
 
 // ---------- finding the script ----------
@@ -74,6 +123,8 @@ type passResult struct {
 type codeBlock struct {
 	Lang, Body string
 	Closed     bool
+	Start, End int // Body's lines in the reply: lines[Start:End]
+	Indent     int // the opening fence's, which Body's lines have lost
 }
 
 var (
@@ -91,7 +142,7 @@ func codeBlocks(md string) []codeBlock {
 	var fence string
 	var body []string
 	indent := 0 // the opening fence's, which its lines share (a fence in a list item)
-	for _, line := range strings.Split(md, "\n") {
+	for n, line := range strings.Split(md, "\n") {
 		line = strings.TrimRight(line, "\r")
 		if cur == nil {
 			m := fenceOpenRe.FindStringSubmatch(line)
@@ -102,15 +153,15 @@ func codeBlocks(md string) []codeBlock {
 			if f := strings.Fields(m[2]); len(f) > 0 {
 				lang = strings.TrimPrefix(strings.Trim(strings.ToLower(f[0]), "{}"), ".")
 			}
-			cur, fence, body = &codeBlock{Lang: lang}, m[1], nil
 			indent = len(line) - len(strings.TrimLeft(line, " "))
+			cur, fence, body = &codeBlock{Lang: lang, Start: n + 1, Indent: indent}, m[1], nil
 			continue
 		}
 		t := strings.TrimLeft(line, " ")
 		if len(line)-len(t) <= 3 && strings.HasPrefix(t, fence[:1]) {
 			run := len(t) - len(strings.TrimLeft(t, fence[:1]))
 			if run >= len(fence) && strings.TrimSpace(t[run:]) == "" {
-				cur.Body, cur.Closed = strings.Join(body, "\n"), true
+				cur.Body, cur.Closed, cur.End = strings.Join(body, "\n"), true, n
 				out = append(out, *cur)
 				cur = nil
 				continue
@@ -152,6 +203,12 @@ func pythonLang(l string) bool {
 // coding plan. kinds are the plan's and its steps' kinds. why says why a script
 // that's there won't be run; kind "" means there's nothing to check.
 func pickScript(kinds map[string]bool, result string) (kind, script, why string) {
+	kind, b, why := pickBlock(kinds, result)
+	return kind, dedent(b.Body), why
+}
+
+// pickBlock is pickScript's code block; a zero block when it won't run one.
+func pickBlock(kinds map[string]bool, result string) (kind string, block codeBlock, why string) {
 	var blender, python []codeBlock
 	for _, b := range codeBlocks(result) {
 		if !b.Closed || codeLines(b.Body) < checkMinLines || strings.Contains("\n"+b.Body, "\n>>> ") {
@@ -174,20 +231,33 @@ func pickScript(kinds map[string]bool, result string) (kind, script, why string)
 			}
 		}
 		if similar > 1 {
-			return "run_blender", "", fmt.Sprintf("the result has %d Blender scripts of similar size, and it isn't clear which one to run", similar)
+			return "run_blender", codeBlock{}, fmt.Sprintf("the result has %d Blender scripts of similar size, and it isn't clear which one to run", similar)
 		}
-		return "run_blender", dedent(blender[0].Body), ""
+		return "run_blender", blender[0], ""
 	}
 	if len(python) > 0 && kinds["code"] {
 		switch {
 		case len(python) > 1:
-			return "run_python", "", fmt.Sprintf("the result has %d Python files; Hydra only runs a result that is one script", len(python))
+			return "run_python", codeBlock{}, fmt.Sprintf("the result has %d Python files; Hydra only runs a result that is one script", len(python))
 		case windowImport.MatchString(python[0].Body):
-			return "run_python", "", "it would open a window or start a server"
+			return "run_python", codeBlock{}, "it would open a window or start a server"
 		}
-		return "run_python", dedent(python[0].Body), ""
+		return "run_python", python[0], ""
 	}
-	return "", "", ""
+	return "", codeBlock{}, ""
+}
+
+// withScript puts script in a result in the place of block.
+func withScript(result string, block codeBlock, script string) string {
+	lines := strings.Split(result, "\n")
+	pad := strings.Repeat(" ", block.Indent)
+	body := strings.Split(script, "\n")
+	for i, l := range body {
+		if l != "" {
+			body[i] = pad + l
+		}
+	}
+	return strings.Join(slices.Replace(lines, block.Start, block.End, body...), "\n")
 }
 
 // dedent takes off the indent every line of a script shares (a script
@@ -220,6 +290,7 @@ func dedent(body string) string {
 var (
 	notDefinedRe = regexp.MustCompile(`name '(\w+)' is not defined`)
 	noAttrRe     = regexp.MustCompile(`'\w+' object has no attribute '(\w+)'`)
+	calledOpRe   = regexp.MustCompile(`Calling operator "bpy\.ops\.(\w+\.\w+)" error, could not be found`)
 )
 
 // inOtherBlock says whether another code block of the result matches re: the
@@ -238,6 +309,11 @@ func inOtherBlock(result, script string, re *regexp.Regexp) bool {
 // attribute it sets (an add-on block registering a property). The result may
 // mean the blocks to go together.
 func otherBlocks(c resultCheck, result, script string) resultCheck {
+	if c.Outcome == "wrong_scene" && inOtherBlock(result, script, usesBpy) {
+		c.Outcome, c.Error, c.Measured, c.Seen, c.Faults = "unsure", "", "", 0, 0
+		c.Summary = sentence("Ran the script in " + c.Runner + " here but couldn't tell whether its scene is right: the result has another Blender block, and the check runs one on its own")
+		return c
+	}
 	if c.Outcome != "failed" {
 		return c
 	}
@@ -245,6 +321,10 @@ func otherBlocks(c resultCheck, result, script string) resultCheck {
 		c.Outcome = "unsure"
 		c.Summary = sentence("Ran the script in " + c.Runner + " here but couldn't tell whether it works: it uses " + m[1] +
 			", which another code block of the result has, and the check runs one block on its own")
+	} else if m := calledOpRe.FindStringSubmatch(c.Error); m != nil && inOtherBlock(result, script, regexp.MustCompile(`bl_idname\s*=\s*["']`+regexp.QuoteMeta(m[1])+`["']`)) {
+		c.Outcome = "unsure"
+		c.Summary = sentence("Ran the script in " + c.Runner + " here but couldn't tell whether it works: it calls " + m[1] +
+			", which another code block of the result defines, and the check runs one block on its own")
 	} else if m := noAttrRe.FindStringSubmatch(c.Error); m != nil && strings.HasPrefix(c.Error, "AttributeError") &&
 		inOtherBlock(result, script, regexp.MustCompile(`\.`+m[1]+`\s*=|(?m)^\s*`+m[1]+`\s*:`)) {
 		c.Outcome = "unsure"
@@ -402,7 +482,11 @@ func lastPyError(out string) (pyError, bool) {
 	}
 	if found {
 		last.Last = true
-		for _, l := range lines[endAt+1:] {
+		rest := lines[endAt+1:]
+		for len(rest) > 0 && (strings.HasPrefix(rest[0], " ") || strings.HasPrefix(rest[0], "\t")) {
+			rest = rest[1:] // the error's own further lines
+		}
+		for _, l := range rest {
 			l = strings.TrimSpace(l)
 			if strings.HasPrefix(l, "Error: script failed") || strings.HasPrefix(l, "Error: Python:") {
 				break // Blender's own lines after the error that ended the script
@@ -443,11 +527,20 @@ var (
 	// What the person has selected or the mode they're in, which a fresh scene doesn't have…
 	selectionRe = regexp.MustCompile(`bpy\.context\.(active_object|object|selected_objects|selected_editable_objects|edit_object)\b|view_layer\.objects\.active\b|bmesh\.from_edit_mesh`)
 	// …unless the script makes it itself before using it.
-	setsStateRe = regexp.MustCompile(`bpy\.ops\.\w+\.(\w*_add|primitive_\w+)\(|objects\.new\(|objects\.active\s*=|\.select_set\(|mode_set\(`)
-	gpuEnumRe   = regexp.MustCompile(`enum "(CUDA|OPTIX|HIP|ONEAPI|METAL)" not found`)
-	osAttrRe    = regexp.MustCompile(`module '(os|ctypes|signal|select|socket|fcntl|termios|resource|time|msvcrt|winreg)' has no attribute`)
-	unpackRe    = regexp.MustCompile(`values to unpack`)
-	editModeRe  = regexp.MustCompile(`(?i)edit ?mode`)
+	// A numbered look-up in the file itself, as opposed to in something the script made.
+	sceneIndexRe = regexp.MustCompile(`bpy\.data\.\w+\[|scene\.objects\[|\.selected_\w+\[`)
+	indexedRe    = regexp.MustCompile(`(\w+)(?:\.\w+)*\[`)
+	setsStateRe  = regexp.MustCompile(`bpy\.ops\.\w+\.(\w*_add|primitive_\w+)\(|objects\.new\(|objects\.active\s*=|\.select_set\(|mode_set\(`)
+	gpuEnumRe    = regexp.MustCompile(`enum "(CUDA|OPTIX|HIP|ONEAPI|METAL)" not found`)
+	osAttrRe     = regexp.MustCompile(`module '(os|ctypes|signal|select|socket|fcntl|termios|resource|time|msvcrt|winreg)' has no attribute`)
+	unpackRe     = regexp.MustCompile(`values to unpack`)
+	headlessRe   = regexp.MustCompile(`(?i)\bblender\s+(-b|--background)\b|\bheadless\b|\bbackground mode\b`)
+	uiContextRe  = regexp.MustCompile(`bpy\.context\.(region|region_data|area|space_data|window|screen)\b|bpy\.ops\.(view3d|screen|ui)\.`)
+	missingOpRe  = regexp.MustCompile(`Calling operator "bpy\.ops\.\w+\.\w+" error, could not be found`)
+	rootFileRe   = regexp.MustCompile(`Cannot open file /[^/\s]+ for writing`)
+	digitsRe     = regexp.MustCompile(`\d+`)
+	addonRe      = regexp.MustCompile(`(?i)add-?on|addon_utils|\badd ons?\b|plug-?ins?\b|\bextensions?\b|rigify|node ?wrangler|sapling|a\.? ?n\.? ?t\.? landscape|extra (objects|curves)|blenderkit`)
+	editModeRe   = regexp.MustCompile(`(?i)edit ?mode`)
 )
 
 // The errors that can come from this computer, the sandbox or a fresh scene
@@ -497,7 +590,7 @@ func scriptBefore(script string, line int) string {
 }
 
 // envReason says why an error may not be the script's fault ("" if it is).
-func envReason(blender bool, e pyError, f pyFrame, goal, runner, script string) string {
+func envReason(blender bool, e pyError, f pyFrame, goal, runner, script string, opSpace bool) string {
 	at := fmt.Sprintf("line %d on %s", f.Line, errLine(e))
 	stmt := statementAt(script, f.Line)
 	if stmt == "" {
@@ -519,8 +612,17 @@ func envReason(blender bool, e pyError, f pyFrame, goal, runner, script string) 
 		return "it stopped on " + t + ", which can come from the sandbox or this computer rather than the script"
 	}
 	low := strings.ToLower(e.Msg)
+	// Blender's window isn't there with -b. A task that says it runs that way
+	// can't blame that; any other script may be meant for the window.
+	noWindow := blender && headlessRe.MatchString(goal) && uiContextRe.MatchString(stmt)
+	// Nor is an operator that doesn't exist a fault of this computer, if Blender
+	// has that family of operators (opSpace) and the task isn't about an add-on,
+	// which a fresh Blender wouldn't have.
+	noOperator := blender && opSpace && missingOpRe.MatchString(e.Msg) && !addonRe.MatchString(goal+"\n"+script)
+	// And no computer lets a script write at the very top of the disk.
+	rootFile := blender && headlessRe.MatchString(goal) && rootFileRe.MatchString(e.Msg) && !readsInputRe.MatchString(script)
 	for _, m := range envMarkers {
-		if strings.Contains(low, m) {
+		if strings.Contains(low, m) && !noWindow && !noOperator && !rootFile {
 			return "it stopped at " + at + ", which can come from this computer, the sandbox or a fresh scene rather than the script"
 		}
 	}
@@ -538,15 +640,18 @@ func envReason(blender bool, e pyError, f pyFrame, goal, runner, script string) 
 	if osAttrRe.MatchString(e.Msg) {
 		return "it uses a call this computer's operating system doesn't have; it may be meant for another computer"
 	}
-	if readsInputRe.MatchString(stmt) || (readsInputRe.MatchString(script) && (e.Type == "IndexError" || unpackRe.MatchString(e.Msg))) {
+	if !noOperator && (readsInputRe.MatchString(stmt) || (readsInputRe.MatchString(script) && (e.Type == "IndexError" || unpackRe.MatchString(e.Msg)))) {
 		return fmt.Sprintf("it stopped at line %d reading command-line arguments, the environment or typed input, which the check doesn't give it", f.Line)
 	}
-	if filesLineRe.MatchString(stmt) {
+	if filesLineRe.MatchString(stmt) && !noOperator && !rootFile {
 		return fmt.Sprintf("it stopped at line %d on a line that reads or writes files, which the sandbox limits", f.Line)
 	}
 	if before := scriptBefore(script, f.Line); blender && selectionRe.MatchString(before) && !setsStateRe.MatchString(before) &&
-		(noAttrRe.MatchString(e.Msg) || editModeRe.MatchString(e.Msg) || unpackRe.MatchString(e.Msg)) {
+		(noAttrRe.MatchString(e.Msg) || editModeRe.MatchString(e.Msg) || unpackRe.MatchString(e.Msg) || e.Type == "IndexError") {
 		return "it works on what you have selected or the mode you're in, which a fresh scene doesn't have"
+	}
+	if blender && e.Type == "IndexError" && sceneIndexRe.MatchString(stmt) {
+		return "it takes something by number that a fresh scene may not have (it may expect your own scene)"
 	}
 	if blender && e.Type == "KeyError" && !strings.Contains(f.Source, ".inputs[") && !strings.Contains(f.Source, ".outputs[") {
 		key := ""
@@ -562,7 +667,7 @@ func envReason(blender bool, e pyError, f pyFrame, goal, runner, script string) 
 	}
 	if blender {
 		switch e.Type {
-		case "AttributeError", "TypeError", "ValueError", "KeyError", "RuntimeError", "ImportError":
+		case "AttributeError", "TypeError", "ValueError", "KeyError", "RuntimeError", "ImportError", "IndexError":
 			if v := otherBlender(goal, runner); v != "" {
 				return "the task is for Blender " + v + ", and this computer checked it with " + runner
 			}
@@ -592,6 +697,88 @@ func otherBlender(goal, runner string) string {
 		}
 	}
 	return ""
+}
+
+// indexesWhatItMade says whether the statement at line takes a number from
+// something the script created itself. Anything else may be short because of
+// what's in the scene it was meant for.
+func indexesWhatItMade(script string, line int) bool {
+	m := indexedRe.FindStringSubmatch(statementAt(script, line))
+	return m != nil && regexp.MustCompile(`(?m)^\s*`+m[1]+`\s*=.*\.new\(`).MatchString(scriptBefore(script, line))
+}
+
+// namesLimit is how much of a critique the real names can take.
+const namesLimit = 800
+
+// crashNames is what blenderCrashNames found.
+type crashNames struct {
+	Kind  string   `json:"kind"` // attr, key or kw
+	Wrong string   `json:"wrong"`
+	Of    string   `json:"of"`
+	Names []string `json:"names"`
+	On    []string `json:"on"`   // what it has that holds the wrong name itself
+	More  bool     `json:"more"` // the list isn't all of them
+}
+
+// line says it for a critique, cut at a name so it can't mislead.
+func (n crashNames) line() string {
+	var list []string
+	size := 0
+	for _, s := range n.Names {
+		if n.Kind == "key" {
+			s = strconv.Quote(s)
+		}
+		if size += len(s) + 2; size > namesLimit {
+			n.More = true
+			break
+		}
+		list = append(list, s)
+	}
+	if n.More {
+		list = append(list, "…")
+	}
+	all := strings.Join(list, ", ")
+	switch n.Kind {
+	case "attr":
+		if len(n.On) > 0 {
+			return fmt.Sprintf("%s has no %s: that's on its %s. What it does have: %s.", n.Of, n.Wrong, strings.Join(n.On, ", "), all)
+		}
+		return fmt.Sprintf("%s has no %s. What it does have: %s.", n.Of, n.Wrong, all)
+	case "key":
+		return fmt.Sprintf("%s has no %q. What it does have: %s.", n.Of, n.Wrong, all)
+	case "kw":
+		return fmt.Sprintf("%s has no keyword %s. The keywords it takes: %s.", n.Of, n.Wrong, all)
+	}
+	return ""
+}
+
+// takeNames takes blenderCrashNames's line out of what a run printed: the
+// traceback has to end the output for the check, and the line isn't for the card.
+func takeNames(res runResult) (runResult, crashNames) {
+	var found crashNames
+	cut := func(s string) string {
+		if !strings.Contains(s, namesMarker) {
+			return s
+		}
+		lines := strings.Split(s, "\n")
+		kept := lines[:0]
+		for _, l := range lines {
+			if strings.HasPrefix(l, "Traceback (most recent call last):") {
+				found = crashNames{} // names come after their traceback: these were an earlier error's
+			}
+			if text, ok := strings.CutPrefix(strings.TrimSpace(l), namesMarker); ok {
+				var n crashNames
+				if json.Unmarshal([]byte(text), &n) == nil && len(n.Names) > 0 {
+					found = n
+				}
+				continue
+			}
+			kept = append(kept, l)
+		}
+		return strings.Join(kept, "\n")
+	}
+	res.Output, res.Stderr = cut(res.Output), cut(res.Stderr)
+	return res, found
 }
 
 // crashType says whether an error means the script itself is broken.
@@ -632,9 +819,14 @@ func lowerFirst(s string) string {
 // unsure (it may be this computer or the sandbox), or skipped.
 func judgeRun(kind, runner, goal, script string, res runResult) resultCheck {
 	blender := kind == "run_blender"
+	res, names := takeNames(res)
+	res, scene, measuring := takeScene(res)
+	if measuring && scene == nil { // the script had finished: this is the measuring's doing, not its
+		res.TimedOut, res.ExitCode = false, 0
+	}
 	c := resultCheck{Runner: runner, Seconds: res.Seconds, Output: capTail(res.Output, 1500)}
 	unsure := func(reason string) resultCheck {
-		c.Outcome = "unsure"
+		c.Outcome, c.Partway = "unsure", blender && !measuring && (res.TimedOut || res.ExitCode != 0)
 		c.Summary = sentence("Ran the script in " + runner + " here but couldn't tell whether it works: " + reason)
 		return c
 	}
@@ -663,13 +855,13 @@ func judgeRun(kind, runner, goal, script string, res runResult) resultCheck {
 		case blender && strings.Contains(res.Output, renderStopMarker):
 			c.Outcome = "passed"
 			c.Summary = fmt.Sprintf("Ran the script in %s here, sandboxed: no errors up to its render, which the check skips (%.1f s).", runner, res.Seconds)
-			return c
+			return withScene(c, scene, goal, script)
 		case haveErr:
 			return unsure("it ran to the end but printed a Python error: " + errLine(e))
 		}
 		c.Outcome = "passed"
 		c.Summary = fmt.Sprintf("Ran the script in %s here, sandboxed: no errors (%.1f s).", runner, res.Seconds)
-		return c
+		return withScene(c, scene, goal, script)
 	}
 	if res.ExitCode != 1 {
 		if blender && (res.ExitCode < 0 || res.ExitCode >= 128) {
@@ -693,10 +885,13 @@ func judgeRun(kind, runner, goal, script string, res runResult) resultCheck {
 		return unsure("it stopped on " + e.Type + " inside " + where + ", not in the script itself")
 	}
 	c.Error, c.Line, c.Source = errLine(e), f.Line, capRunes(f.Source, 200)
-	if why := envReason(blender, e, f, goal, runner, script); why != "" {
+	if names.Wrong != "" && strings.Contains(c.Error, names.Wrong) {
+		c.Names = names.line()
+	}
+	if why := envReason(blender, e, f, goal, runner, script, strings.HasPrefix(names.Of, "bpy.ops.")); why != "" {
 		return unsure(why)
 	}
-	if crashType(blender, e.Type) {
+	if crashType(blender, e.Type) || (blender && e.Type == "IndexError" && strings.HasPrefix(e.Msg, "bpy_prop_collection") && indexesWhatItMade(script, f.Line)) {
 		c.Outcome = "failed"
 		c.Summary = sentence(fmt.Sprintf("The script crashed in %s here at line %d: %s", runner, f.Line, c.Error))
 		return c
@@ -735,6 +930,9 @@ func crashCritique(kind, runner string, c resultCheck) string {
 		b.WriteString("    " + c.Source + "\n")
 	}
 	b.WriteString(c.Error + "\n")
+	if rootFileRe.MatchString(c.Error) {
+		b.WriteString("With blender -b a new file has no path, so bpy.data.filepath is empty and a path built from it lands at the top of the disk. ")
+	}
 	b.WriteString("Fix this so the whole script runs from start to finish without an error. ")
 	// Running stops at the first error: say so, or each round fixes one and
 	// a rewrite brings the next.
@@ -743,7 +941,30 @@ func crashCritique(kind, runner string, c resultCheck) string {
 	} else {
 		b.WriteString("Running stops at the first error, so also check the rest of the script, and keep the parts that already work as they are.")
 	}
+	if c.Names != "" { // last, so the cap can't lose what the rest says
+		return capRunes(b.String(), 1000) + "\n" + c.Names
+	}
 	return capRunes(b.String(), 1000)
+}
+
+// unsureLine is a line for a critique when the script stopped on an error the
+// check couldn't judge: the review may not have seen it, and the next round should.
+func unsureLine(c resultCheck) string {
+	if c.Outcome != "unsure" || c.Error == "" {
+		return ""
+	}
+	s := fmt.Sprintf("\n\nWhen the script was run in %s it stopped at line %d: %s That may come from the computer rather than the script.", c.Runner, c.Line, sentence(c.Error))
+	if c.Names != "" {
+		s += " " + c.Names
+	}
+	return s
+}
+
+// sceneCritique is the next round's critique for a scene that's wrong. It carries
+// the measurements: a model can't see the render, but it can work from numbers.
+func sceneCritique(runner string, c resultCheck) string {
+	return capRunes(fmt.Sprintf("The script ran to the end in %s, but measuring the scene it built found: %s\n%s\nFix this and keep the parts that already work as they are.",
+		runner, c.Error, c.Measured), 2400)
 }
 
 // cutCritique is the next round's critique for a result that was cut off.
@@ -798,13 +1019,7 @@ func (t *TaskManager) checkResult(ctx context.Context, run *taskRun, req taskReq
 	if !req.Loop {
 		return resultCheck{}
 	}
-	run.mu.Lock()
-	kinds := map[string]bool{run.rec.Kind: true}
-	for _, s := range run.rec.Steps {
-		kinds[s.Kind] = true
-	}
-	run.mu.Unlock()
-	kind, script, why := pickScript(kinds, pass.Text)
+	kind, script, why := pickScript(run.allKinds(), pass.Text)
 	if kind == "" {
 		return resultCheck{}
 	}
@@ -813,11 +1028,11 @@ func (t *TaskManager) checkResult(ctx context.Context, run *taskRun, req taskReq
 		why = blocked
 	}
 	if why != "" {
-		c := resultCheck{Round: round, Outcome: "skipped", Runner: runner, Summary: sentence("Didn't run the script: " + why)}
+		c := resultCheck{Round: round, Mend: pass.Mend, Outcome: "skipped", Runner: runner, Summary: sentence("Didn't run the script: " + why)}
 		t.addCheck(run, c)
 		return c
 	}
-	i := t.addCheck(run, resultCheck{Round: round, Outcome: "running", Runner: runner,
+	i := t.addCheck(run, resultCheck{Round: round, Mend: pass.Mend, Outcome: "running", Runner: runner,
 		Summary: "Running the script in " + runner + " here, sandboxed…"})
 	run.mu.Lock()
 	run.rec.Phase = "checking"
@@ -829,12 +1044,35 @@ func (t *TaskManager) checkResult(ctx context.Context, run *taskRun, req taskReq
 		return resultCheck{}
 	}
 	c := otherBlocks(judgeRun(kind, runner, req.Goal, script, res), pass.Text, script)
-	c.Round = round
-	if c.Outcome == "failed" {
+	c.Round, c.Mend = round, pass.Mend
+	switch c.Outcome {
+	case "failed":
 		c.Critique = crashCritique(kind, runner, c)
+	case "wrong_scene":
+		c.Critique = sceneCritique(runner, c)
 	}
 	t.setCheck(run, i, c)
 	return c
+}
+
+// addKinds remembers a plan's kind and its steps' kinds. Call with r.mu held.
+func (r *taskRun) addKinds(p hydraPlan) {
+	if r.kinds == nil {
+		r.kinds = map[string]bool{}
+	}
+	r.kinds[p.Kind] = true
+	for _, s := range p.Steps {
+		r.kinds[s.Kind] = true
+	}
+}
+
+// allKinds is every kind the task's plans have had. A script stays a script
+// when a later plan is labelled something else: going by that plan alone, its
+// edits would be dropped and a crash would go unchecked.
+func (r *taskRun) allKinds() map[string]bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return maps.Clone(r.kinds)
 }
 
 func (t *TaskManager) addCheck(run *taskRun, c resultCheck) int {
@@ -867,10 +1105,13 @@ func (t *TaskManager) dropCheck(run *taskRun, i int) {
 }
 
 // markStopped notes on the last check that Hydra stopped because of it.
-func (t *TaskManager) markStopped(run *taskRun) {
+func (t *TaskManager) markStopped(run *taskRun, round int) {
 	run.mu.Lock()
-	if n := len(run.rec.Checks); n > 0 {
-		run.rec.Checks[n-1].Stopped = true
+	for i := len(run.rec.Checks) - 1; i >= 0; i-- {
+		if c := &run.rec.Checks[i]; c.Round == round && !c.Undone {
+			c.Stopped = true
+			break
+		}
 	}
 	run.mu.Unlock()
 	run.push(true)
@@ -896,11 +1137,18 @@ func lastCheck(rec TaskRecord) resultCheck {
 	return resultCheck{}
 }
 
-// finalCheck is the check of the task's final result: the latest one, if it
-// is from the last round (zero otherwise, when that round had nothing to check).
+// finalCheck is the check of the result the person got: the latest one of the
+// round it came from, leaving out repairs that were taken back (zero when that
+// round had nothing to check).
 func finalCheck(rec TaskRecord) resultCheck {
-	if c := lastCheck(rec); c.Round == rec.Round {
-		return c
+	round := rec.Round
+	if rec.Kept > 0 {
+		round = rec.Kept
+	}
+	for i := len(rec.Checks) - 1; i >= 0; i-- {
+		if c := rec.Checks[i]; c.Round == round && !c.Undone {
+			return c
+		}
 	}
 	return resultCheck{}
 }

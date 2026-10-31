@@ -472,6 +472,9 @@ func (a *App) handleGetSession(w http.ResponseWriter, r *http.Request) {
 			m.Task = &rec
 		} else {
 			m.Status, m.Error = "error", "Interrupted (Chimera was closed while this was being written)."
+			if m.Task != nil && m.Task.Phase != "done" {
+				m.Task.Phase = "error"
+			}
 			interruptChecks(m.Task)
 			stale = true
 		}

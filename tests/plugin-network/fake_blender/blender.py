@@ -4,7 +4,7 @@ without radians. It reports a failed script the way Blender 5 does: a traceback 
 stderr, then "Error: script failed, file: '<path>', exiting.", and exits with the --python-exit-code value.
 hydra_test.py copies this folder to /var/tmp and writes an executable `blender` there: a #! line naming a system
 Python with -I, then this file."""
-import os, runpy, sys, traceback
+import io, os, runpy, sys, traceback
 
 sys.dont_write_bytecode = True  # -I ignores PYTHONDONTWRITEBYTECODE, and the sandbox blocks writes here anyway
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -65,6 +65,12 @@ def main(argv):
             return code
         except BaseException as e:
             report(e, value if what == "file" else "<string>")
+            if sys.excepthook is not sys.__excepthook__:  # Blender calls the hook; its own printing is report's job here
+                out, sys.stderr = sys.stderr, io.StringIO()
+                try:
+                    sys.excepthook(type(e), e, e.__traceback__)
+                finally:
+                    sys.stderr = out
             print("Blender quit", flush=True)
             return exit_code
     print("Blender quit", flush=True)

@@ -62,7 +62,10 @@ func runCheckResult(dataDir, path, goal string) int {
 		if kind != "" && !strings.HasSuffix(strings.ToLower(path), ".py") {
 			c = otherBlocks(c, string(b), script)
 		}
-		if c.Outcome == "failed" {
+		switch c.Outcome {
+		case "wrong_scene":
+			c.Critique = sceneCritique(runner, c)
+		case "failed":
 			c.Critique = crashCritique(kind, runner, c)
 		}
 	}
@@ -71,7 +74,7 @@ func runCheckResult(dataDir, path, goal string) int {
 	switch c.Outcome {
 	case "passed":
 		return 0
-	case "failed":
+	case "failed", "wrong_scene":
 		return 1
 	}
 	return 2

@@ -147,10 +147,12 @@ func (a *App) followStep(ctx context.Context, c *HubClient, id string, emit func
 			cc()
 			return genEvent{Type: "cancelled"}
 		}
+		replayed := false
 		lastErr = c.Events(context.WithoutCancel(ctx), id, func(ev hubEvent) bool {
 			ge := genFromHub(ev)
-			if ev.Type == "delta" && attempt > 0 {
+			if ev.Type == "delta" && attempt > 0 && !replayed {
 				ge.Type = "replay" // a reconnect replays the full text so far
+				replayed = true
 			}
 			switch ev.Type {
 			case "done", "error", "cancelled":
