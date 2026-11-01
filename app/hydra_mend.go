@@ -308,7 +308,7 @@ func (t *TaskManager) mendScript(ctx context.Context, run *taskRun, req taskReq,
 		made++
 		next := passResult{Text: text, Model: pass.Model, Mend: made}
 		c := t.checkResult(ctx, run, req, round, next)
-		if ctx.Err() != nil {
+		if ctx.Err() != nil && c.Outcome != "passed" { // stopped during the look, it had still passed
 			break
 		}
 		switch {

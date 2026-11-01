@@ -153,7 +153,7 @@ func TestRealSceneTails(t *testing.T) {
 	a := checkApp(t, Config{CheckResults: true})
 	a.tools.ext["blender"] = ToolInfo{ID: "blender", Have: true, Path: path, Version: "Blender 5.2.2"}
 	script := realClear + realTable + realCamera + realLook + manyWords(150, 24) + "bpy.ops.render.render(write_still=False)\n"
-	res := a.checkScript(context.Background(), "run_blender", script)
+	res := a.checkScript(context.Background(), "run_blender", "", script)
 	c := judgeRun("run_blender", "Blender 5.2.2", "A scene of a table.", script, res)
 	if !strings.Contains(c.Summary, "up to its render") || !strings.Contains(c.Summary, "objects are in the camera's frame") {
 		t.Fatalf("a long scene line takes the render's line with it: %+v\n%s", c, res.Output)

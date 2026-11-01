@@ -530,13 +530,13 @@ func TestCheckRunsAPythonScriptForReal(t *testing.T) {
 	}
 	a := checkApp(t, Config{CheckResults: true})
 	a.tools.ext["python"] = ToolInfo{ID: "python", Have: true, Path: py, Version: "Python 3.13"}
-	res := a.checkScript(context.Background(), "run_python", "items = [1, 2]\nprint(sum(itms))\n")
+	res := a.checkScript(context.Background(), "run_python", "", "items = [1, 2]\nprint(sum(itms))\n")
 	c := judgeRun("run_python", "Python", "", "", res)
 	if c.Outcome != "failed" || c.Line != 2 || !strings.Contains(c.Error, "NameError") || strings.Contains(res.Stderr, "chimera-test-") {
 		t.Fatalf("a NameError on line 2, paths hidden: %+v\n%s", c, res.Stderr)
 	}
 	home, _ := os.UserHomeDir()
-	res = a.checkScript(context.Background(), "run_python", fmt.Sprintf(`import os
+	res = a.checkScript(context.Background(), "run_python", "", fmt.Sprintf(`import os
 try:
     os.listdir(%q)
     print("home: READABLE")
@@ -559,7 +559,7 @@ except PermissionError:
 	ctx, cancel := context.WithCancel(context.Background())
 	time.AfterFunc(300*time.Millisecond, cancel)
 	start := time.Now()
-	res = a.checkScript(ctx, "run_python", "import time\nwhile True:\n    time.sleep(0.1)\n")
+	res = a.checkScript(ctx, "run_python", "", "import time\nwhile True:\n    time.sleep(0.1)\n")
 	if !res.Skipped || time.Since(start) > 10*time.Second {
 		t.Fatalf("a cancelled check stops promptly: %+v after %s", res, time.Since(start))
 	}

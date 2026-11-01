@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -247,6 +248,38 @@ func (c *OllamaClient) ChatStreamKeep(ctx context.Context, model string, msgs []
 			return chunk.ChatStats, nil
 		}
 	}
+}
+
+// ChatImage asks a model about one picture and gives its whole reply. The model
+// answers straight off, with no thinking: it's a yes-or-no look, and format holds
+// it to that.
+func (c *OllamaClient) ChatImage(ctx context.Context, model, system, user string, image []byte, format json.RawMessage) (string, error) {
+	body := map[string]any{"model": model, "stream": false, "think": false, "keep_alive": "5m", "format": format,
+		"options": map[string]any{"temperature": 0, "num_predict": 400},
+		"messages": []map[string]any{{"role": "system", "content": system},
+			{"role": "user", "content": user, "images": []string{base64.StdEncoding.EncodeToString(image)}}}}
+	b, _ := json.Marshal(body)
+	req, _ := http.NewRequestWithContext(ctx, "POST", c.Base+"/api/chat", bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.hc.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return "", readOllamaError(resp)
+	}
+	var out struct {
+		Message ChatMessage `json:"message"`
+		Error   string      `json:"error"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return "", err
+	}
+	if out.Error != "" {
+		return "", errors.New(out.Error)
+	}
+	return out.Message.Content, nil
 }
 
 type PullProgress struct {

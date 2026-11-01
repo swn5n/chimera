@@ -39,6 +39,7 @@ type runResult struct {
 	Stderr   string `json:"-"` // the end of what it printed as errors, paths hidden
 	TimedOut bool   `json:"-"`
 	NotRun   bool   `json:"-"` // refused, no program, or it couldn't start
+	Look     []byte `json:"-"` // a render of the scene it built, to look at (PNG)
 }
 
 // canSandbox reports whether this computer can safely run an untrusted script.
@@ -66,7 +67,7 @@ func (a *App) runScript(ctx context.Context, kind, script string) runResult {
 	if riskyScript.MatchString(script) {
 		return runResult{NotRun: true, Summary: "Refused: the script touches files, the network or other programs."}
 	}
-	return a.runSandboxed(ctx, kind, script, false)
+	return a.runSandboxed(ctx, kind, script, false, nil)
 }
 
 // watchdog runs a sandboxed command ("$@") and, beside it, waits for its own
@@ -103,6 +104,32 @@ def _chimera_stop_at_render(*args):
 bpy.app.handlers.render_init.append(_chimera_stop_at_render)
 `
 
+// lookBlend is the scene a checked script built, saved for renderLook, and lookPNG
+// what that renders.
+const (
+	lookBlend = "chimera-look.blend"
+	lookPNG   = "chimera-look.png"
+)
+
+// blenderLook renders that scene from its camera, small and on the processor: a
+// look at it needs a picture, not a good one. It's in a Blender of its own, because
+// most scripts stop at their render, where a second one can't start, and because
+// the script's code shouldn't run again.
+const blenderLook = `import bpy, os
+s = bpy.context.scene
+r, c = s.render, s.cycles
+r.engine, c.device, c.samples, c.use_adaptive_sampling, c.use_denoising, c.time_limit = "CYCLES", "CPU", 16, False, False, 20
+k = 512 / max(r.resolution_x * r.pixel_aspect_x, r.resolution_y * r.pixel_aspect_y)
+r.resolution_x, r.resolution_y, r.resolution_percentage = max(16, int(r.resolution_x * k)), max(16, int(r.resolution_y * k)), 100
+r.use_border, r.film_transparent, r.use_compositing, r.use_sequencer = False, False, False, False
+if hasattr(r.image_settings, "media_type"):
+    r.image_settings.media_type = "IMAGE"
+r.use_multiview = False
+r.image_settings.file_format, r.image_settings.color_mode = "PNG", "RGB"
+r.filepath = os.path.join(os.getcwd(), "` + lookPNG + `")
+bpy.ops.render.render(write_still=True)
+`
+
 // sceneMarker starts the line blenderSceneFacts prints; sceneStartMarker says the
 // script had finished and it was starting, so that a scene too heavy to measure
 // can't turn a script that ran into one that didn't.
@@ -119,6 +146,7 @@ const (
 // outside the frame is proof an object's out of it; rays only show what's reachable,
 // since they miss what's small and stop at glass, so a ray that misses proves nothing.
 const blenderSceneFacts = `sys._chimera_cube = getattr(bpy.data.objects.get("Cube"), "session_uid", None)
+sys._chimera_dir = os.getcwd()
 def _chimera_pose(scene, dg, data, where, seen, pts, low, high, vector):
     # A view that frames the main objects, from the side the camera is on, tried
     # with rays: a model can use numbers, but can't work out a rotation.
@@ -309,6 +337,11 @@ def _chimera_scene():
         keep.append(r)
     facts["objects"] = keep
     print("\n` + sceneMarker + `" + json.dumps(facts), file=_chimera_err, flush=True)
+    if cam and cam.type == "CAMERA" and scene.render.engine != "BLENDER_WORKBENCH":  # its light is the display's, which Cycles can't copy
+        for i in bpy.data.images:
+            if i.is_dirty and i.source == "GENERATED":
+                i.pack()  # pixels set in code aren't saved otherwise
+        bpy.ops.wm.save_as_mainfile(filepath=os.path.join(sys._chimera_dir, "` + lookBlend + `"), copy=True, check_existing=False)
 sys._chimera_scene = _chimera_scene
 `
 
@@ -490,7 +523,7 @@ sys.excepthook = _chimera_crash
 
 // runSandboxed runs a script (kind run_python or run_blender) in the sandbox
 // and says how it went. stopAtRender ends a Blender script at its first render.
-func (a *App) runSandboxed(ctx context.Context, kind, script string, stopAtRender bool) runResult {
+func (a *App) runSandboxed(ctx context.Context, kind, script string, stopAtRender bool, look func(runResult) bool) runResult {
 	dir, err := os.MkdirTemp("", "chimera-test-*")
 	if err != nil {
 		return runResult{NotRun: true, Summary: "Couldn't make a temporary folder: " + err.Error()}
@@ -542,23 +575,13 @@ func (a *App) runSandboxed(ctx context.Context, kind, script string, stopAtRende
 
 	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	cmd := exec.CommandContext(cctx, argv[0], argv[1:]...)
-	cmd.Dir = dir
-	cmd.Env = scriptEnv(dir)
-	cmd.Stdin = alive
+	cmd := watchedCommand(cctx, argv, dir, alive, keep)
 	both, errOut := &tailBuffer{max: 4000}, &tailBuffer{max: 19000} // room for the names line on top of a traceback
 	if stopAtRender {
 		both.max = 12000 // a check's scene line has to fit whole, or what came before it goes with it
 	}
 	cmd.Stdout = both
 	cmd.Stderr = io.MultiWriter(both, errOut)
-	// Its own process group, so stopping it also stops whatever it started.
-	// Stopping goes through the watchdog, which also reaches a script that
-	// left the group; WaitDelay and killGroup are the backstops.
-	newProcessGroup(cmd)
-	cmd.Cancel = func() error { keep.Close(); return nil }
-	cmd.WaitDelay = 5 * time.Second
-	hideWindow(cmd)
 	start := time.Now()
 	err = cmd.Run()
 	killGroup(cmd) // anything it left behind
@@ -605,7 +628,68 @@ func (a *App) runSandboxed(ctx context.Context, kind, script string, stopAtRende
 	if res.OK && how != "" {
 		res.Summary += " (" + how + ")"
 	}
+	if look != nil && look(res) {
+		res.Look = renderLook(ctx, name, dir)
+	}
 	return res
+}
+
+// watchedCommand is a sandboxed run under the watchdog, in its own process group, so
+// stopping it also stops whatever it started. Stopping goes through the watchdog,
+// which also reaches a script that left the group; WaitDelay and killGroup are the
+// backstops.
+func watchedCommand(ctx context.Context, argv []string, dir string, alive, keep *os.File) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	cmd.Dir = dir
+	cmd.Env = scriptEnv(dir)
+	cmd.Stdin = alive
+	newProcessGroup(cmd)
+	cmd.Cancel = func() error { keep.Close(); return nil }
+	cmd.WaitDelay = 5 * time.Second
+	hideWindow(cmd)
+	return cmd
+}
+
+// renderLook renders the scene a checked script saved in dir, in the same sandbox.
+// Anything that goes wrong just means there's no picture to look at. It loads a
+// file the script made, so that file's own code stays off.
+func renderLook(ctx context.Context, blender, dir string) []byte {
+	blend := filepath.Join(dir, lookBlend)
+	if _, err := os.Stat(blend); err != nil {
+		return nil
+	}
+	// The script had this folder first, so what's called lookPNG now isn't a render.
+	out := filepath.Join(dir, lookPNG)
+	if err := os.Remove(out); err != nil && !os.IsNotExist(err) {
+		return nil
+	}
+	argv, _, ok := sandboxed(blender, []string{"-b", "--factory-startup", "--disable-autoexec", blend, "--python-expr", blenderLook, "--"}, dir)
+	if !ok {
+		return nil
+	}
+	alive, keep, err := os.Pipe()
+	if err != nil {
+		return nil
+	}
+	defer alive.Close()
+	defer keep.Close()
+	cctx, cancel := context.WithTimeout(ctx, lookRenderTime)
+	defer cancel()
+	cmd := watchedCommand(cctx, append([]string{"/bin/sh", "-c", watchdog, "chimera-check"}, argv...), dir, alive, keep)
+	err = cmd.Run()
+	killGroup(cmd)
+	if err != nil {
+		return nil
+	}
+	// This runs outside the sandbox, so it won't follow a link or wait on a pipe.
+	if fi, err := os.Lstat(out); err != nil || !fi.Mode().IsRegular() || fi.Size() > lookMaxBytes {
+		return nil
+	}
+	png, err := os.ReadFile(out)
+	if err != nil {
+		return nil
+	}
+	return png
 }
 
 // tailBuffer keeps the last max bytes written to it. The two goroutines that

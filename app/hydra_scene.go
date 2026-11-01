@@ -414,6 +414,7 @@ func withScene(c resultCheck, f *sceneFacts, goal, script string) resultCheck {
 	if f == nil {
 		return c
 	}
+	c.Scene = f
 	faults := sceneFaults(f, goal, script)
 	if len(faults) == 0 {
 		if f.Camera != nil && f.Total > 0 && !f.Animated {

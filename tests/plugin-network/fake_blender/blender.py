@@ -4,7 +4,7 @@ without radians. It reports a failed script the way Blender 5 does: a traceback 
 stderr, then "Error: script failed, file: '<path>', exiting.", and exits with the --python-exit-code value.
 hydra_test.py copies this folder to /var/tmp and writes an executable `blender` there: a #! line naming a system
 Python with -I, then this file."""
-import io, os, runpy, sys, traceback
+import io, os, runpy, shutil, sys, traceback
 
 sys.dont_write_bytecode = True  # -I ignores PYTHONDONTWRITEBYTECODE, and the sandbox blocks writes here anyway
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -31,13 +31,15 @@ def main(argv):
     if "--version" in args or "-v" in args:
         print(BANNER)
         return 0
-    exit_code, actions, i = 0, [], 0
+    exit_code, actions, i, blend = 0, [], 0, None
     while i < len(args):
         a = args[i]
         if a == "--":
             break
-        if a in ("-b", "--background", "--factory-startup"):
+        if a in ("-b", "--background", "--factory-startup", "--disable-autoexec"):
             i += 1
+        elif a.endswith(".blend"):
+            blend, i = a, i + 1
         elif a == "--python-exit-code" and i + 1 < len(args):
             exit_code, i = int(args[i + 1]), i + 2
         elif a == "--python-expr" and i + 1 < len(args):
@@ -50,6 +52,9 @@ def main(argv):
             print("Error: unknown argument %r" % a, file=sys.stderr)
             return 1
     print(BANNER, flush=True)
+    if blend:  # the check's look at a saved scene: the "picture" is whatever the script saved
+        shutil.copy(blend, "chimera-look.png")
+        return 0
     sys.path.insert(0, HERE)  # import bpy / import mathutils find the stubs
     sys.argv = list(argv)
     import bpy  # noqa: F401  (loaded before any script, as in Blender)

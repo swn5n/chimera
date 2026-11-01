@@ -60,6 +60,9 @@ type resultCheck struct {
 	Faults   int     `json:"-"`                 // wrong_scene: how many things are wrong
 	Partway  bool    `json:"-"`                 // unsure: the script stopped before its end
 	Critique string  `json:"-"`
+
+	Scene *sceneFacts `json:"-"` // what was measured, for a look at the render to go with
+	Look  bool        `json:"-"` // wrong_scene: only a model's look says so
 }
 
 // notDone says whether the check overrules any review: the script crashed, it
@@ -83,7 +86,8 @@ func (c resultCheck) sameFault(prev resultCheck) bool {
 
 // grade says how far a round's result got, for choosing between rounds and
 // repairs: 5 a script with nothing known to be wrong, 4 and a bit one that runs
-// but builds the wrong scene (more for fewer faults, then for more of it in frame),
+// but builds the wrong scene (more for fewer faults, then for more of it in frame;
+// highest if that's only a model's look at it, which a measured fault doesn't beat),
 // 3.5 one that stopped on an error nobody can judge, 3 one that runs part of the
 // way, 2 one that doesn't start, 1 no script at all, 0 cut off. An unsure script that
 // ran to its end ranks with passed: it's no sign of a fault, and the reviewer still
@@ -94,6 +98,8 @@ func (c resultCheck) grade() float64 {
 		return 0
 	case c.Outcome == "":
 		return 1
+	case c.Look:
+		return 4.9 + 0.09*c.Seen // an opinion, so above anything measured; Seen is its own here
 	case c.Outcome == "wrong_scene":
 		return 4 + 0.3*float64(3-clampInt(c.Faults, 1, 3)) + 0.29*c.Seen
 	case c.Outcome == "unsure" && c.Partway:
@@ -401,8 +407,11 @@ func (a *App) scriptBlocker(kind, script string) (runner, why string) {
 
 // checkScript runs a long task's script in the sandbox, stopping a Blender
 // script at its first render. The caller has asked scriptBlocker first.
-func (a *App) checkScript(ctx context.Context, kind, script string) runResult {
-	return a.runSandboxed(ctx, kind, script, true)
+func (a *App) checkScript(ctx context.Context, kind, goal, script string) runResult {
+	return a.runSandboxed(ctx, kind, script, true, func(res runResult) bool {
+		c := judgeRun(kind, "", goal, script, res)
+		return kind == "run_blender" && res.ExitCode == 0 && !res.TimedOut && c.Outcome == "passed" && wantsLook(goal, script, c.Scene) && a.canLook()
+	})
 }
 
 // ---------- reading what happened ----------
@@ -830,7 +839,7 @@ func judgeRun(kind, runner, goal, script string, res runResult) resultCheck {
 	blender := kind == "run_blender"
 	res, names := takeNames(res)
 	res, scene, measuring := takeScene(res)
-	if measuring && scene == nil { // the script had finished: this is the measuring's doing, not its
+	if measuring { // the script had finished: this is the measuring's doing, not its
 		res.TimedOut, res.ExitCode = false, 0
 	}
 	c := resultCheck{Runner: runner, Seconds: res.Seconds, Output: capTail(res.Output, 1500)}
@@ -1047,13 +1056,17 @@ func (t *TaskManager) checkResult(ctx context.Context, run *taskRun, req taskReq
 	run.rec.Phase = "checking"
 	run.mu.Unlock()
 	run.push(true)
-	res := t.app.checkScript(ctx, kind, script)
+	res := t.app.checkScript(ctx, kind, req.Goal, script)
 	if ctx.Err() != nil {
 		t.dropCheck(run, i)
 		return resultCheck{}
 	}
 	c := otherBlocks(judgeRun(kind, runner, req.Goal, script, res), pass.Text, script)
 	c.Round, c.Mend = round, pass.Mend
+	if c.Outcome == "passed" && len(res.Look) > 0 && wantsLook(req.Goal, script, c.Scene) {
+		t.setCheck(run, i, resultCheck{Round: round, Mend: pass.Mend, Outcome: "running", Runner: runner, Summary: "Looking at a render of the scene…"})
+		c = t.app.lookAt(ctx, c, req.Goal, res.Look)
+	}
 	switch c.Outcome {
 	case "failed":
 		c.Critique = crashCritique(kind, runner, c)

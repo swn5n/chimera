@@ -29,6 +29,10 @@ func runCheckResult(dataDir, path, goal string) int {
 	}
 	a := &App{dataDir: dataDir, cfg: Config{DeviceName: friendlyComputerName(), CheckResults: true}, quit: make(chan struct{})}
 	a.tools = NewToolScanner(a)
+	a.perf = NewPerfStore(dataDir)
+	a.sys = detectSysInfo() // what fits here decides which model can look at a render
+	a.ollama = NewOllamaMonitor(a, "")
+	a.ollama.check()
 	if p := findPython(); p != "" {
 		a.tools.ext["python"] = ToolInfo{ID: "python", Have: true, Path: p, Version: strings.TrimSpace(runOut(5*time.Second, p, "--version"))}
 	}
@@ -58,9 +62,13 @@ func runCheckResult(dataDir, path, goal string) int {
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
 		fmt.Fprintf(os.Stderr, "running it in %s, sandboxed…\n", runner)
-		c = judgeRun(kind, runner, goal, script, a.checkScript(ctx, kind, script))
+		res := a.checkScript(ctx, kind, goal, script)
+		c = judgeRun(kind, runner, goal, script, res)
 		if kind != "" && !strings.HasSuffix(strings.ToLower(path), ".py") {
 			c = otherBlocks(c, string(b), script)
+		}
+		if c.Outcome == "passed" && len(res.Look) > 0 && wantsLook(goal, script, c.Scene) {
+			c = a.lookAt(ctx, c, goal, res.Look)
 		}
 		switch c.Outcome {
 		case "wrong_scene":

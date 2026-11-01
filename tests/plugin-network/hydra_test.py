@@ -155,7 +155,7 @@ def setup():
         "parameters": PARAMS, "license": "Apache License 2.0 (test copy)"}}})
     fake_ollama(OLLAMA_B, "ollama_B", {"models": [MID], "blob_dir": os.path.join(WORK, "blobs_B")})
     start("A", ["--data-dir", os.path.join(WORK, "A"), "--ui-port", str(A_UI), "--hub-port", str(HUB), "--no-open",
-                "--ollama", "http://127.0.0.1:%d" % OLLAMA_A], {"PATH": FAKE + os.pathsep + os.environ.get("PATH", "")})
+                "--ollama", "http://127.0.0.1:%d" % OLLAMA_A], {"CHIMERA_LOOK_MODEL": "big:70b", "PATH": FAKE + os.pathsep + os.environ.get("PATH", "")})
     start("B", ["--data-dir", os.path.join(WORK, "B"), "--ui-port", str(B_UI), "--no-open", "--ollama", "http://127.0.0.1:%d" % OLLAMA_B], {})
     wait_for(lambda: api(A_UI, "GET", "/api/ping")[0] == 200, "A")
     wait_for(lambda: api(B_UI, "GET", "/api/ping")[0] == 200, "B")
@@ -546,6 +546,25 @@ def section11():
     us = (jobs(since(n0), "mend") or [{}])[0].get("user_all", "")
     check("11.9c a task that never mentions a camera still has to show what it names: [wrong_scene, passed]", last.get("type") == "done" and
           [(c.get("outcome"), c.get("mend", 0)) for c in cs] == [("wrong_scene", 0), ("passed", 1)] and "doesn't show chimera_mug" in us, brief(rec, last) + us[-300:])
+
+    n0 = mark()
+    rec, last, evs, _ = run_task("%s: create a blender scene of a mug on a table" % "BLENDERUNSEEN", loop=True)
+    cs, c0, c1 = checks_of(rec)
+    us = (jobs(since(n0), "mend") or [{}])[0].get("user_all", "")
+    check("11.9d a scene that measures fine but whose render doesn't show it goes to a repair: [wrong_scene, passed]", last.get("type") == "done" and
+          [(c.get("outcome"), c.get("mend", 0)) for c in cs] == [("wrong_scene", 0), ("passed", 1)] and "can't make out mug, table" in us, brief(rec, last) + us[-300:])
+    check("11.9d the card says what was seen, on the computer that started the task", "big:70b can make out mug, table" in c1.get("summary", "") and
+          all(c["at"] == "A" for c in jobs(since(n0), "look")) and len(jobs(since(n0), "look")) == 2, c1.get("summary", ""))
+
+    rec, last, evs, _ = run_task("%s: create a blender scene of a mug on a table" % "BLENDERSTAYSDARK", loop=True)
+    m = saved(evs)
+    check("11.9d a render that never shows it ends the task with a note", last.get("type") == "done" and "can't make out mug" in (m.get("note") or ""), brief(rec, last) + str(m.get("note")))
+
+    n0 = mark()
+    rec, last, evs, _ = run_task("%s: create a blender scene of a mug on a table" % "BLENDERBADLOOK", loop=True)
+    cs, c0, c1 = checks_of(rec)
+    check("11.9d a look that can't be read changes nothing", last.get("type") == "done" and [c.get("outcome") for c in cs] == ["passed"] and
+          len(jobs(since(n0), "look")) == 1 and "reviewer" in [c["job"] for c in since(n0)], brief(rec, last))
 
     n0 = mark()
     rec, last, evs, _ = run_task(goalc % "BLENDERSTAYSOFF", loop=True)

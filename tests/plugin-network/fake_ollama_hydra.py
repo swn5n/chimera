@@ -20,8 +20,8 @@ the reviewer sends back; their later combine answers with edits: a fill light (B
 crash, or for BLENDERMISS a FIND that's nowhere. BLENDERGONE's later plan is unreadable, whichever model is asked, as is
 BLENDERGONE3's third. BLENDERSTOP's repair takes 4 s, for cancelling it, as does BLENDERSTOPCUT's, whose first result was cut
 off. BLENDERUNCH crashes and its edits never land. BLENDERBADLATER goes from a crash to a script that doesn't start. BLENDERPROSE's first combine has no script. BLENDERLONG has six steps, the first with a long output.
-BLENDERNAMES crashes on a misspelt attribute of one of bpy's objects. BLENDERUNSHOWN prints a scene with what the task named out of shot, and a repair brings it in. BLENDEROFFSHOT prints a scene its camera can't see, as the check's measuring would, and a repair moves the camera; BLENDERSTAYSOFF's repairs change nothing. BLENDERUNSURE is sent back with a script the check is unsure of. BLENDERCHAIN's plan is a chain of three steps. PYKIND's later plan is labelled general. TEALOOP is a guide, with no script, that the reviewer sends back once."""
-import hashlib, json, os, sys, threading, time
+BLENDERUNSEEN passes the measuring but its render shows nothing asked for until a repair; BLENDERSTAYSDARK never does; BLENDERBADLOOK gets a look that can't be read. BLENDERNAMES crashes on a misspelt attribute of one of bpy's objects. BLENDERUNSHOWN prints a scene with what the task named out of shot, and a repair brings it in. BLENDEROFFSHOT prints a scene its camera can't see, as the check's measuring would, and a repair moves the camera; BLENDERSTAYSOFF's repairs change nothing. BLENDERUNSURE is sent back with a script the check is unsure of. BLENDERCHAIN's plan is a chain of three steps. PYKIND's later plan is labelled general. TEALOOP is a guide, with no script, that the reviewer sends back once."""
+import base64, hashlib, json, os, sys, threading, time
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 
 PORT, LOG, CONF = int(sys.argv[1]), sys.argv[2], json.load(open(sys.argv[3]))
@@ -94,6 +94,14 @@ backdrop = bpy.data.objects.new("chimera_backdrop", None)
 scene.collection.objects.link(backdrop)
 seen = 0
 print('chimera-check: scene {"camera": {"name": "chimera_cam", "at": [0, -5, 2], "ahead": [0, 1, 0], "lens": 50, "type": "PERSP"}, "objects": [{"name": "chimera_backdrop", "at": [9, 9, 9], "size": [2, 2, 2], "hits": %d, "frame": %s}], "total": 1, "seen": %d, "out": %d, "filled": %s, "cube": false, "empty": [], "animated": false, "span": [[8, 8, 8], [10, 10, 10]], "pose": {"at": [9, -3, 9], "rotation": [1.5708, 0, 0], "sees": 1}}' % (seen * 500, "true" if seen else "false", seen, 1 - seen, seen * 0.3))""",
+    "looked": """import bpy
+
+scene = bpy.context.scene
+backdrop = bpy.data.objects.new("chimera_backdrop", None)
+scene.collection.objects.link(backdrop)
+seen = 0
+open("chimera-look.blend", "w").write("seen=%d" % seen)
+print('chimera-check: scene {"camera": {"name": "chimera_cam", "at": [0, -5, 2], "ahead": [0, 1, 0], "lens": 50, "type": "PERSP"}, "objects": [{"name": "chimera_mug", "at": [0, 0, 1], "size": [1, 1, 1], "hits": 30, "frame": true}, {"name": "chimera_table", "at": [0, 0, 0], "size": [2, 2, 1], "hits": 400, "frame": true}], "total": 2, "seen": 2, "out": 0, "filled": 0.3, "cube": false, "empty": [], "animated": false, "span": [[-1, -1, 0], [1, 1, 2]], "shown": ["chimera", "mug", "table"], "hidden": [], "pose": {"at": [9, -3, 9], "rotation": [1.5708, 0, 0], "sees": 2}}')""",
     "unshown": """import bpy
 
 scene = bpy.context.scene
@@ -168,7 +176,8 @@ BLENDER_MARKS = {"BLENDERCRASH": ("crash", "fixed"), "BLENDERSAME": ("crash", "c
                  "BLENDERSTUCK": ("crash", "crash"), "BLENDERWHOLE": ("crash", "crash"), "BLENDERBADLATER": ("crash", "crash"),
                  "BLENDERPROSE": ("crash", "crash"), "BLENDERLONG": ("fixed", "fixed"), "BLENDERUNCH": ("crash", "crash"),
                  "BLENDERSTOPCUT": ("cut", "crash"), "BLENDERUNSURE": ("scene", "scene"), "BLENDERNAMES": ("names", "names"), "BLENDERCHAIN": ("fixed", "fixed"),
-                 "BLENDEROFFSHOT": ("offshot", "offshot"), "BLENDERSTAYSOFF": ("offshot", "offshot"), "BLENDERUNSHOWN": ("unshown", "unshown")}
+                 "BLENDEROFFSHOT": ("offshot", "offshot"), "BLENDERSTAYSOFF": ("offshot", "offshot"), "BLENDERUNSHOWN": ("unshown", "unshown"),
+                 "BLENDERUNSEEN": ("looked", "looked"), "BLENDERSTAYSDARK": ("looked", "looked"), "BLENDERBADLOOK": ("looked", "looked")}
 CODE_MARKS = {"PYCRASH": ("py_crash", "py_fixed"), "PYINPUT": ("py_input", "py_input"), "PYMEND": ("py_crash", "py_crash"),
               "PYKIND": ("py_crash", "py_crash")}
 SENT_BACK = ("BLENDEREDIT", "BLENDERONE", "BLENDERWORSE", "BLENDERGONE", "BLENDERGONE3", "BLENDERSTOP", "BLENDERMISS",
@@ -227,7 +236,7 @@ def mend_reply(mark, user):
         return PY_EDIT
     if mark == "BLENDERWHOLE":
         return "```python\n%s\n```" % SCRIPTS["fixed"]
-    if mark in ("BLENDEROFFSHOT", "BLENDERUNSHOWN"):
+    if mark in ("BLENDEROFFSHOT", "BLENDERUNSHOWN", "BLENDERUNSEEN"):
         return "<<<<<<< FIND\nseen = 0\n=======\nseen = 1\n>>>>>>> END"
     if mark == "BLENDERSTUCK":
         old, new = ('print("chimera_backdrop ready")', 'print("ready")') if n == 1 else ('print("ready")', 'print("ok")')
@@ -309,6 +318,7 @@ def job_of(body):
     for prefix, job in (("You are Hydra, the planner", "planner"), ("You are Hydra's reviewer", "reviewer"),
                         ("You are one worker in Chimera", "worker"), ("You are Hydra's final editor", "combine"),
                         ("You repair one script in Chimera", "mend"),
+                        ("You check a rendered picture", "look"),
                         ("You decide whether a request should be handled by a tool", "gate"),
                         ("You maintain the shared library", "library"), ("You check entries before", "library")):
         if sys_msg.startswith(prefix):
@@ -453,7 +463,7 @@ class H(BaseHTTPRequestHandler):
             if not m:
                 return self.send({"error": "model '%s' not found" % name}, 404)
             arch = m.get("arch", "llama")
-            out = {"capabilities": ["completion"], "model_info": dict(ARCH[arch], **{"general.architecture": arch})}
+            out = {"capabilities": ["completion", "vision"] if name == "big:70b" else ["completion"], "model_info": dict(ARCH[arch], **{"general.architecture": arch})}
             out.update(extra)
             return self.send(out)
         if self.path == "/api/create":
@@ -486,6 +496,12 @@ class H(BaseHTTPRequestHandler):
                                     "num_ctx": opts.get("num_ctx"), "num_predict": opts.get("num_predict"),
                                     "critique": critique, "user": user[:300], "user_all": user if job in ("worker", "combine", "mend", "planner") else "",
                                     "edits": "<<<<<<< FIND" in sysmsg}) + "\n")
+            if job == "look":  # what a look says goes by the "picture", which the script wrote
+                if "BLENDERBADLOOK" in user:
+                    return self.send({"message": {"role": "assistant", "content": "I can see a mug."}, "done": True})
+                seen = base64.b64decode(next(m["images"][0] for m in body["messages"] if m.get("images"))).strip() == b"seen=1"
+                things = [{"name": "mug", "visible": seen}, {"name": "table", "visible": seen}]
+                return self.send({"message": {"role": "assistant", "content": json.dumps({"things": things, "blank": False})}, "done": True})
             text, reason = reply(model, job, body), "stop"
             if isinstance(text, tuple):
                 text, reason = text

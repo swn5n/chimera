@@ -382,3 +382,68 @@ taken the rules about as far as they go. What's left needs something that can lo
 a step in each and finished last every time, at 134 to 154 s, while the others were done at 40 to 93 s, so it added about 50 to 85 s to
 those rounds. No step failed. It doesn't change the left-out hold rule's case much either way: turning FX4's thinking off is still the
 thing to try first.
+
+## The look (Nov 1)
+
+Word rules had gone as far as they could: a cup buried in a 1.5 m cube and a camera that saw nothing both passed. So once a scene passes
+everything else, a vision model on the same computer now looks at a small render and says what it can make out (`app/hydra_look.go`).
+
+**How it works.** At the end of measuring, the prelude saves the scene. If the goal asks for a scene, a second Blender in the same
+sandbox loads that file with its code off and renders 512 pixels at 16 samples on the processor, under a second here. It's a second
+Blender because most scripts stop at their render, where another can't start, and so the script's code never runs again. The model
+gets the goal and the picture and lists the physical objects asked for, seen or not, as JSON. The check goes to `wrong_scene` if the
+picture is blank or strictly more than half of those can't be seen, and repairs get that along with the measurements. If the task says what
+the camera is on, or there's a second camera, only seeing none of it counts. A check with a look takes 4 to 5 seconds, 11 to 13 if
+the model has to load. Anything that goes wrong, no model, no answer, an answer it can't read, leaves the check as it was.
+
+**Measured first.** Before any code, 135 scenes the reviewers had labelled by eye were rendered and put to two vision models:
+
+| Rule | qwen3.8:27b: good flagged | bad caught | gemma4:12b: good flagged | bad caught |
+|---|---|---|---|---|
+| Any one thing missing | 19 of 77 | 57 of 58 | 27 of 77 | 58 of 58 |
+| The first thing missing | 6 | 50 | 11 | 49 |
+| **Most of them missing** | **4** | **54** | 9 | 52 |
+| All of them missing | 1 | 46 | 3 | 45 |
+
+Most of the good ones it flagged really were poor: a nearly black guitar, a bridge cropped until the train was a red band.
+
+**The final figures.** These go through the real sandbox, the rules and the look together:
+
+| Scenes | Good flagged | Bad caught | Rules alone caught |
+|---|---|---|---|
+| 147 the rule was chosen on | 4 of 83 (2 by the look) | 56 of 64 | 40 |
+| 40 from gemma4:12b, held out | 0 of 13 | 15 of 27 | 4 |
+
+The held-out row is the honest one, though its 13 good scenes only bound the false-alarm rate at about 21%, and the prompt below was written
+after seeing those pictures. The labels are one reviewer's eye, or mine. No Claude output is training data here: nothing is trained.
+
+**What the review changed.** The first prompt said "the main things the request names", so "a key light and a camera" counted as things
+missing from a perfect picture: on goals nobody tuned on, 6 of 9 good pictures were flagged. It now asks only for physical objects in the
+shot. A safety hole is closed: a script could leave a link at the picture's path, and the app, outside the sandbox, would read whatever
+it pointed at and send it to the model, or hang on a pipe. The path is now cleared first and read only if it's a plain small file. Also: a
+Workbench scene isn't looked at, since Cycles can't copy its light; textures painted in code are packed before the save; Stop during a
+look keeps the pass; a look's fault ranks above a measured one, so a repair that really breaks a scene is taken back; only the model that was
+measured gets to judge (`CHIMERA_LOOK_MODEL` tries another); and goals that can't use a picture don't pay for a render.
+
+**Real tasks on the final build**, the same six goals as before, from a test asker with all three computers:
+
+| Goal | Before the look | With it | Time | What it made |
+|---|---|---|---|---|
+| Coffee cup, table, lamp | Passed, cup buried | Passed | 4 min | All three there, dim |
+| Bowl of fruit | Passed, fruit under the table | Passed | 2 min 40 s | Bowl of fruit on a table, the bowl oversized |
+| Campfire, logs, tent | Passed, the best of the set | Note says it shows nothing | 3 min 35 s | A pale ball: rightly not passed |
+| Teapot, two cups, tray | Stopped, with a note | Stopped, with a note | 2 min 10 s | `primitive_teapot_add` doesn't exist |
+| Red bicycle, brick wall | Passed, camera sees nothing | Note says it can't see them | 6 min 31 s | Parts of a bicycle, apart |
+| Island, palm, pier | Passed, a poor close view | Passed | 5 min 4 s | Palm and pier on an island, clearly |
+
+These are single runs, and the campfire shows how much they vary: the same goal did better last time. Nothing empty passed this time. Three
+pictures are about what was asked for, and the other three say they aren't. That's the point: a reply can now be trusted when it
+doesn't carry a note. What's still missing is skill: repairs get told what can't be seen, but a model that can't build a bicycle
+doesn't learn to from that.
+
+**Still open.**
+- The look's catch rate on held-out scenes is 56%: on low-contrast pictures the model tends to confirm what the request named.
+- It only runs on a computer with qwen3.8, so a task started from FX4 or FX2 gets no look. The pool could lend one, but a worker on an older
+  build would drop the picture and answer blind, so that needs a version bump first.
+- Two wrong names can take turns (`FFMPEG`, `H264`), which the same-fault rule doesn't see, and that spent 16 repairs in one earlier run.
+- The picture isn't shown on the task card, and the repair model doesn't see it.
