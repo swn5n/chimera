@@ -1,6 +1,19 @@
-# Chimera 0.7.0
+# Chimera 0.8.0
 
 Share idle GPUs — and the tools on them — with friends through Ollama, SheepIt style. One person hosts the pool; everyone else's Chimera finds it and joins on its own — on the same Wi-Fi automatically, and across the internet once you point it at the host's address. Press Connect to lend your GPU: prompts from the pool run on your models, and you earn credits for the work.
+
+## New in 0.8
+
+This one is about **Keep going until done**: long tasks that used to look finished without being finished.
+
+- **Long tasks spread across your computers.** Each step now goes to the computer that will finish it soonest, going by how long steps have really taken there, not to the biggest model. Chats and the final combine work as before.
+- **Scripts get repaired, not rewritten.** When a script crashes, a model gets the error and Blender's real names and fixes that spot, up to 8 times in a round. Later rounds edit the result instead of starting again, and the best round is the one you get.
+- **The scene is checked as well as the script.** A task that asks for a scene needs a camera, and that camera has to show what you named, whether or not you mentioned a camera. Empty objects and a leftover default cube are caught too.
+- **A model looks at the picture.** Once a scene passes everything else, a small render goes to a vision model on your computer, which says what it can make out. If the picture is blank or most of what you asked for can't be seen, the script goes back for repair. If it still can't be fixed, the reply says so in a note.
+
+So a reply with no note has been run, measured and looked at. It doesn't mean the picture is good: nothing judges shape, scale or light, and a model that can't build a bicycle still can't.
+
+What it needs: the script checks run on the computer that starts the task, on macOS or Linux, with Blender installed. The look also needs `qwen3.8` on that computer (**Models**), and without it the task just skips the look. Windows gets the routing but no script checks.
 
 ## New in 0.7
 
@@ -92,7 +105,7 @@ Everyone in a pool should run the same version. Device cards show a warning next
 
 In order, most common first:
 
-1. **Is it really 0.7.0?** Settings shows the version at the bottom. If not, open the new app once more; it replaces the old one.
+1. **Is it really 0.8.0?** Settings shows the version at the bottom. If not, open the new app once more; it replaces the old one.
 2. **macOS Local Network permission.** System Settings → Privacy & Security → **Local Network** → Chimera must be on, on *both* Macs. If Chimera isn't listed, quit it from Settings, open it again and say **Allow** to the prompt.
 3. **Same Wi-Fi, really?** Some routers put 2.4 GHz and 5 GHz on separate networks, or have a "guest"/"isolated" mode that stops devices talking to each other. Both Macs should show the same network name, and the laptop should be able to open `http://<studio's address>:7480/v1/ping` in a browser (the Studio's address is under Settings → Network → Addresses on the Studio) and see `{"app":"chimera-hub"…}`. If that page doesn't load, it's the network, not Chimera — try a different Wi-Fi, or join by typing that address in the Network tab.
 4. **Firewall.** See "Opening it the first time".
