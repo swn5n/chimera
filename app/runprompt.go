@@ -78,8 +78,11 @@ func pickLocalModel(models []ModelInfo, want string, caps []string, prefer, pref
 		if m.Fits == "tight" {
 			s *= 0.6 // works, but close to the memory limit: prefer a roomier model of similar size
 		}
-		if prefer == "fastest" {
+		switch prefer {
+		case "fastest":
 			s = m.Speed()
+		case "worker":
+			s = -workerGuess(m)
 		}
 		if s > bestScore {
 			best, bestScore = m, s

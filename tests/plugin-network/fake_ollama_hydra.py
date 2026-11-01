@@ -20,7 +20,7 @@ the reviewer sends back; their later combine answers with edits: a fill light (B
 crash, or for BLENDERMISS a FIND that's nowhere. BLENDERGONE's later plan is unreadable, whichever model is asked, as is
 BLENDERGONE3's third. BLENDERSTOP's repair takes 4 s, for cancelling it, as does BLENDERSTOPCUT's, whose first result was cut
 off. BLENDERUNCH crashes and its edits never land. BLENDERBADLATER goes from a crash to a script that doesn't start. BLENDERPROSE's first combine has no script. BLENDERLONG has six steps, the first with a long output.
-BLENDERNAMES crashes on a misspelt attribute of one of bpy's objects. BLENDEROFFSHOT prints a scene its camera can't see, as the check's measuring would, and a repair moves the camera; BLENDERSTAYSOFF's repairs change nothing. BLENDERUNSURE is sent back with a script the check is unsure of. PYKIND's later plan is labelled general. TEALOOP is a guide, with no script, that the reviewer sends back once."""
+BLENDERNAMES crashes on a misspelt attribute of one of bpy's objects. BLENDERUNSHOWN prints a scene with what the task named out of shot, and a repair brings it in. BLENDEROFFSHOT prints a scene its camera can't see, as the check's measuring would, and a repair moves the camera; BLENDERSTAYSOFF's repairs change nothing. BLENDERUNSURE is sent back with a script the check is unsure of. BLENDERCHAIN's plan is a chain of three steps. PYKIND's later plan is labelled general. TEALOOP is a guide, with no script, that the reviewer sends back once."""
 import hashlib, json, os, sys, threading, time
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 
@@ -94,6 +94,13 @@ backdrop = bpy.data.objects.new("chimera_backdrop", None)
 scene.collection.objects.link(backdrop)
 seen = 0
 print('chimera-check: scene {"camera": {"name": "chimera_cam", "at": [0, -5, 2], "ahead": [0, 1, 0], "lens": 50, "type": "PERSP"}, "objects": [{"name": "chimera_backdrop", "at": [9, 9, 9], "size": [2, 2, 2], "hits": %d, "frame": %s}], "total": 1, "seen": %d, "out": %d, "filled": %s, "cube": false, "empty": [], "animated": false, "span": [[8, 8, 8], [10, 10, 10]], "pose": {"at": [9, -3, 9], "rotation": [1.5708, 0, 0], "sees": 1}}' % (seen * 500, "true" if seen else "false", seen, 1 - seen, seen * 0.3))""",
+    "unshown": """import bpy
+
+scene = bpy.context.scene
+backdrop = bpy.data.objects.new("chimera_backdrop", None)
+scene.collection.objects.link(backdrop)
+seen = 0
+print('chimera-check: scene {"camera": {"name": "chimera_cam", "at": [0, -5, 2], "ahead": [0, 1, 0], "lens": 50, "type": "PERSP"}, "objects": [{"name": "chimera_mug", "at": [9, 9, 9], "size": [1, 1, 1], "hits": %d, "frame": %s}, {"name": "chimera_table", "at": [0, 0, 0], "size": [2, 2, 1], "hits": 400, "frame": true}], "total": 2, "seen": %d, "out": %d, "filled": 0.3, "cube": false, "empty": [], "animated": false, "span": [[-1, -1, 0], [10, 10, 10]], "shown": %s, "hidden": %s, "pose": {"at": [9, -3, 9], "rotation": [1.5708, 0, 0], "sees": 2}}' % (seen * 30, "true" if seen else "false", 1 + seen, 1 - seen, '["chimera", "mug", "table"]' if seen else '["chimera", "table"]', '[]' if seen else '["chimera", "mug"]'))""",
     "save": """import bpy
 
 scene = bpy.context.scene
@@ -160,8 +167,8 @@ BLENDER_MARKS = {"BLENDERCRASH": ("crash", "fixed"), "BLENDERSAME": ("crash", "c
                  "BLENDERSTOP": ("fixed", "fixed"), "BLENDERLIMIT": ("fixed", "fixed"), "BLENDERMISS": ("fixed", "fixed"),
                  "BLENDERSTUCK": ("crash", "crash"), "BLENDERWHOLE": ("crash", "crash"), "BLENDERBADLATER": ("crash", "crash"),
                  "BLENDERPROSE": ("crash", "crash"), "BLENDERLONG": ("fixed", "fixed"), "BLENDERUNCH": ("crash", "crash"),
-                 "BLENDERSTOPCUT": ("cut", "crash"), "BLENDERUNSURE": ("scene", "scene"), "BLENDERNAMES": ("names", "names"),
-                 "BLENDEROFFSHOT": ("offshot", "offshot"), "BLENDERSTAYSOFF": ("offshot", "offshot")}
+                 "BLENDERSTOPCUT": ("cut", "crash"), "BLENDERUNSURE": ("scene", "scene"), "BLENDERNAMES": ("names", "names"), "BLENDERCHAIN": ("fixed", "fixed"),
+                 "BLENDEROFFSHOT": ("offshot", "offshot"), "BLENDERSTAYSOFF": ("offshot", "offshot"), "BLENDERUNSHOWN": ("unshown", "unshown")}
 CODE_MARKS = {"PYCRASH": ("py_crash", "py_fixed"), "PYINPUT": ("py_input", "py_input"), "PYMEND": ("py_crash", "py_crash"),
               "PYKIND": ("py_crash", "py_crash")}
 SENT_BACK = ("BLENDEREDIT", "BLENDERONE", "BLENDERWORSE", "BLENDERGONE", "BLENDERGONE3", "BLENDERSTOP", "BLENDERMISS",
@@ -220,7 +227,7 @@ def mend_reply(mark, user):
         return PY_EDIT
     if mark == "BLENDERWHOLE":
         return "```python\n%s\n```" % SCRIPTS["fixed"]
-    if mark == "BLENDEROFFSHOT":
+    if mark in ("BLENDEROFFSHOT", "BLENDERUNSHOWN"):
         return "<<<<<<< FIND\nseen = 0\n=======\nseen = 1\n>>>>>>> END"
     if mark == "BLENDERSTUCK":
         old, new = ('print("chimera_backdrop ready")', 'print("ready")') if n == 1 else ('print("ready")', 'print("ok")')
@@ -251,6 +258,9 @@ def studio_plan(mark, user):
              {"id": "s2", "title": "Studio part two", "kind": kind, "instructions": "Write the second part.", "depends_on": []}]
     if mark == "BLENDERONE" and version == 2:
         steps = steps[:1]
+    if mark == "BLENDERCHAIN":
+        steps = [dict(steps[0], depends_on=[]), dict(steps[1], depends_on=["s1"]),
+                 dict(steps[1], id="s3", title="Studio part three", depends_on=["s2"])]
     if mark == "BLENDERLONG":
         steps = [dict(steps[0], instructions="Write the long part.")] + [
             dict(steps[1], id="s%d" % i, title="Studio part %d" % i) for i in range(2, 7)]

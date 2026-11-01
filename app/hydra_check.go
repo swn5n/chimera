@@ -518,12 +518,15 @@ func isExcName(t string) bool {
 }
 
 var (
-	noModuleRe   = regexp.MustCompile(`No module named '([^']+)'`)
-	bpyImportErr = regexp.MustCompile(`cannot import name '\w+' from '(bpy|bmesh|mathutils|bpy_extras|gpu|gpu_extras|bl_math|idprop|aud|freestyle)\b`)
-	readsInputRe = regexp.MustCompile(`sys\.argv|\bargv\b|os\.environ|getenv\(|\binput\(|sys\.stdin`)
-	filesLineRe  = regexp.MustCompile(`open\(|\.load\(|mainfile|render\.render|save_render|\.save\(|filepath|import_|export_|_import\(|_export\(|wm\.append|wm\.link|bpy\.path|os\.path|Path\(|\.write\(|\.read\(`)
-	keyNotFound  = regexp.MustCompile(`key "([^"]+)" not found`)
-	goalBlender  = regexp.MustCompile(`(?i)\bblender\s*(?:v(?:ersion)?\s*)?(\d+)(?:\.(\d+|x))?(\s*d\b)?`)
+	noModuleRe    = regexp.MustCompile(`No module named '([^']+)'`)
+	bpyImportErr  = regexp.MustCompile(`cannot import name '\w+' from '(bpy|bmesh|mathutils|bpy_extras|gpu|gpu_extras|bl_math|idprop|aud|freestyle)\b`)
+	uiNameRe      = regexp.MustCompile(`\b(?:bpy\.context|context|ctx|C)\.(?:region|region_data|area|space_data|window)\b`)
+	readsFileRe   = regexp.MustCompile(`os\.path\.(?:exists|isfile)|\bPath\(|\.load\(|\bopen\(|import_\w+\.|\w+_import\(|wm\.(?:append|link)\(`)
+	addonLookupRe = regexp.MustCompile(`\.addons\.get\(|addon_utils`)
+	readsInputRe  = regexp.MustCompile(`sys\.argv|\bargv\b|os\.environ|getenv\(|\binput\(|sys\.stdin`)
+	filesLineRe   = regexp.MustCompile(`open\(|\.load\(|mainfile|render\.render|save_render|\.save\(|filepath|import_|export_|_import\(|_export\(|wm\.append|wm\.link|bpy\.path|os\.path|Path\(|\.write\(|\.read\(`)
+	keyNotFound   = regexp.MustCompile(`key "([^"]+)" not found`)
+	goalBlender   = regexp.MustCompile(`(?i)\bblender\s*(?:v(?:ersion)?\s*)?(\d+)(?:\.(\d+|x))?(\s*d\b)?`)
 	// What the person has selected or the mode they're in, which a fresh scene doesn't have…
 	selectionRe = regexp.MustCompile(`bpy\.context\.(active_object|object|selected_objects|selected_editable_objects|edit_object)\b|view_layer\.objects\.active\b|bmesh\.from_edit_mesh`)
 	// …unless the script makes it itself before using it.
@@ -532,15 +535,17 @@ var (
 	indexedRe    = regexp.MustCompile(`(\w+)(?:\.\w+)*\[`)
 	setsStateRe  = regexp.MustCompile(`bpy\.ops\.\w+\.(\w*_add|primitive_\w+)\(|objects\.new\(|objects\.active\s*=|\.select_set\(|mode_set\(`)
 	gpuEnumRe    = regexp.MustCompile(`enum "(CUDA|OPTIX|HIP|ONEAPI|METAL)" not found`)
-	osAttrRe     = regexp.MustCompile(`module '(os|ctypes|signal|select|socket|fcntl|termios|resource|time|msvcrt|winreg)' has no attribute`)
-	unpackRe     = regexp.MustCompile(`values to unpack`)
-	headlessRe   = regexp.MustCompile(`(?i)\bblender\s+(-b|--background)\b|\bheadless\b|\bbackground mode\b`)
-	uiContextRe  = regexp.MustCompile(`bpy\.context\.(region|region_data|area|space_data|window|screen)\b|bpy\.ops\.(view3d|screen|ui)\.`)
-	missingOpRe  = regexp.MustCompile(`Calling operator "bpy\.ops\.\w+\.\w+" error, could not be found`)
-	rootFileRe   = regexp.MustCompile(`Cannot open file /[^/\s]+ for writing`)
-	digitsRe     = regexp.MustCompile(`\d+`)
-	addonRe      = regexp.MustCompile(`(?i)add-?on|addon_utils|\badd ons?\b|plug-?ins?\b|\bextensions?\b|rigify|node ?wrangler|sapling|a\.? ?n\.? ?t\.? landscape|extra (objects|curves)|blenderkit`)
-	editModeRe   = regexp.MustCompile(`(?i)edit ?mode`)
+	// Blender's own engines, under any name they've had: anything else may be an add-on's.
+	ownEngineRe = regexp.MustCompile(`(?i)enum "(BLENDER_\w+|EEVEE\w*|CYCLES|WORKBENCH)" not found`)
+	osAttrRe    = regexp.MustCompile(`module '(os|ctypes|signal|select|socket|fcntl|termios|resource|time|msvcrt|winreg)' has no attribute`)
+	unpackRe    = regexp.MustCompile(`values to unpack`)
+	headlessRe  = regexp.MustCompile(`(?i)\bblender\s+(-b|--background)\b|\bheadless\b|\bbackground mode\b`)
+	uiContextRe = regexp.MustCompile(`bpy\.context\.(region|region_data|area|space_data|window|screen)\b|bpy\.ops\.(view3d|screen|ui)\.`)
+	missingOpRe = regexp.MustCompile(`Calling operator "bpy\.ops\.\w+\.\w+" error, could not be found`)
+	rootFileRe  = regexp.MustCompile(`Cannot open file /[^/\s]+ for writing`)
+	digitsRe    = regexp.MustCompile(`\d+`)
+	addonRe     = regexp.MustCompile(`(?i)add-?on|addon_utils|\badd ons?\b|plug-?ins?\b|\bextensions?\b|rigify|node ?wrangler|sapling|a\.? ?n\.? ?t\.? landscape|extra (objects|curves)|blenderkit`)
+	editModeRe  = regexp.MustCompile(`(?i)edit ?mode`)
 )
 
 // The errors that can come from this computer, the sandbox or a fresh scene
@@ -621,8 +626,12 @@ func envReason(blender bool, e pyError, f pyFrame, goal, runner, script string, 
 	noOperator := blender && opSpace && missingOpRe.MatchString(e.Msg) && !addonRe.MatchString(goal+"\n"+script)
 	// And no computer lets a script write at the very top of the disk.
 	rootFile := blender && headlessRe.MatchString(goal) && rootFileRe.MatchString(e.Msg) && !readsInputRe.MatchString(script)
+	// A script that builds a scene from nothing starts where it meant to, so what
+	// it finds missing there isn't the fresh scene's doing.
+	missing := blender && strings.Contains(low, "nonetype") && newSceneRe.MatchString(goal) && !ownSceneRe.MatchString(goal) &&
+		!uiContextRe.MatchString(stmt) && !uiNameRe.MatchString(script) && !addonLookupRe.MatchString(script) && !readsInputRe.MatchString(script) && !readsFileRe.MatchString(script)
 	for _, m := range envMarkers {
-		if strings.Contains(low, m) && !noWindow && !noOperator && !rootFile {
+		if strings.Contains(low, m) && !noWindow && !noOperator && !rootFile && !(m == "nonetype" && missing) {
 			return "it stopped at " + at + ", which can come from this computer, the sandbox or a fresh scene rather than the script"
 		}
 	}
@@ -634,7 +643,7 @@ func envReason(blender bool, e pyError, f pyFrame, goal, runner, script string, 
 	if m := gpuEnumRe.FindStringSubmatch(e.Msg); m != nil {
 		return "it picks a GPU backend (" + m[1] + ") this computer doesn't have; it may be meant for another computer"
 	}
-	if blender && strings.Contains(stmt, ".engine") && strings.Contains(e.Msg, `enum "`) {
+	if blender && strings.Contains(stmt, ".engine") && strings.Contains(e.Msg, `enum "`) && !ownEngineRe.MatchString(e.Msg) {
 		return "it picks a render engine this Blender doesn't have here (an add-on's?)"
 	}
 	if osAttrRe.MatchString(e.Msg) {

@@ -137,6 +137,8 @@ type hubState struct {
 	StarterMigration int `json:"starter_migration"`
 	// Let devices on the same network join automatically (no code/IP typed).
 	AutoJoin bool `json:"auto_join"`
+	// Seconds a long task's worker step really takes, by computer and model.
+	WorkerSecs map[string]float64 `json:"worker_secs,omitempty"`
 }
 
 type hubEvent struct {
@@ -168,7 +170,7 @@ type hubStep struct {
 	Private        bool
 	Messages       []ChatMessage
 	Options        map[string]any
-	Prefer         string   // "", "largest", "fastest"
+	Prefer         string   // "", "largest", "fastest", "worker" (a long task's step: see hub_workers.go)
 	PreferModel    string   // a computer with this model gets the step first (the helper); else Prefer decides
 	NeedCaps       []string // e.g. vision
 	NeedCtx        int      // tokens of context the step needs
@@ -186,6 +188,7 @@ type hubStep struct {
 	Internal       bool   // made by the hub itself (library jobs); free
 	HostOnly       bool   // only the hosting computer may run it (library review)
 	TaskWork       bool   // part of a Hydra long task (for owner auto-help)
+	TaskID         string // which long task, to spread its steps
 	onDone         func(h *Hub, st *hubStep)
 
 	Status       string // queued, assigned, running, done, failed, cancelled
@@ -997,6 +1000,8 @@ func (h *Hub) fits(d *hubDevice, st *hubStep) (model string, score float64, ok b
 			s = m.ParamsB*100 + loaded*50 - eta(m)
 		case "fastest":
 			s = 10000 - eta(m)
+		case "worker":
+			s = h.workerScoreLocked(st, d, m)
 		default:
 			size := m.ParamsB
 			if m.Fits == "tight" {
@@ -1014,6 +1019,9 @@ func (h *Hub) fits(d *hubDevice, st *hubStep) (model string, score float64, ok b
 		if top := h.largestLocked(st); bestParams < top*0.5 {
 			return "", 0, false
 		}
+	}
+	if model != "" && st.Prefer == "worker" && h.workerAboutToAskLocked(st, d, best) {
+		return "", 0, false
 	}
 	return model, best, model != ""
 }
@@ -1422,6 +1430,7 @@ type submitReq struct {
 	Format   json.RawMessage `json:"format,omitempty"`
 	Purpose  string          `json:"purpose,omitempty"`
 	TaskWork bool            `json:"task_work,omitempty"` // part of a Hydra long task
+	TaskID   string          `json:"task_id,omitempty"`   // which one, to spread its steps
 	Kind     string          `json:"kind,omitempty"`      // "" (chat) or run_plugin
 	Plugin   string          `json:"plugin,omitempty"`    // run_plugin: which plugin
 	Input    json.RawMessage `json:"input,omitempty"`     // run_plugin: its input
@@ -1484,7 +1493,7 @@ func (h *Hub) handleSubmit(w http.ResponseWriter, r *http.Request, d *hubDevice)
 		ID: randomID(8), RequesterID: d.ID, RequesterOwner: d.Owner, RequesterName: d.Name,
 		Model: model, Target: req.Target, Private: req.Private,
 		Messages: req.Messages, Options: req.Options, Prefer: req.Prefer, PreferModel: strings.TrimSpace(req.PreferModel), NeedCaps: req.NeedCaps,
-		NeedCtx: req.NeedCtx, Format: req.Format, Purpose: req.Purpose, TaskWork: req.TaskWork,
+		NeedCtx: req.NeedCtx, Format: req.Format, Purpose: req.Purpose, TaskWork: req.TaskWork, TaskID: req.TaskID,
 		Kind: req.Kind, Plugin: req.Plugin, Input: req.Input,
 		Status: "queued", Created: time.Now(), Exclude: map[string]bool{},
 		subs: map[chan hubEvent]struct{}{},
@@ -1515,7 +1524,7 @@ func (h *Hub) handleSubmit(w http.ResponseWriter, r *http.Request, d *hubDevice)
 	h.steps[st.ID] = st
 	h.queue = append(h.queue, st)
 	h.dispatchLocked()
-	if st.PreferModel != "" && st.Status == "queued" { // if the helper's computer doesn't ask in time, hand it on then
+	if (st.PreferModel != "" || st.Prefer == "worker") && st.Status == "queued" { // if the computer it's waiting for doesn't ask in time, hand it on then
 		time.AfterFunc(helperWait+50*time.Millisecond, h.dispatchNow)
 	}
 	writeJSON(w, 200, map[string]any{"id": st.ID, "status": st.Status})
@@ -1771,6 +1780,9 @@ func (h *Hub) finishLocked(st *hubStep, worker *hubDevice, status, errMsg string
 	st.Err = errMsg
 	st.Finished = time.Now()
 	h.removeFromQueueLocked(st)
+	if worker != nil && status == "done" {
+		h.noteWorkerStepLocked(st, worker)
+	}
 	if worker != nil && !st.Internal && (status == "done" || status == "cancelled") {
 		st.Credits, st.Free = h.chargeLocked(st, worker)
 	}

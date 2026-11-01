@@ -41,7 +41,7 @@ and 4.
 2. **The combine is where the crashes come from.** Four of the five crashes were lines no worker wrote. This is the case for
    the worker contract's joining with no model (`docs/hydra-worker-plan.md`).
 3. **The task delivers the last round, not the best one.** Nothing compares rounds, and the session keeps only the last.
-4. **Routing is nearly all size.** `hub.go:1005` is size x 10 + loaded x 30 - eta, with eta assuming 500 tokens. So
+4. **Routing is nearly all size** (worker steps fixed, see Routing below; chats still work this way). `hub.go:1005` is size x 10 + loaded x 30 - eta, with eta assuming 500 tokens. So
    `deepseek-r1:70b` at 15 tok/s took 69% of the run's wall time for 21% of its tokens, while FX2 sat at 75 tok/s, and
    round 3's whole chain ran there with both other computers idle. The audit estimates about 19 minutes instead of 32 with
    a faster model, on the same tokens. Whether the output would be as good isn't measured.
@@ -259,3 +259,126 @@ differs from End's only in that line.
 - End 3 saves to `//render.png` with no saved file: Blender can't write that, and the check stops before the render, so it passes.
 - Scene 2 and End 4 stopped on errors the check won't judge (`poll()` failed, a key on something the script made): they get a note but no repair.
 - What a model can't be told: proportions, things floating, light. A person, or a model that can see, has to judge those.
+
+## Routing (Oct 31, same day)
+
+A real long task after the scene check ran all three steps on the Studio's deepseek-r1:70b (294 s of its 342 s), with FX2 and FX4
+idle. Size won every step. The 203 real steps say size is the wrong thing to go by:
+
+| Computer and model | Steps | Median time | Tokens/s | Median tokens | Median characters |
+|---|---|---|---|---|---|
+| FX2 gpt-oss:20b | 79 | 22 s | 73.7 | 1,389 | 2,041 |
+| FX3 deepseek-r1:70b | 83 | 104 s | 15 | 1,251 | 2,308 |
+| FX4 qwen3.5:9b | 40 | 131 s | 52 | 6,853 | 932 |
+
+FX4's speed looks healthy, but most of its tokens are hidden thinking, so no speed figure a computer reports would have shown this.
+
+**The rule** (`app/hub_workers.go`). Worker steps now send `prefer: "worker"` and the task's id. The hub learns the seconds a step
+really takes for each computer and model (`worker_secs` in `hub.json`), and a step goes to the lowest cost: those seconds, or a guess
+from speed for a model not yet timed, plus load time if it isn't loaded. Three things push against a pick:
+
+- 45 s for each step that computer already did for this task, up to 2, so a chain spreads when computers are close, and a long
+  task doesn't keep handing turns to a much slower one.
+- 600 s for a model never timed, so the 32 leftover `wm-probe-*` models don't get real work on paper speed.
+- 1,000 s for a model under 8B, more than the 600 s, so a timed tiny model can't beat an untimed proper one.
+
+A step that came back empty or cut off counts 300 s worse, since a model that gave up quickly isn't quick. If a computer at least 45 s
+better is free but not asking at that moment (it has usually just finished the step before), the step waits up to 3 s for it, as a
+helper step does. Chats, the combine and the only step of a one-step plan keep the old scoring: they are the answer, not a piece
+of it. Nothing about the planner, reviewer or gate changed.
+
+**What it does on paper.** With no timings the live fleet comes out close, so steps spread: FX3 qwen3.8:27b 31 s, FX2 gpt-oss:20b
+34 s, FX4 qwen3.5:9b 32 s. With timings: FX2 22 s, FX3 31 s, FX4 131 s. A chain of 23 steps goes FX2 21, FX3 2, FX4 0, in 522 s of
+step time. A round of side-by-side steps uses every free computer.
+
+**Review.** An independent review found five faults, fixed above: a timed tiny model beat an untimed proper one, a lone step
+went to the quickest model though it is the whole reply, an empty reply read as quick, the spread had no limit, and timed models
+ignored load time. It also raised a much better computer losing a step while between polls, which is the 3 s wait.
+
+**Decided against, for now: holding a step for a busy computer.** A free slow computer takes a step even when a busy fast one would
+finish sooner. The reviewer's version compares real seconds and helped a simulation (148 to 133 s a plan, no-answers 6.8% to 3.9%),
+but it was 4% worse on one fleet, and FX3's samples there are another model's times scaled down. It's more rule on top of a rule
+that hasn't run on the real pool yet. If real tasks show FX4 holding up rounds, the patch is in the review's journal; turning thinking
+off for worker steps may fix the cause instead, and would need an A/B.
+
+**Tested.** Go 95/95 (also `-race`), `hydra_test.py` 126/126, `run_it.py` 27/27, `heads_text_test.py` 16/16. Each fix was broken on
+purpose and a test failed for it, and so did unplugging the rule from Hydra (11.20b, end to end). Spreading moves test credits between FX_M3, FX2 and FX3080ti, since they are different owners. Chains aren't flattened: a chain still
+runs one step at a time, it just no longer runs them all on one computer.
+
+**On the real pool.** With the Studio restarted on this build (FX2 and FX4 not updated, since the rule lives on the hub and in the
+asker) the same goal ran twice from the Studio's Chimera, one run after the other:
+
+| Run | Worker steps | Worker time | Whole task |
+|---|---|---|---|
+| Before routing | FX3 deepseek-r1:70b, three times | 294 s | 342 s, 1 round |
+| First, nothing timed | Round 1: FX3 54 s, FX4 189 s, FX2 52 s. 13 steps over 3 rounds: FX2 9, FX3 3, FX4 1 | 729 s | 859 s, 3 rounds |
+| Second, timed | FX2 26 s, FX3 48 s, FX2 25 s | 99 s | 178 s, 1 round |
+
+The first run's round 1 is the spread the rule predicts, and its 189 s on FX4 is what the hub learned from: FX4 got no step after that,
+and FX2 and FX3 did the rest. Timings after both runs: FX2 gpt-oss:20b 29 s, FX3 the 80B coder 43 s and qwen3.8:27b 53 s, FX4 qwen3.5:9b
+189 s. No step failed, and all three computers stayed in the pool through the restart. A round of three or more steps side by side
+hasn't happened with timings known, so whether FX4 holds such a round up is still unmeasured. These are single runs, and a task's total
+depends on how many rounds the loop takes.
+
+**What they made.** Routing moved the work; it didn't make the scripts better. Neither run's script finished, and both replies say so
+in their note. The first stopped at `scene.render.engine = 'EEVEE'`: the name is `BLENDER_EEVEE`, Blender's error lists the real names,
+and the check still called it "unsure" because `envReason` (`hydra_check.go:637`) takes any unknown engine for an add-on's, so no
+repair was tried. With that name corrected the scene shows a cup on a table with a lit patch beside it, far better framed than the
+dark table corner before routing, though the lamp reads poorly. The second stopped at `cycles_prefs.get_devices()`, which returns nothing
+to iterate, and has no camera at all: the goal doesn't mention one, so the scene check stayed silent, and the reviewer called it done.
+
+## Everyday goals (Oct 31 to Nov 1)
+
+The routing runs showed two faults. The check took any unknown render engine for an add-on's, so `'EEVEE'` got no repair, and it took
+any `NoneType` crash for a fresh scene's doing, so `get_devices()`, which returns nothing on every Blender 5, got none either and the
+scene was never measured. And a goal that doesn't mention a camera got no scene check at all: your first coffee cup render was a dark
+table corner, with 40% of the cup in frame, and it passed.
+
+**The change.** Blender's own engines, by any name, now count as the script's mistake (`ownEngineRe`). A `NoneType` crash does too, if
+the goal builds a scene from nothing and the script reads nothing from a window, an add-on, the command line or a file. A goal that asks
+for a scene (`newSceneRe`: scene, landscape, diorama, still life) now wants a camera, and that camera has to show what the goal names:
+`goalThings` takes the last word of each noun phrase, and if objects with that word exist and none is in frame, it's a fault, with the
+worked-out view for the repair. If there's no camera, the check works out a view with a temporary one. An object counts as out if its box
+is, or if the frame could hold it but holds under half and under 2% of the rays reach it (12 rays for a rod). A plain mesh with a
+material and no faces now counts as having no geometry: a real repair built fruit that way, from `create_uvsphere` with no segments.
+
+**What the reviews changed.** The first version also had a count rule, "more than half the objects are out of frame". Reviewers wrote
+real scenes aimed at both rules and read every render:
+
+| Test | First version | Final |
+|---|---|---|
+| 280 good script and goal pairs | 90 flagged on the 203 that aren't real-run scripts | 24, of which 22 are real-run scripts rightly flagged, and F6 and s15 really are cut off |
+| 63 scenes built to be bad | 22 caught | 23 caught |
+| 58 scenes in chat wordings, 17 of them aimed at weak spots | 16 flagged, all among the 17 | 0, and all 8 bad ones caught |
+| 73 scripts from qwen3.8:27b, judged by eye | 3 of 22 good flagged, 31 of 51 bad caught | 2 of 22 good, 31 of 51 bad |
+
+The count rule went: it fired on 37 good pairs and 3 bad ones, because a wall of tiles or a forest is mostly out of any good picture, and
+no number separated those. The last two rows' fixes were written after seeing those scenes, so they aren't held-out figures. The two
+left on good model scripts are accurate: one's ground really has no geometry, and the other's reeds are mostly out of shot. Other things
+that went in from the reviews: position words, a verb read as a noun, what's in a cup, a light source that can stand outside the shot, a
+place word that only an extra carries (`isPlace`: a Garage_Door above the frame says nothing about the garage once the bike shows), wordings that
+rule out a camera or say what it's for, and a word must match exactly to say something is missing, though it may start a longer word
+to say something is shown. Rules for one object filling the frame, a scene that's a speck and bare ground were built and tested by a reviewer and left
+out, because each needs its own word list or threshold and a miss costs nothing new. The patch is in the review's journal if real tasks ask for them. Mutation testing ran 413 single changes: 306 survived the first tests, and the tests added
+(`hydra_scene_limits_test.go`, `hydra_scene_real_test.go`) kill 292 of those, and the other 14 are equivalent or don't matter.
+
+**Real tasks on the final build**, from a test asker, on the pool's new routing:
+
+| Goal | Time | Rounds | Repairs | Script | What it made |
+|---|---|---|---|---|---|
+| Coffee cup, table, lamp | 2 min 10 s | 1 | 0 | Runs | The cup is buried inside a 1.5 m cube used as a table |
+| Bowl of fruit on a kitchen table | 4 min 35 s | 1 | 8 | Runs | All there, small, the fruit under the table |
+| Campfire, two logs, a tent | 3 min 15 s | 1 | 3 | Runs | Reads as a campfire, the best of the set |
+| Teapot and two cups on a tray | 6 min 25 s | 1 | 4 | Stops at line 362, and the reply says so | |
+| Red bicycle against a brick wall | 11 min 23 s | 3 | 5 | Runs | The camera sees nothing |
+| Rocky island, palm, pier | 4 min 41 s | 1 | 5 | Runs | Two repairs brought the pier into shot, a poor close view, fronds out |
+
+Five of six ran to the end, against none of the two before this change, and an earlier build of it got four of four. The check caught and fixed real
+faults on the way: a lamp out of shot, a pier out of shot, three default cubes. But most of these pictures are still wrong, and in ways
+word rules can't see. The cup's name is there and its box is in frame. **That's the limit of this approach:** two rounds of reviews have
+taken the rules about as far as they go. What's left needs something that can look at a render and say whether the cup is in it.
+
+**Side by side, measured at last.** Four of these tasks had rounds of three steps or more at once with timings known, the case Routing left open. FX4 took
+a step in each and finished last every time, at 134 to 154 s, while the others were done at 40 to 93 s, so it added about 50 to 85 s to
+those rounds. No step failed. It doesn't change the left-out hold rule's case much either way: turning FX4's thinking off is still the
+thing to try first.

@@ -119,25 +119,25 @@ const (
 // outside the frame is proof an object's out of it; rays only show what's reachable,
 // since they miss what's small and stop at glass, so a ray that misses proves nothing.
 const blenderSceneFacts = `sys._chimera_cube = getattr(bpy.data.objects.get("Cube"), "session_uid", None)
-def _chimera_pose(scene, dg, live, m, seen, pts, low, high, vector):
+def _chimera_pose(scene, dg, data, where, seen, pts, low, high, vector):
     # A view that frames the main objects, from the side the camera is on, tried
     # with rays: a model can use numbers, but can't work out a rotation.
     import math
     mid = vector([(a + b) / 2 for a, b in zip(low, high)])
     reach = max((p - mid).length for p in pts)
-    way = mid - m.translation
+    way = mid - where if where else vector((-0.66, 0.62, -0.42))  # no camera yet: from the front, a little above
     if way.length < 1e-3:
         way = vector((0, 1, -0.4))
     way.normalize()
     if way.z > -0.1:
         way.z = -0.25
         way.normalize()
-    corners = live.data.view_frame(scene=scene)
+    corners = data.view_frame(scene=scene)
     half = min(abs(corners[0].x), abs(corners[0].y)) / abs(corners[0].z)
     far = 1.05 * reach / math.sin(math.atan(half))
     at = mid - way * far
     turn = way.to_track_quat("-Z", "Y")
-    reachable = max(live.data.clip_end, 1.1 * (far + reach))
+    reachable = max(data.clip_end, 1.1 * (far + reach))
     names, wide, tall = set(), 32, 18
     tr, br, bl, tl = corners
     for j in range(tall):
@@ -147,7 +147,7 @@ def _chimera_pose(scene, dg, live, m, seen, pts, low, high, vector):
             if hit[0] and hit[4] and hit[4].original.name in seen:
                 names.add(hit[4].original.name)
     pose = {"at": [round(x, 3) for x in at], "rotation": [round(x, 4) for x in turn.to_euler("XYZ")], "sees": len(names)}
-    if reachable > live.data.clip_end:
+    if reachable > data.clip_end:
         pose["clip_end"] = round(reachable, 1)
     return pose
 def _chimera_scene():
@@ -202,7 +202,7 @@ def _chimera_scene():
         if o.type == "MESH" and o.modifiers and not e.data.polygons:  # points or a volume, perhaps: rays can't reach those
             facts["unseen"] = True
         plain = o.type == "MESH" and o.mode == "OBJECT" and not o.modifiers and not o.children and not o.animation_data and o.instance_type == "NONE"
-        if plain and len(e.data.vertices) == 0:
+        if plain and (len(e.data.vertices) == 0 or (not e.data.polygons and o.data.materials)):  # with a material, it was meant to show
             facts["blank"] += 1
             if len(facts["empty"]) < 3:
                 facts["empty"].append(o.name[:40])
@@ -225,8 +225,14 @@ def _chimera_scene():
             v = [view(scene, live, p) for p in pts]
             ahead_only = all(c.z > 0 for c in v)  # behind the camera, the sides are mirrored
             row["frame"] = not (all(c.z <= 0 or c.z > live.data.clip_end for c in v) or (ahead_only and (all(c.x < 0 for c in v) or all(c.x > 1 for c in v) or all(c.y < 0 for c in v) or all(c.y > 1 for c in v))))
+            if ahead_only:  # how much of it the frame holds, for something small enough to fit
+                left, right, under, over = min(c.x for c in v), max(c.x for c in v), min(c.y for c in v), max(c.y for c in v)
+                box = (right - left) * (over - under)
+                inside = max(0, min(right, 1) - max(left, 0)) * max(0, min(over, 1) - max(under, 0))
+                row["fits"] = right - left <= 1 and over - under <= 1
+                row["share"] = round(inside / box, 3) if box > 1e-9 else float(row["frame"])
         if any(x.show_render and not x.show_viewport for x in o.modifiers):
-            row["frame"] = True
+            row["frame"], row["fits"] = True, False  # what's measured here isn't what renders
         if row["frame"] or not (min(size) <= 0.01 * max(size) or glows(o)):
             rows.append(row)
             corners[o.name[:40]] = pts
@@ -264,17 +270,37 @@ def _chimera_scene():
     facts["total"] = len(rows)
     facts["seen"] = sum(1 for r in rows if r["hits"])
     facts["out"] = sum(1 for r in rows if not r["frame"] and not r["hits"])
+    for r in rows:
+        if r["frame"] and r.pop("fits", False) and r["share"] < 0.5 and r["hits"] < (12 if min(r["size"]) < 0.05 * max(r["size"]) else 46):  # 46 rays are 2% of them, enough to make something out; a rod takes fewer
+            r["cut"] = True
+        elif "share" in r:
+            del r["share"]
+    facts["cut"] = sum(1 for r in rows if r.get("cut"))
+    facts["cameras"] = sum(1 for o in scene.objects if o.type == "CAMERA")
+    def named(rs):  # what's called what, for telling whether what the task named made it in
+        return sorted({w.lower() for r in rs for w in re.findall(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+", r["name"])})
+    shown = named(r for r in rows if (r["frame"] or r["hits"]) and not r.get("cut"))
+    hidden = named(r for r in rows if (not (r["frame"] or r["hits"]) or r.get("cut")) and not re.search(r"(?i)target|helper|guide|dummy|proxy", r["name"]))
+    if len(shown) + len(hidden) <= 400 and len(json.dumps(shown + hidden)) <= 6000:
+        facts["shown"], facts["hidden"] = shown, hidden
     sizes = sorted(max(r["size"]) for r in rows)
-    typical = sizes[len(sizes) // 2] if sizes else 0
-    main = [r["name"] for r in rows if not (max(r["size"]) > 3 * typical and min(r["size"]) < 0.01 * max(r["size"])) and not (facts["cube"] and r["name"] == "Cube")] or list(corners)
+    typical = sizes[(len(sizes) - 1) // 2] if sizes else 0
+    def lying(n):  # a ground, not a wall: walls say where a room ends
+        z, x, y = [[p[i] for p in corners[n]] for i in (2, 0, 1)]
+        return max(z) - min(z) < 0.02 * (max(x) - min(x) + max(y) - min(y))
+    main = [r["name"] for r in rows if not (max(r["size"]) > 3 * typical and min(r["size"]) <= 0.01 * max(r["size"]) and lying(r["name"])) and not (facts["cube"] and r["name"] == "Cube")] or list(corners)
     pts = [p for n in main for p in corners[n] if max(abs(x) for x in p) < 1e6]
     if pts:
         low = [min(p[i] for p in pts) for i in range(3)]
         high = [max(p[i] for p in pts) for i in range(3)]
         facts["span"] = [[round(x, 3) for x in low], [round(x, 3) for x in high]]
         if cam and cam.data.type == "PERSP":
-            facts["pose"] = _chimera_pose(scene, dg, live, m, seen, pts, low, high, vector)
-    rows.sort(key=lambda r: (bool(r["hits"]), r["frame"]))
+            facts["pose"] = _chimera_pose(scene, dg, live.data, m.translation, seen, pts, low, high, vector)
+        elif not cam:
+            d = bpy.data.cameras.new("chimera-view")
+            facts["pose"] = _chimera_pose(scene, dg, d, None, seen, pts, low, high, vector)
+            bpy.data.cameras.remove(d)
+    rows.sort(key=lambda r: (bool(r["hits"]) and not r.get("cut"), r["frame"]))
     keep, size = [], 0
     for r in rows:
         size += len(json.dumps(r)) + 2
@@ -521,6 +547,9 @@ func (a *App) runSandboxed(ctx context.Context, kind, script string, stopAtRende
 	cmd.Env = scriptEnv(dir)
 	cmd.Stdin = alive
 	both, errOut := &tailBuffer{max: 4000}, &tailBuffer{max: 19000} // room for the names line on top of a traceback
+	if stopAtRender {
+		both.max = 12000 // a check's scene line has to fit whole, or what came before it goes with it
+	}
 	cmd.Stdout = both
 	cmd.Stderr = io.MultiWriter(both, errOut)
 	// Its own process group, so stopping it also stops whatever it started.

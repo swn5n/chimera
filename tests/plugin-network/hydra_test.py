@@ -541,6 +541,13 @@ def section11():
           c1.get("summary", "") + " note " + str(saved(evs).get("note")))
 
     n0 = mark()
+    rec, last, evs, _ = run_task("%s: create a blender scene of a mug on a table" % "BLENDERUNSHOWN", loop=True)
+    cs, c0, c1 = checks_of(rec)
+    us = (jobs(since(n0), "mend") or [{}])[0].get("user_all", "")
+    check("11.9c a task that never mentions a camera still has to show what it names: [wrong_scene, passed]", last.get("type") == "done" and
+          [(c.get("outcome"), c.get("mend", 0)) for c in cs] == [("wrong_scene", 0), ("passed", 1)] and "doesn't show chimera_mug" in us, brief(rec, last) + us[-300:])
+
+    n0 = mark()
     rec, last, evs, _ = run_task(goalc % "BLENDERSTAYSOFF", loop=True)
     m = saved(evs)
     rs = by_round(since(n0))
@@ -666,6 +673,13 @@ def section11():
     comb = jobs(since(n0), "combine")
     check("11.20 six steps, one of 19,000 characters: nothing cut", len(comb) == 1 and "TAILMARK" in comb[0].get("user_all", "") and "(cut)" not in comb[0].get("user_all", ""),
           str(len(comb)))
+
+    # ---- 11.20b: steps in a chain leave the biggest model ----
+    n0 = mark()
+    rec, last, evs, _ = run_task(goal % "BLENDERCHAIN", loop=True)
+    ws = jobs(since(n0), "worker")
+    check("11.20b a chain of three runs one at a time, and the biggest model doesn't get them all just for its size", last.get("type") == "done" and len(ws) == 3 and
+          any(c.get("model") != "big:70b" for c in ws), str([(c.get("at"), c.get("model")) for c in ws]))
 
     # ---- 11.21: words get the result so far too, and are written out ----
     n0 = mark()

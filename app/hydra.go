@@ -640,7 +640,7 @@ func (t *TaskManager) onePass(ctx context.Context, run *taskRun, req taskReq, ro
 		go func(i int) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			t.runStep(ctx, run, i, req.Private, stepRoom, earlierForWorker(base, editing))
+			t.runStep(ctx, run, i, req.Private, stepRoom, earlierForWorker(base, editing), workerPrefer(len(plan.Steps), editing))
 		}(idx)
 	}
 	wg.Wait()
@@ -751,6 +751,16 @@ func (t *TaskManager) onePass(ctx context.Context, run *taskRun, req taskReq, ro
 	pass := passResult{Text: run.final.String(), Cut: cut, Short: short, Unchanged: unchanged, Model: run.rec.SynthModel, Tokens: synthEv.Tokens}
 	run.mu.Unlock()
 	return pass, genEvent{}
+}
+
+// workerPrefer says how a step should be routed: a piece goes to whichever
+// computer will do it soonest, but a lone step with no combine after it is the
+// whole answer, so it goes by quality like one.
+func workerPrefer(steps int, editing bool) string {
+	if steps == 1 && !editing {
+		return ""
+	}
+	return "worker"
 }
 
 // earlierLimit is how much of the result so far a later round's workers and
@@ -1037,7 +1047,7 @@ func (t *TaskManager) readySteps(run *taskRun) ([]int, int) {
 	return ready, remaining
 }
 
-func (t *TaskManager) runStep(ctx context.Context, run *taskRun, i int, private bool, room int, earlier string) {
+func (t *TaskManager) runStep(ctx context.Context, run *taskRun, i int, private bool, room int, earlier, prefer string) {
 	a := t.app
 	run.mu.Lock()
 	rec := run.snapshot()
@@ -1094,8 +1104,8 @@ func (t *TaskManager) runStep(ctx context.Context, run *taskRun, i int, private 
 	var lastErr string
 	for attempt := 0; attempt < 2; attempt++ {
 		out.Reset()
-		stepReq := submitReq{Private: private, Messages: msgs, NeedCtx: historyTokens(msgs) + room, TaskWork: true,
-			Purpose: fmt.Sprintf("Hydra: step %d of %d", i+1, len(rec.Steps))}
+		stepReq := submitReq{Private: private, Messages: msgs, Prefer: prefer, NeedCtx: historyTokens(msgs) + room, TaskWork: true,
+			TaskID: run.id, Purpose: fmt.Sprintf("Hydra: step %d of %d", i+1, len(rec.Steps))}
 		if room > synthRoom {
 			stepReq.Options = map[string]any{"num_predict": room} // the last round's result stopped at its limit
 		}

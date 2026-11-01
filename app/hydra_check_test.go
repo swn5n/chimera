@@ -162,6 +162,7 @@ func blenderRun(exit int, stderr string) runResult {
 
 func TestJudgeReadsRealBlenderErrors(t *testing.T) {
 	const runner, goal = "Blender 5.2.2", "Write a Python script for Blender 5 that builds a product-shot studio"
+	const noDevices = "import bpy\nscene = bpy.context.scene\nprefs = bpy.context.preferences.addons['cycles'].preferences\ndevices = prefs.get_devices()\nscene.cycles.device = 'GPU' if any(d.type != 'CPU' for d in devices) else 'CPU'\n"
 	for _, c := range []struct {
 		name    string
 		res     runResult
@@ -199,6 +200,25 @@ func TestJudgeReadsRealBlenderErrors(t *testing.T) {
 		{"a GPU backend for another computer", blenderRun(1, tb(6, "prefs.compute_device_type = 'OPTIX'", "TypeError: bpy_struct: item.attr = val: enum \"OPTIX\" not found in ('NONE', 'METAL')")), goal, "unsure", "GPU backend (OPTIX)", ""},
 		{"an add-on's render engine", blenderRun(1, tb(3, "scene.render.engine = 'HYDRA_STORM'", "TypeError: bpy_struct: item.attr = val: enum \"HYDRA_STORM\" not found in ('BLENDER_EEVEE', 'BLENDER_WORKBENCH', 'CYCLES')")), goal, "unsure", "render engine",
 			"import bpy\nscene = bpy.context.scene\nscene.render.engine = 'HYDRA_STORM'\n"},
+		{"Blender's own engine by a wrong name", blenderRun(1, tb(3, "scene.render.engine = 'EEVEE'", "TypeError: bpy_struct: item.attr = val: enum \"EEVEE\" not found in ('BLENDER_EEVEE', 'BLENDER_WORKBENCH', 'CYCLES')")), goal, "failed", "EEVEE",
+			"import bpy\nscene = bpy.context.scene\nscene.render.engine = 'EEVEE'\n"},
+		{"the name an older Blender used", blenderRun(1, tb(3, "scene.render.engine = 'BLENDER_EEVEE_NEXT'", "TypeError: bpy_struct: item.attr = val: enum \"BLENDER_EEVEE_NEXT\" not found in ('BLENDER_EEVEE', 'BLENDER_WORKBENCH', 'CYCLES')")), goal, "failed", "BLENDER_EEVEE_NEXT",
+			"import bpy\nscene = bpy.context.scene\nscene.render.engine = 'BLENDER_EEVEE_NEXT'\n"},
+		{"unless the task is for that Blender", blenderRun(1, tb(3, "scene.render.engine = 'BLENDER_EEVEE_NEXT'", "TypeError: bpy_struct: item.attr = val: enum \"BLENDER_EEVEE_NEXT\" not found in ('BLENDER_EEVEE', 'BLENDER_WORKBENCH', 'CYCLES')")), "A studio for Blender 4.2", "unsure", "the task is for Blender 4",
+			"import bpy\nscene = bpy.context.scene\nscene.render.engine = 'BLENDER_EEVEE_NEXT'\n"},
+		{"nothing to go through, in a scene built from nothing", blenderRun(1, tb(5, "scene.cycles.device = 'GPU' if any(d.type != 'CPU' for d in devices) else 'CPU'", "TypeError: 'NoneType' object is not iterable")), "create a blender scene of a coffee cup on a table", "failed", "NoneType",
+			noDevices},
+		{"so it isn't the person's file", blenderRun(1, tb(5, "scene.cycles.device = 'GPU' if any(d.type != 'CPU' for d in devices) else 'CPU'", "TypeError: 'NoneType' object is not iterable")), "Make my scene render on the GPU", "unsure", "fresh scene", noDevices},
+		{"nor a scene set in the person's file", blenderRun(1, tb(5, "scene.cycles.device = 'GPU' if any(d.type != 'CPU' for d in devices) else 'CPU'", "TypeError: 'NoneType' object is not iterable")), "Create a scene of a cup in my project", "unsure", "fresh scene", noDevices},
+		{"nor something from the window, kept in a name first", blenderRun(1, tb(3, "m = view.region_3d", "AttributeError: 'NoneType' object has no attribute 'region_3d'")), "create a blender scene of a coffee cup on a table", "unsure", "fresh scene",
+			"import bpy\nview = bpy.context.space_data\nm = view.region_3d\n"},
+		{"nor something from the command line", blenderRun(1, tb(3, "n = name.upper()", "AttributeError: 'NoneType' object has no attribute 'upper'")), "create a blender scene of a coffee cup on a table", "unsure", "fresh scene",
+			"import os\nname = os.environ.get('NAME')\nn = name.upper()\n"},
+		{"nor something from a file the sandbox hides", blenderRun(1, tb(4, "i.pixels", "AttributeError: 'NoneType' object has no attribute 'pixels'")), "create a blender scene of a coffee cup on a table", "unsure", "fresh scene",
+			"import bpy\nimport os\ni = bpy.data.images.load('/x.png') if os.path.exists('/x.png') else None\ni.pixels\n"},
+		{"nor a task that isn't a scene", blenderRun(1, tb(5, "scene.cycles.device = 'GPU' if any(d.type != 'CPU' for d in devices) else 'CPU'", "TypeError: 'NoneType' object is not iterable")), "Model a chair", "unsure", "fresh scene", noDevices},
+		{"nor something only a window has", blenderRun(1, tb(3, "m = bpy.context.region_data.view_matrix", "AttributeError: 'NoneType' object has no attribute 'view_matrix'")), "create a blender scene of a coffee cup on a table", "unsure", "fresh scene",
+			"import bpy\nx = 1\nm = bpy.context.region_data.view_matrix\n"},
 		{"arguments after --", blenderRun(1, tb(6, "src, dst = args", "ValueError: not enough values to unpack (expected 2, got 0)")), goal, "unsure", "command-line arguments",
 			"import bpy, sys\nargv = sys.argv\nargs = argv[argv.index('--') + 1:]\nx = 1\ny = 2\nsrc, dst = args\n"},
 		{"an import call over several lines", blenderRun(1, tb(7, "bpy.ops.wm.ply_import(", "RuntimeError: Error: PLY Importer: f_230: Invalid PLY header.")), goal, "unsure", "reads or writes files",

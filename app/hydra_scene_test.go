@@ -58,8 +58,8 @@ func TestSceneFaults(t *testing.T) {
 		{"two with none", "Add a torus.", "", facts(func(f *sceneFacts) { f.Empty, f.Blank = []string{"water", "floor"}, 2 }), "water, floor have no geometry."},
 		{"many with none", "Add a torus.", "", facts(func(f *sceneFacts) { f.Empty, f.Blank = []string{"a", "b", "c"}, 9 }), "a, b, c and 6 more have no geometry."},
 		{"nothing in the scene", "Add a material.", "", facts(func(f *sceneFacts) { f.Total, f.Seen = 0, 0 }), ""},
-		{"the default cube in a new scene", "Build a small tabletop scene with a table.", "", facts(cube), "The default cube is still in the scene."},
-		{"a goal that opens with the scene", "A tabletop scene with a mug.", "", facts(cube), "The default cube"},
+		{"the default cube in a new scene", "Build a small tabletop scene with a table.", "bpy.ops.mesh.primitive_plane_add()", facts(cube), "The default cube is still in the scene."},
+		{"a goal that opens with the scene", "A tabletop scene with a mug.", "bpy.ops.mesh.primitive_plane_add()", facts(cube), "The default cube"},
 		{"the task is about a cube", "Build a scene with a red cube.", "", facts(cube), ""},
 		{"or cubes", "Build a scene of three cubes.", "", facts(cube), ""},
 		{"the script uses it", frameAll, "c = bpy.data.objects['Cube']", facts(cube), ""},
@@ -93,6 +93,159 @@ func TestSceneFaults(t *testing.T) {
 	for _, goal := range []string{frameAll, "Build a table with a camera that frames it.", "Add a camera to frame the scene.", "A vase, and render it."} {
 		if got := sceneFaults(facts(noCamera), goal, ""); len(got) != 1 {
 			t.Errorf("a camera wanted: %s: %q", goal, got)
+		}
+	}
+}
+
+func TestEverydayScenes(t *testing.T) {
+	const cup = "can u create a blender scene of a coffee cup on a table lit by a lamp also on the table"
+	table := sceneObject{Name: "chimera_table", Size: []float64{2, 1, 1}, Hits: 900, Frame: true}
+	lampBase := sceneObject{Name: "chimera_lamp_base", Size: []float64{1, 1, 1}, Hits: 40, Frame: true}
+	lampTop := sceneObject{Name: "chimera_lamp_top", Size: []float64{1, 1, 1}, Share: 0}
+	scene := func(objects []sceneObject, shown, hidden []string, mod func(f *sceneFacts)) *sceneFacts {
+		return facts(func(f *sceneFacts) {
+			f.Objects, f.Shown, f.Hidden, f.Total, f.Out, f.Cut = objects, shown, hidden, len(objects), 0, 0
+			for _, o := range objects {
+				if o.Hits == 0 && !o.Frame {
+					f.Out++
+				} else if o.Cut {
+					f.Cut++
+				}
+			}
+			if mod != nil {
+				mod(f)
+			}
+		})
+	}
+	mugOut := sceneObject{Name: "chimera_coffee_cup", Size: []float64{1, 1, 1}}
+	mugCut := sceneObject{Name: "chimera_coffee_cup", Size: []float64{1, 1, 1}, Hits: 2, Frame: true, Cut: true, Share: 0.4}
+	mugIn := sceneObject{Name: "chimera_coffee_cup", Size: []float64{1, 1, 1}, Hits: 30, Frame: true}
+	onTable := []string{"chimera", "table", "lamp", "base"}
+	things := func(n, out int) *sceneFacts {
+		var objects []sceneObject
+		for i := range n {
+			o := sceneObject{Name: fmt.Sprintf("Plain.%03d", i), Hits: 20, Frame: true}
+			if i < out {
+				o.Hits, o.Frame = 0, false
+			}
+			objects = append(objects, o)
+		}
+		return scene(objects, []string{"plain"}, []string{"plain"}, nil)
+	}
+	for _, c := range []struct {
+		name, goal string
+		f          *sceneFacts
+		want       string
+	}{
+		{"what it names is out of shot", cup, scene([]sceneObject{mugOut, table, lampBase}, onTable, []string{"chimera", "coffee", "cup"}, nil), "doesn't show chimera_coffee_cup"},
+		{"barely in the corner, as on Oct 31", cup, scene([]sceneObject{mugCut, table, lampBase}, onTable, []string{"chimera", "coffee", "cup"}, nil), "doesn't show chimera_coffee_cup"},
+		{"all in", cup, scene([]sceneObject{mugIn, table, lampBase}, append(onTable, "coffee", "cup"), nil, nil), ""},
+		{"some of the lamp is in shot", cup, scene([]sceneObject{lampTop, mugIn, table, lampBase}, append(onTable, "coffee", "cup"), []string{"chimera", "lamp", "top"}, nil), ""},
+		{"none of it is", cup, scene([]sceneObject{lampTop, mugIn, table}, []string{"chimera", "coffee", "cup", "table"}, []string{"chimera", "lamp", "top"}, nil), "doesn't show chimera_lamp_top"},
+		{"a plural", "A scene of two lamps on a table.", scene([]sceneObject{lampTop, table}, []string{"chimera", "table"}, []string{"chimera", "lamp", "top"}, nil), "chimera_lamp_top"},
+		{"another word that starts the same", "A scene of a dog having a bath.", scene([]sceneObject{{Name: "Bathroom_Cabinet"}, table}, []string{"chimera", "table"}, []string{"bathroom", "cabinet"}, nil), ""},
+		{"but it can show the thing", "A scene of a table.", scene([]sceneObject{{Name: "Table_Leg"}, {Name: "Tabletop", Hits: 300, Frame: true}}, []string{"tabletop"}, []string{"leg", "table"}, nil), ""},
+		{"where it stands, by an extra", "A scene of a bike in a garage.", scene([]sceneObject{{Name: "Garage_Door"}, {Name: "Bike", Hits: 300, Frame: true}}, []string{"bike"}, []string{"door", "garage"}, nil), ""},
+		{"where it stands, and nothing there", "A scene of a bike in a garage.", scene([]sceneObject{{Name: "Garage_Door"}, {Name: "Bike"}, table}, []string{"chimera", "table"}, []string{"bike", "door", "garage"}, nil), "doesn't show Bike, Garage_Door"},
+		{"what stands there isn't where", "A scene of a cat on a sofa.", scene([]sceneObject{{Name: "Cat"}, {Name: "Sofa", Hits: 300, Frame: true}}, []string{"sofa"}, []string{"cat"}, nil), "doesn't show Cat"},
+		{"a verb isn't a thing", "A scene of a girl reading on a sofa.", scene([]sceneObject{{Name: "Reading_Lamp"}, {Name: "Sofa", Hits: 300, Frame: true}}, []string{"sofa"}, []string{"lamp", "reading"}, nil), ""},
+		{"a word for the shot isn't a thing", "A scene of a cup on a table, with the cup in the middle of the frame.", scene([]sceneObject{{Name: "Picture_Frame"}, mugIn, table}, append(onTable, "coffee", "cup"), []string{"frame", "picture"}, nil), ""},
+		{"only what the task named counts", "A scene of a table.", scene([]sceneObject{mugOut, table}, []string{"chimera", "table"}, []string{"chimera", "coffee", "cup"}, nil), ""},
+		{"nothing named: a forest is mostly out of any good shot", "A scene of a garden.", things(6, 5), ""},
+		{"a place to the left isn't a thing", "A scene of a jug on a table with a cup on the left.", scene([]sceneObject{{Name: "Table_Leg_Left"}, {Name: "Jug", Hits: 30, Frame: true}, {Name: "Cup", Hits: 30, Frame: true}, {Name: "Table", Hits: 300, Frame: true}}, []string{"cup", "jug", "table"}, []string{"leg", "left", "table"}, nil), ""},
+		{"a cup of tea has no teapot in it", "A scene of a cup of tea on a table.", scene([]sceneObject{{Name: "Tea_Pot"}, {Name: "Cup", Hits: 30, Frame: true}, table}, []string{"chimera", "cup", "table"}, []string{"pot", "tea"}, nil), ""},
+		{"a dining table has no dining chair in it", "A scene of a candle on a dining table.", scene([]sceneObject{{Name: "Dining_Chair"}, {Name: "Candle", Hits: 30, Frame: true}, {Name: "Dining_Table", Hits: 900, Frame: true}}, []string{"candle", "dining", "table"}, []string{"chair", "dining"}, nil), ""},
+		{"what lights it can stand outside it", "A still life of fruit in a bowl on a table lit by a window.", scene([]sceneObject{{Name: "Window_Frame"}, {Name: "Bowl", Hits: 30, Frame: true}, table}, []string{"bowl", "chimera", "fruit", "table"}, []string{"frame", "window"}, nil), ""},
+		{"unless it's placed", cup, scene([]sceneObject{lampTop, mugIn, table}, []string{"chimera", "coffee", "cup", "table"}, []string{"chimera", "lamp", "top"}, nil), "chimera_lamp_top"},
+		{"a helper's word is no thing", "A scene of a farm.", scene([]sceneObject{{Name: "Farmhouse"}, table}, []string{"chimera", "table"}, nil, nil), ""},
+		{"three at most", "A scene of a mug, a bowl, a lamp and a spoon.", scene([]sceneObject{{Name: "mug"}, {Name: "bowl"}, {Name: "lamp"}, {Name: "spoon"}, table}, []string{"chimera", "table"}, []string{"bowl", "lamp", "mug", "spoon"}, nil), "mug, bowl, lamp, which"},
+		{"a word with no object listed", "A scene of a mug on a table.", scene([]sceneObject{table}, []string{"chimera", "table"}, []string{"mug"}, nil), "doesn't show mug"},
+		{"a short word doesn't start a longer one", "A scene of a bus.", scene([]sceneObject{{Name: "Bush"}, table}, []string{"chimera", "table"}, []string{"bush"}, nil), ""},
+		{"two cameras, and this one shows something asked for", "A scene of a mug and a table.", scene([]sceneObject{{Name: "mug"}, table}, []string{"chimera", "table"}, []string{"mug"}, func(f *sceneFacts) { f.Cameras = 2 }), ""},
+		{"two cameras, and it shows nothing asked for", "A scene of a mug and a bowl.", scene([]sceneObject{{Name: "mug"}, {Name: "bowl"}, table}, []string{"chimera", "table"}, []string{"bowl", "mug"}, func(f *sceneFacts) { f.Cameras = 2 }), "doesn't show mug, bowl"},
+		{"among it, and it shows nothing asked for", "A scene of a mug and a bowl.", scene([]sceneObject{{Name: "mug"}, {Name: "bowl"}, table}, []string{"chimera", "table"}, []string{"bowl", "mug"}, func(f *sceneFacts) { f.Camera.At = []float64{0, 0, 1} }), "doesn't show mug, bowl"},
+		{"a scene needs a camera", cup, scene([]sceneObject{table}, nil, nil, func(f *sceneFacts) { f.Camera = nil }), "The scene has no camera."},
+		{"unless it says not", "A scene of a chair, no camera needed.", scene([]sceneObject{table}, nil, nil, func(f *sceneFacts) { f.Camera = nil }), ""},
+		{"or leaves it for later", "A scene of a chair. Don't add a camera, I'll set up the camera myself.", scene([]sceneObject{table}, nil, nil, func(f *sceneFacts) { f.Camera = nil }), ""},
+		{"or says so in passing", "blender scene of a sandcastle pls, leave the camera to me", scene([]sceneObject{table}, nil, nil, func(f *sceneFacts) { f.Camera = nil }), ""},
+		{"a blank scene it asked for", "Create an empty scene.", scene(nil, nil, nil, func(f *sceneFacts) { f.Camera, f.Total = nil, 0 }), ""},
+		{"a script with nothing added leaves the cube", "A scene of a chair.", scene(nil, nil, nil, func(f *sceneFacts) { f.Cube = true }), ""},
+		{"and it has to see something", cup, scene([]sceneObject{{Name: "chimera_table"}}, nil, []string{"chimera", "table"}, func(f *sceneFacts) { f.Seen, f.Filled = 0, 0 }), "The camera sees none"},
+		{"standing among it", cup, scene([]sceneObject{mugOut, table, lampBase}, onTable, []string{"chimera", "coffee", "cup"}, func(f *sceneFacts) { f.Camera.At = []float64{0, 0, 1} }), ""},
+		{"a close-up it asked for", "A close-up scene of a cup on a table.", scene([]sceneObject{mugOut, table, lampBase}, onTable, []string{"chimera", "coffee", "cup"}, nil), ""},
+		{"out of shot, as it said", "A scene of a table with a cup just out of shot.", scene([]sceneObject{mugOut, table, lampBase}, onTable, []string{"chimera", "coffee", "cup"}, nil), ""},
+		{"it said what the camera is for", "A street scene with a cup and a table, and a camera that shows the whole table.", scene([]sceneObject{mugOut, table, lampBase}, onTable, []string{"chimera", "coffee", "cup"}, nil), ""},
+		{"or that the camera should zoom in", "A scene of a cup on a table: zoomed in on the table.", scene([]sceneObject{mugOut, table, lampBase}, onTable, []string{"chimera", "coffee", "cup"}, nil), ""},
+		{"or where it stands", "A scene of a cup on a table with the camera at (1, 2, 3).", scene([]sceneObject{mugOut, table, lampBase}, onTable, []string{"chimera", "coffee", "cup"}, nil), ""},
+		{"unless that's everything", "A scene of a cup and a table, and a camera that frames everything.", scene([]sceneObject{mugCut, table, lampBase}, onTable, []string{"chimera", "coffee", "cup"}, nil), "doesn't show chimera_coffee_cup"},
+		{"the person's own file", "Put a cup on the table in my scene.", scene([]sceneObject{mugOut, table, lampBase}, onTable, []string{"chimera", "coffee", "cup"}, nil), ""},
+		{"it moves", cup, scene([]sceneObject{mugOut, table, lampBase}, onTable, []string{"chimera", "coffee", "cup"}, func(f *sceneFacts) { f.Animated = true }), ""},
+		{"not a scene", "Model a coffee cup on a table.", scene([]sceneObject{mugOut, table, lampBase}, onTable, []string{"chimera", "coffee", "cup"}, nil), ""},
+		{"words that aren't things", "A camera scene with a light.", scene([]sceneObject{{Name: "camera_light"}, table}, []string{"chimera", "table"}, []string{"camera", "light"}, nil), ""},
+	} {
+		got := strings.Join(sceneFaults(c.f, c.goal, ""), " ")
+		if (c.want == "") != (got == "") || !strings.Contains(got, c.want) {
+			t.Errorf("%s: want %q, got %q", c.name, c.want, got)
+		}
+	}
+	if m := measured(scene([]sceneObject{table}, nil, nil, func(f *sceneFacts) {
+		f.Camera, f.Seen = nil, 0
+		f.Pose = &scenePose{At: []float64{1, 2, 3}, Rotation: []float64{1, 0, 0}, Sees: 1}
+	})); !strings.Contains(m, "add a camera, make it scene.camera") || strings.Contains(m, "out of frame") {
+		t.Fatalf("with no camera there's nothing to be out of frame of: %s", m)
+	}
+	cut := scene([]sceneObject{mugCut, table}, []string{"chimera", "table"}, []string{"chimera", "coffee", "cup"}, nil)
+	if m := measured(cut); !strings.Contains(m, "only 40% of it is in frame") || !strings.Contains(m, "1 of the 2 objects are out of frame") {
+		t.Fatal(m)
+	}
+	if c := withScene(resultCheck{Outcome: "passed", Summary: "Ran."}, cut, "Add a torus to my file.", ""); !strings.Contains(c.Summary, "1 of its 2 objects are in the camera's frame.") {
+		t.Fatal(c.Summary)
+	}
+	if c := withScene(resultCheck{Outcome: "passed", Summary: "Ran."}, cut, cup, ""); c.Outcome != "wrong_scene" || c.Seen != 0.5 {
+		t.Fatalf("%+v", c)
+	}
+}
+
+func TestWhatATaskNames(t *testing.T) {
+	for goal, want := range map[string]string{
+		"can u create a blender scene of a coffee cup on a table lit by a lamp also on the table": "cup table lamp table",
+		"a still life of fruit on a table lit by a window":                                        "fruit table",
+		"a scene of a table in sunlight coming through a window":                                  "table",
+		"a scene of a kitchen counter with a kettle and a cutting board":                          "kettle board",
+		"a scene of a coffee cup on a table with a lamp":                                          "cup table lamp",
+		"a scene of a cup of tea on a table":                                                      "cup table",
+		"a small wooden cabin near a lake":                                                        "cabin lake",
+		"a jug with a cup on the left":                                                            "jug cup",
+	} {
+		if got := strings.Join(goalThings(goal), " "); got != want {
+			t.Errorf("%s: got %q, want %q", goal, got, want)
+		}
+	}
+}
+
+func TestWhatCountsAsAScene(t *testing.T) {
+	for _, goal := range []string{
+		"can u create a blender scene of a coffee cup on a table lit by a lamp also on the table", "make me a cozy scene with a sofa and a rug", "blender scene of a desk with a laptop",
+		"a scene of a bowl of fruit", "a still life of three apples", "Create a desert landscape with a cactus", "i want a scene with a red ball", "give me a low poly forest scene",
+		"a diorama of a small harbour", "scene with a table and two chairs", "build the scene described below: a chair and a table", "show me a scene of a dog", "Render a scene of a mug",
+		"could you do a scene with a car", "create a new scene", "a mountain landscape at dawn",
+	} {
+		if !newSceneRe.MatchString(goal) {
+			t.Errorf("a scene: %s", goal)
+		}
+	}
+	for _, goal := range []string{
+		"model a chair", "make a coffee cup", "Make the scene darker", "Render the scene with Cycles", "Set the scene frame rate to 24", "Remove everything from the scene", "make a low poly island",
+		"Set up a sky environment", "create a forest environment",
+	} {
+		if newSceneRe.MatchString(goal) {
+			t.Errorf("not a scene: %s", goal)
+		}
+	}
+	for _, goal := range []string{"add a cube to the scene", "create a cup in the scene", "Add a sun to my scene", "Fix the camera in this scene", "write an add-on that makes a scene",
+		"Count the polygons in a scene with many objects", "make a landscape painting", "Create a scene collection for props"} {
+		if !ownSceneRe.MatchString(goal) {
+			t.Errorf("the person's own scene: %s", goal)
 		}
 	}
 }
@@ -213,6 +366,7 @@ func TestRealBlenderMeasuresTheScene(t *testing.T) {
 	const clear = "import bpy\nimport math\nbpy.ops.object.select_all(action='SELECT')\nbpy.ops.object.delete()\n"
 	const table = "bpy.ops.mesh.primitive_cylinder_add(radius=1, depth=0.1, location=(0, 0, 0.75))\nbpy.context.object.name = 'table'\nbpy.ops.mesh.primitive_cylinder_add(radius=0.1, depth=0.2, location=(0.3, 0, 0.9))\nbpy.context.object.name = 'mug'\n"
 	const cameraAt = "cd = bpy.data.cameras.new('c')\ncam = bpy.data.objects.new('c', cd)\nbpy.context.scene.collection.objects.link(cam)\nbpy.context.scene.camera = cam\ncam.location = (0, -5, 3)\n"
+	const overEdge = "from mathutils import Vector\nbpy.context.view_layer.update()\nf = cam.data.view_frame(scene=bpy.context.scene)\nbpy.ops.mesh.primitive_uv_sphere_add(radius=0.2, location=cam.matrix_world @ (((f[0] + f[1]) / 2 * 8) + Vector((0.08, 0, 0))))\nbpy.context.object.name = 'ball'\n"
 	const lookAtTable = "t = bpy.data.objects['table']\ncon = cam.constraints.new('TRACK_TO')\ncon.target = t\ncon.track_axis = 'TRACK_NEGATIVE_Z'\ncon.up_axis = 'UP_Y'\n"
 	for _, c := range []struct{ name, script, goal, outcome, has string }{
 		{"a good scene", clear + table + cameraAt + lookAtTable, frameAll, "passed", "2 of its 2 objects are in the camera's frame."},
@@ -240,6 +394,14 @@ func TestRealBlenderMeasuresTheScene(t *testing.T) {
 		{"a cube it keeps and recolours", "import bpy\nbox = bpy.context.active_object\nbox.data.materials[0].node_tree.nodes['Principled BSDF'].inputs['Base Color'].default_value = (0, 0, 1, 1)\nbpy.ops.mesh.primitive_plane_add(size=9, location=(0, 0, -1))\n", "Build a scene with a blue box on a floor.", "passed", ""},
 		{"too far for its clip_end", clear + table + cameraAt + "cam.location = (0, -500, 1)\ncam.rotation_euler = (math.radians(90), 0, 0)\ncd.clip_end = 100\n", frameAll, "wrong_scene", "The camera sees none"},
 		{"nobody asked about a camera", "import bpy\nbpy.ops.mesh.primitive_torus_add(location=(50, 0, 0))\n", "Add a torus to my file.", "passed", ""},
+		{"a sphere made with no segments, as a real repair did", clear + table + cameraAt + lookAtTable + "import bmesh\nm = bpy.data.meshes.new('apple')\nbm = bmesh.new()\nbmesh.ops.create_uvsphere(bm, radius=1.0)\nbm.to_mesh(m)\nbm.free()\nm.materials.append(bpy.data.materials.new('red'))\nbpy.context.scene.collection.objects.link(bpy.data.objects.new('apple', m))\n", "Build a table scene.", "wrong_scene", "apple has no geometry."},
+		{"points left as a guide", clear + table + cameraAt + lookAtTable + "m = bpy.data.meshes.new('guide')\nm.from_pydata([(0, 0, 0), (1, 0, 0)], [(0, 1)], [])\nbpy.context.scene.collection.objects.link(bpy.data.objects.new('guide', m))\n", "Build a table scene.", "passed", ""},
+		{"a scene needs a camera", clear + table, "A scene of a table.", "wrong_scene", "The scene has no camera."},
+		{"the view it offers a scene with none", clear + table + "POSE", "A scene of a table.", "passed", "2 of its 2 objects are in the camera's frame."},
+		{"what the task named is out of shot", clear + table + cameraAt + lookAtTable + "bpy.ops.mesh.primitive_uv_sphere_add(radius=0.2, location=(40, 0, 1))\nbpy.context.object.name = 'ball'\n", "A scene of a table and a ball.", "wrong_scene", "doesn't show ball"},
+		{"what it didn't name is its own business", clear + table + cameraAt + lookAtTable + "bpy.ops.mesh.primitive_uv_sphere_add(radius=0.2, location=(40, 0, 1))\nbpy.context.object.name = 'ball'\n", "A scene of a table.", "passed", "2 of its 3 objects"},
+		{"most of it is over the edge of the frame", clear + table + cameraAt + lookAtTable + overEdge, "A scene of a table and a ball.", "wrong_scene", "doesn't show ball"},
+		{"a fence the viewport doesn't show", clear + table + cameraAt + lookAtTable + "bpy.ops.mesh.primitive_cube_add(size=1, location=(-40, 0, 1))\nbpy.context.object.name = 'fence'\nm = bpy.context.object.modifiers.new('a', 'ARRAY')\nm.count = 80\nm.show_viewport = False\n", "A scene of a table and a fence.", "passed", ""},
 		{"an animated camera", clear + table + cameraAt + "cam.rotation_euler = (math.radians(-90), 0, 0)\ncam.keyframe_insert('location', frame=1)\n", frameAll, "passed", ""},
 	} {
 		dir := t.TempDir()
@@ -256,6 +418,9 @@ func TestRealBlenderMeasuresTheScene(t *testing.T) {
 			res, f, _ := takeScene(realBlender(t, path, script, blenderStopAtRender+blenderCrashNames+blenderSceneFacts, blenderMeasureScene))
 			if f == nil || f.Pose == nil || f.Pose.Sees != f.Total {
 				t.Fatalf("%s: %+v\n%s", c.name, f, res.Output)
+			}
+			if f.Camera == nil {
+				text += cameraAt
 			}
 			text += fmt.Sprintf("cam.location = %s\ncam.rotation_euler = (%f, %f, %f)\n", coords(f.Pose.At), f.Pose.Rotation[0], f.Pose.Rotation[1], f.Pose.Rotation[2])
 			if err := os.WriteFile(script, []byte(text), 0o600); err != nil {
