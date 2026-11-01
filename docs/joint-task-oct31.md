@@ -447,3 +447,10 @@ doesn't learn to from that.
   build would drop the picture and answer blind, so that needs a version bump first.
 - Two wrong names can take turns (`FFMPEG`, `H264`), which the same-fault rule doesn't see, and that spent 16 repairs in one earlier run.
 - The picture isn't shown on the task card, and the repair model doesn't see it.
+
+**From another computer (Nov 1, on 0.8.0).** With all three computers updated, the first long task started anywhere but the Studio ran from FX2:
+"a scene of basic shapes on a table with a basic sky background like the early 90s cgi renders". About 2 minutes 10 seconds, one round. It planned and
+reviewed on FX4's `hydra:1.0`, ran steps on FX3 and FX2, and combined and repaired on FX3. The check ran on FX2, in its own sandbox and Blender 5.2.2: three crashes,
+then the default cube, then a pass after 4 repairs, with no note. FX2 has no `qwen3.8`, so it skipped the look; run here afterwards, the look passes it too. The picture is a cube,
+sphere and cone on a flat square, recognisable and fittingly plain, but pale, with the sphere and cone half sunk into the table, which nothing checks. FX2's own steps were free, as they
+should be. Still unchecked: a long task started from Windows or Linux, and the look anywhere but the Studio.
