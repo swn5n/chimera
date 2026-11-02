@@ -431,7 +431,7 @@ Your piece was:
 
 Give your whole piece again, fixed, in the same shape and with the same names. Running stops at the first error, so check the rest of your piece against Blender {version}'s API too."
 
-Blender API notes stay out of the worker's prompt in v1. They go only to the teacher, so no Claude-curated text enters training inputs and nothing extra ships with Chimera.
+Blender API notes stay out of the worker's prompt in v1. They go only to the teacher, so no Claude-curated text enters training inputs and nothing extra ships with Chimera. **Changed Nov 1:** the names sheet (`app/blender_names.go`) is in worker and combine prompts, because it's printed by the asker's Blender, not written by anyone, and on real tasks it cut the crashes it covers from 1.2 to 0.3 per task (`docs/joint-task-oct31.md`, The harness). Training data should be generated with it, and a model trained with it needs a test without it, for a computer that has no Blender.
 
 JOINING
 New Go code on the asking computer, in app/hydra_assemble.go. Nothing is trained on it, so it can change freely.

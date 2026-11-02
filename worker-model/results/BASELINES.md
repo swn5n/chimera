@@ -97,7 +97,16 @@ By part (paired samples):
 
 ## T1: whole frozen plans, arms side by side
 
-No T1 run finished yet (stage d of run_baselines.sh; it needs frozen plans, stage b).
+| arm | prompt, workers, joining | tasks | Blender n | pass 5.2.2 | 5.0.1 | both | Python n | Python pass | fallback | seams | cut off | runaway | steps kept the contract | steps in exact form | one script | total min | tokens |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| A | today, qwen3.8:27b, combine | 14 | 12 | 8% | 8% | 8% | 2 | 0% | – | – | 0% | 0% | 0% | 0% | 100% | 71.3 | 251605 |
+| B | contract, qwen3.8:27b, join | 14 | 12 | 25% | 25% | 25% | 2 | 0% | 43% | 0.79 | 0% | 0% | 82% | 82% | 100% | 72.2 | 269867 |
+
+Combine (and fallback) model: qwen3.8:27b. One pass, round 1, steps one at a time (so the wall times are sums, not Chimera's parallel time); no reviewer tonight unless REVIEW was set; no seam pass (seams are only counted). Pass rates are over every task of the kind; a result that wasn't checked (cut off, runaway, several scripts, no script, a joined Python script with no entry point) is a fail. Multi-file plans aren't in T1 tonight (the check can't run them).
+
+Paired, on the same tasks (the phase-1 gate is B at least A on T1 Blender and code passes; tonight's T1 is the script's subset, not the plan's 30 tasks):
+
+- B against A on the 14 tasks both ran: Blender pass in both versions 25% against 8% (12 Blender tasks), Python pass 0% against 0% (2 Python tasks)
 
 ## Frozen W1 inputs (eval/frozen)
 

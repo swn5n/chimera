@@ -60,14 +60,15 @@ class GoSyncTests(unittest.TestCase):
         for line in ("user.WriteString(step.Instructions)",
                      'out = "%s"' % T.TODAY_DEP_FAILED,
                      r'fmt.Fprintf(&user, "\n\nOutput from the step \"%s\":\n%s", s.Title, truncate(out, 8000))',
-                     'msgs := []ChatMessage{{Role: "system", Content: workerPrompt(rec.hydraPlan, step) + refsBlock(useful)}, '
-                     '{Role: "user", Content: user.String()}}',
+                     'msgs := []ChatMessage{{Role: "system", Content: workerPrompt(rec.hydraPlan, step) + refsBlock(useful) + '
+                     'a.namesBlock(ctx, step.Kind, rec.hydraPlan, rec.Goal)}, {Role: "user", Content: user.String()}}',
                      "NeedCtx: historyTokens(msgs) + room",
                      "stepRoom := 4096",
-                     r'''fmt.Fprintf(&parts, "Task from the person: %s\n\nProject: %s\n%s\n\nThe workers' outputs:\n", rec.Goal, rec.Title, rec.Summary)''',
-                     "budget := 60000 / len(rec.Steps)",
-                     'out = "(this step failed: " + s.Error + ")"',
-                     r'fmt.Fprintf(&parts, "\n## Step %d: %s\n%s\n", i+1, s.Title, truncate(out, budget))',
+                     r'''fmt.Fprintf(&parts, "Task from the person: %s\n\nProject: %s\n%s\n\n", rec.Goal, rec.Title, rec.Summary)''',
+                     r'''parts.WriteString("The workers' outputs:\n")''',
+                     "limit := pieceCap(sizes, 60000)",
+                     'outs[i] = "(this step failed: " + s.Error + ")"',
+                     r'fmt.Fprintf(&parts, "\n## Step %d: %s\n%s\n", i+1, s.Title, truncate(outs[i], limit))',
                      r'''b.WriteString("\n\nKnown-good references from your network's library, checked by the network (reuse them when they fit; ignore them when they don't):\n")''',
                      r'fmt.Fprintf(&b, "\n--- %s (%s) ---\n%s\n%s\n", e.Title, e.Kind, e.Summary, truncate(e.Content, 3000))'):
             with self.subTest(line=line[:60]):

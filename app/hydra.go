@@ -702,6 +702,7 @@ func (t *TaskManager) onePass(ctx context.Context, run *taskRun, req taskReq, ro
 	if editing {
 		system = synthEditPrompt
 	}
+	system += a.namesBlock(ctx, rec.Kind, rec.hydraPlan, rec.Goal)
 	synthMsgs := []ChatMessage{{Role: "system", Content: system}, {Role: "user", Content: parts.String()}}
 	synthReq := submitReq{Private: req.Private, Messages: synthMsgs, Prefer: "largest", TaskWork: true,
 		NeedCtx: historyTokens(synthMsgs) + room, Purpose: "Hydra: combining (round " + itoaSmall(round) + ")"}
@@ -1099,7 +1100,7 @@ func (t *TaskManager) runStep(ctx context.Context, run *taskRun, i int, private 
 		}
 	}
 	user.WriteString(earlier)
-	msgs := []ChatMessage{{Role: "system", Content: workerPrompt(rec.hydraPlan, step) + refsBlock(useful)}, {Role: "user", Content: user.String()}}
+	msgs := []ChatMessage{{Role: "system", Content: workerPrompt(rec.hydraPlan, step) + refsBlock(useful) + a.namesBlock(ctx, step.Kind, rec.hydraPlan, rec.Goal)}, {Role: "user", Content: user.String()}}
 	var out strings.Builder
 	var lastErr string
 	for attempt := 0; attempt < 2; attempt++ {

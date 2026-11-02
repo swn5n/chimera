@@ -1,0 +1,62 @@
+{
+ "arm": "A",
+ "prompt": "today",
+ "joining": "combine",
+ "workers": "qwen3.8:27b",
+ "arm_default_workers": "qwen3.8:27b",
+ "combine_model": "qwen3.8:27b",
+ "seam": "none",
+ "models": {
+  "qwen3.8:27b": {
+   "digest": "47951e4a666180bc2aedfc93c169472f2de783696fe196efbf063f5730ecf163",
+   "details": {
+    "parent_model": "",
+    "format": "safetensors",
+    "family": "qwen3_5",
+    "families": null,
+    "parameter_size": "27.8B",
+    "quantization_level": "nvfp4",
+    "runner": "mlx"
+   },
+   "context_length": 262144
+  }
+ },
+ "ollama_version": "0.40.1",
+ "host": "http://127.0.0.1:11434",
+ "eval_version": "w1.0",
+ "tasks": [
+  "bw-01",
+  "bw-03",
+  "code-10",
+  "batch-10"
+ ],
+ "task_sources": {
+  "bw-01": "frozen:hydra:1.0",
+  "bw-03": "frozen:gpt-oss:120b",
+  "code-10": "frozen:hydra:1.0",
+  "batch-10": "frozen:hydra:1.0"
+ },
+ "samples": 1,
+ "review": 0,
+ "review_model": null,
+ "chimera_version_of_requests": "0.7.0",
+ "blender_versions": [
+  "5.2.2",
+  "5.0.1"
+ ],
+ "started": "2026-11-01T15:28:29-06:00",
+ "python": "3.13.12",
+ "machine": "FX3.local",
+ "differences_from_chimera": [
+  "steps run one at a time (onePass with parallelism 1)",
+  "no library references or library reuse",
+  "every step on the one worker model, the combine on a fixed model",
+  "a worker step's reply content is cut after 6144 tokens and scored as a runaway in content (the reply cap: Hydra Worker's num_predict, the cap Chimera should hold every step's content to); thinking doesn't count toward it. Chimera 0.7.0 sends no num_predict and no think field and has no cap",
+  "every reply, thinking included, is cut after 16384 tokens (the runaway guard; a worker reply cut there while still thinking is scored as a runaway in thinking; Chimera has no guard)"
+ ],
+ "reply_cap": 6144,
+ "max_reply_tokens": 16384,
+ "tag": "baseline-t1-c1",
+ "eval_only": "EVAL ONLY: model output for eval plans, never training data",
+ "finished": "2026-11-01T15:44:20-06:00"
+}

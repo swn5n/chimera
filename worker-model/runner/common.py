@@ -205,9 +205,33 @@ def ctx_bucket(need: int, max_ctx: int = 0) -> int:
     return b
 
 
+NAMES_HEAD = ("\n\nThe exact names in the Blender this will run on, printed by that Blender. Use these, not ones you "
+              "remember from other versions:\n")
+
+
+def names_sheet():
+    """WM_NAMES_FILE: what `chimera --blender-names` printed, to measure the names sheet. Unset, nothing changes."""
+    path = os.environ.get("WM_NAMES_FILE")
+    if not path:
+        return ""
+    with open(path, encoding="utf-8") as f:
+        return f.read().strip()
+
+
+def with_names(messages, need_ctx):
+    """namesBlock (app/blender_names.go) for the eval: the sheet at the end of a Blender task's system prompt."""
+    sheet = names_sheet()
+    text = "\n".join(m["content"] for m in messages)
+    if not sheet or not re.search(r"(?i)\b(?:blender|bpy)\b", text) or messages[0]["role"] != "system":
+        return messages, need_ctx
+    added = NAMES_HEAD + sheet
+    return [dict(messages[0], content=messages[0]["content"] + added)] + list(messages[1:]), need_ctx + len(added) // 3
+
+
 def chat_body(model, messages, need_ctx, ctx_max=0, options=None, fmt=None, keep_alive=KEEP_ALIVE):
     """The /api/chat body Chimera sends for a step (ChatStreamKeep, app/ollama.go). options are added on top of
     num_ctx (runStep's num_predict after a cut-off); fmt only for JSON jobs (the planner and reviewer)."""
+    messages, need_ctx = with_names(messages, need_ctx)
     opts = {"num_ctx": ctx_bucket(need_ctx, ctx_max)}
     opts.update(options or {})
     body = {"model": model, "messages": [{"role": m["role"], "content": m["content"]} for m in messages],

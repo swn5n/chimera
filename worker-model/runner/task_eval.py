@@ -56,7 +56,7 @@ from runner.step_eval import add_common_args, blender_from_args, limit_notes, li
 import evalset  # noqa: E402
 from contract import planinfo, prompt as cprompt, today  # noqa: E402
 from contract.goport import clean_plan  # noqa: E402
-from contract.join import join  # noqa: E402
+from contract.join import join, join_script  # noqa: E402
 from contract.validate import validate_piece  # noqa: E402
 
 ARMS = {
@@ -109,17 +109,21 @@ def load_tasks(es, task_ids=None, case_ids=None, frozen_dir=C.FROZEN_DIR):
     return out
 
 
-def run_task(task, arm, client, workers, combine_model, ctx_max, timeout, seam_mode="none"):
+def run_task(task, arm, client, workers, combine_model, ctx_max, timeout, seam_mode="none", measure=None):
     """One pass of one task under one arm. Returns the record (steps, combine, join, result)."""
     plan, steps = task.plan, task.plan["steps"]
     spec = ARMS[arm]
     elapsed = timer()
     outputs, done_reasons, rec_steps = {}, {}, []
+    pieces_so_far, measured = [], ""
     # runStep's room: 4096, and a lone step gets max(4096, room) with room = synthRoom in round 1
     for i, st in enumerate(steps):
         if spec["prompt"] == "contract":
             r = cprompt.worker_request(plan, i, outputs, goal=task.goal, prev_result=task.prior, critique=task.critique)
             msgs, need = r.messages, r.need_ctx
+            if measured:
+                msgs = list(msgs[:-1]) + [dict(msgs[-1], content=msgs[-1]["content"] + "\n\n" + measured)]
+                need += len(measured) // 3
         else:
             r = today.worker_messages(plan, i, outputs)
             msgs, need = r["messages"], r["need_ctx"]
@@ -137,7 +141,14 @@ def run_task(task, arm, client, workers, combine_model, ctx_max, timeout, seam_m
               "contract_ok": piece.contract_ok, "form_ok": piece.form_ok, "piece_ok": piece.ok,
               "contract_errors": sorted({x.code for x in piece.errors})}
         sr.update(call_fields(call))
+        sr["measured_given"] = measured
         rec_steps.append(sr)
+        if measure and mode == "blender" and piece.ok:
+            pieces_so_far.append(piece)
+            try:
+                measured = measure(join_script(plan, pieces_so_far, "blender")[0])
+            except Exception as e:  # noqa: BLE001  a measure that fails means the next step guesses, as today
+                print(f"  {task.id}: measuring failed: {e}", file=sys.stderr)
         print(f"  {task.id} {sr['sid']} {sr['status']} {sr['wall_s'] or 0:.1f}s "
               f"{(sr['stats'] or {}).get('eval_count') or 0} tok, contract {'ok' if piece.contract_ok else 'broken'}",
               file=sys.stderr)
@@ -448,6 +459,8 @@ def main(argv=None, blender=None):
     ap.add_argument("--case", action="append", help="an eval case whose own plan to run (W2-W4 ids; repeatable)")
     ap.add_argument("--frozen", default=C.FROZEN_DIR)
     ap.add_argument("--samples", type=int, default=1, help="passes per task (unseeded)")
+    ap.add_argument("--measured", action="store_true", help="give each contract Blender step what the pieces so far "
+                    "really built, measured in Blender (runner/measured.py)")
     ap.add_argument("--seam", choices=["none", "combine"], default="none",
                     help="contract arms with seams: keep the joined result (none) or use the fallback combine")
     ap.add_argument("--review", type=int, default=0, metavar="N", help=f"N reviews of each result on --review-model")
@@ -502,6 +515,10 @@ def main(argv=None, blender=None):
             return 2
     linter = lint_facts()
     loaded_before = loaded_models(client)
+    measure = None
+    if a.measured:
+        from runner.measured import Measure
+        measure = Measure(versions=blender.versions if blender else None)
     for arm in arms:
         spec, workers = ARMS[arm], a.workers or ARMS[arm]["workers"]
         started = now()
@@ -528,7 +545,7 @@ def main(argv=None, blender=None):
         with open(os.path.join(run_dir, "raw.jsonl"), "w", encoding="utf-8") as raw:
             for t in tasks:
                 for sample in range(a.samples):
-                    rec = run_task(t, arm, client, workers, a.combine_model, ctx_max, a.timeout, a.seam)
+                    rec = run_task(t, arm, client, workers, a.combine_model, ctx_max, a.timeout, a.seam, measure=measure)
                     rec["sample"] = sample
                     t_check = timer()
                     rec["check"] = check_result(t, rec, blender, linter)

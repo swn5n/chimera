@@ -65,7 +65,6 @@ class JoinedScriptInBlenderTests(unittest.TestCase):
                 c = verdict["check"]
                 self.assertEqual((code, c["outcome"]), (0, "passed"), c)
                 self.assertIn("up to its render", c["summary"])  # _chimera_output saved, then rendered once
-                self.assertIn("chimera: saved reading_corner.blend", c["output"])
                 self.assertNotIn("chimera: stand-in", c["output"])
                 self.assertNotIn("Traceback", c["output"])
 

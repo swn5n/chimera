@@ -495,7 +495,7 @@ class H(BaseHTTPRequestHandler):
                 f.write(json.dumps({"t": time.time(), "model": model, "job": job, "format": "format" in body,
                                     "num_ctx": opts.get("num_ctx"), "num_predict": opts.get("num_predict"),
                                     "critique": critique, "user": user[:300], "user_all": user if job in ("worker", "combine", "mend", "planner") else "",
-                                    "edits": "<<<<<<< FIND" in sysmsg}) + "\n")
+                                    "edits": "<<<<<<< FIND" in sysmsg, "sheet": "ShaderNodeEmission inputs: Color, Strength" in sysmsg}) + "\n")
             if job == "look":  # what a look says goes by the "picture", which the script wrote
                 if "BLENDERBADLOOK" in user:
                     return self.send({"message": {"role": "assistant", "content": "I can see a mug."}, "done": True})

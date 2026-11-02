@@ -28,6 +28,9 @@ type App struct {
 	sys   SysInfo
 
 	ollama   *OllamaMonitor
+	namesMu  sync.Mutex
+	names    string // the Blender here's names
+	namesOf  string // and which Blender that was
 	node     *Node
 	sessions *SessionStore
 	gens     *GenManager

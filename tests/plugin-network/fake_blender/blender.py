@@ -52,6 +52,9 @@ def main(argv):
             print("Error: unknown argument %r" % a, file=sys.stderr)
             return 1
     print(BANNER, flush=True)
+    if any("chimera-names-start" in v for what, v in actions if what == "expr"):  # Chimera asking for its names sheet
+        print("\nchimera-names-start\nShaderNodeEmission inputs: Color, Strength\nchimera-names-end", flush=True)
+        return 0
     if blend:  # the check's look at a saved scene: the "picture" is whatever the script saved
         shutil.copy(blend, "chimera-look.png")
         return 0

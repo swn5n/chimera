@@ -593,7 +593,7 @@ class RealBlenderTests(unittest.TestCase):
             'floor.name = "chimera_floor"', "bpy.context.scene.render.filepath = '//floor.png'",
             "result = bpy.ops.render.render(write_still=True)", "assert result == {'FINISHED'}, result",
             'print("floor done")']))
-        good = CRASHING_TODAY_REPLY.replace("mesh.use_auto_smooth = True", "obj.scale = (0.3, 0.3, 0.02)")
+        good = CRASHING_TODAY_REPLY.replace("mesh.use_auto_smooth = True", "mesh.from_pydata([(0, 0, 0), (1, 0, 0), (0, 1, 0)], [], [(0, 1, 2)])")
         kind, script, notes = br.script_for_step(RENDER_PLAN, 1, {"s1": dep}, good)
         self.assertEqual(kind, "after_deps")
         self.assertTrue(any("1 render, quit or exit call(s) skipped" in n for n in notes), notes)

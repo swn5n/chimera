@@ -55,12 +55,17 @@ func main() {
 	pluginTest := flags.String("plugin-test", "", "run the plugin in this folder once, the way the network does (input JSON on stdin), and exit")
 	pluginOut := flags.String("plugin-out", "", "with --plugin-test: where to save the files it makes (default ./plugin-test-out)")
 	checkResult := flags.String("check-result", "", "check a long task's result (a reply .md or a .py script) the way looping mode does, print the verdict as JSON, and exit")
+	blenderNames := flags.Bool("blender-names", false, "print the Blender names long tasks' workers get, and quit")
 	checkGoal := flags.String("check-goal", "", "with --check-result: the task's goal (a Blender version named there is taken into account)")
 	_ = flags.Parse(args)
 
 	if *showVersion {
 		fmt.Println("chimera", Version)
 		return
+	}
+
+	if *blenderNames {
+		os.Exit(runBlenderNames())
 	}
 
 	dir := *dataDir

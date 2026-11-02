@@ -548,6 +548,15 @@ def section11():
           [(c.get("outcome"), c.get("mend", 0)) for c in cs] == [("wrong_scene", 0), ("passed", 1)] and "doesn't show chimera_mug" in us, brief(rec, last) + us[-300:])
 
     n0 = mark()
+    rec, last, evs, _ = run_task(goalc % "BLENDEROFFSHOT", loop=True)
+    wk, cm = jobs(since(n0), "worker"), jobs(since(n0), "combine")
+    check("11.9e a Blender task's workers and combine get the names this Blender printed", wk and cm and all(c.get("sheet") for c in wk + cm), str([c.get("sheet") for c in wk + cm]))
+    n0 = mark()
+    rec, last, evs, _ = run_task("TEAONCE: write about green tea and black tea", loop=False)
+    wk = jobs(since(n0), "worker")
+    check("11.9e a task that isn't about Blender doesn't", wk and not any(c.get("sheet") for c in wk), str([c.get("sheet") for c in wk]))
+
+    n0 = mark()
     rec, last, evs, _ = run_task("%s: create a blender scene of a mug on a table" % "BLENDERUNSEEN", loop=True)
     cs, c0, c1 = checks_of(rec)
     us = (jobs(since(n0), "mend") or [{}])[0].get("user_all", "")

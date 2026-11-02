@@ -454,3 +454,40 @@ reviewed on FX4's `hydra:1.0`, ran steps on FX3 and FX2, and combined and repair
 then the default cube, then a pass after 4 repairs, with no note. FX2 has no `qwen3.8`, so it skipped the look; run here afterwards, the look passes it too. The picture is a cube,
 sphere and cone on a flat square, recognisable and fittingly plain, but pale, with the sphere and cone half sunk into the table, which nothing checks. FX2's own steps were free, as they
 should be. Still unchecked: a long task started from Windows or Linux, and the look anywhere but the Studio.
+
+## The harness, measured first (Nov 1)
+
+The next step is Hydra Worker 1.0. Before training, the app's side was tested, since training freezes the worker prompt. Three ideas, on the 0.8.0 build:
+the contract with Chimera joining the pieces, a names sheet, and measured handoffs (after each piece, Blender says where things really are and the next worker gets that).
+
+**First-round passes on 12 Blender tasks, frozen plans, `qwen3.8:27b` as the only worker, one try each** (`worker-model/runner/task_eval.py`; results in `worker-model/results/runs-tasks/`):
+
+| Setup | Passes | Crashes | Wall time a task |
+|---|---|---|---|
+| Today's prompt, model combine | 1 | 10 | 5 min 39 s |
+| Today's, with the sheet | 1 | 9 | 6 min 22 s |
+| Contract, Chimera joins | 3 | 8 | 5 min 48 s |
+| Contract, with the sheet | 0 | 11 | 6 min 42 s |
+| Contract, sheet and measured handoffs | 1 | 10 | 7 min 29 s |
+
+These are long scripts and one crash fails a task, so this test is blunt: 3 against 1 is the phase-1 gate passing on Blender, not proof, and nothing here says the sheet hurt. Its sharper
+reading: wrong Principled socket names went from 3 of 140 to none of 294, but `qwen3.8:27b` hardly made that mistake, so it couldn't show much. 6 of 12 contract tasks fell back to the combine, 10 of 48 steps because a worker
+named a step it didn't depend on (`uses_not_dependency`). The plan's bar is 90% joined, so that rule has to loosen, since every earlier step is in the joined script anyway.
+
+**The names sheet on real tasks.** Most real crashes come from the weaker models on the pool, so the fair test is real tasks, with the same six goals on the same three computers:
+
+| Tasks | Crashes a task | The kind the sheet covers | First check clean | Ended passing | Median time |
+|---|---|---|---|---|---|
+| 6 on the final 0.8.0 build, no sheet | 2.2 | 1.2 | 0 of 6 | 3 | 3 min 47 s |
+| 6 on the build before it, no sheet | 6.3 | 4.0 | 1 of 6 | 3 | 7 min 29 s |
+| 12 with the sheet | 1.6 | 0.3 | 4 of 12 | 10 | 3 min 44 s |
+
+So it stays. `chimera --blender-names` prints it, from the Blender on the asking computer: nobody writes it, so no Claude text goes into a worker's prompt through it. It goes to Blender steps and the combine. A sample this small
+says the direction, not the size. The prompt adds about 800 tokens a step.
+
+**Passing still isn't good.** By eye, the twelve include a recognisable teapot on a tray and two decent fruit bowls, but also a blob for a cup, a campfire that's a close-up of a tent, and an island that's a cube, all of which passed: the look
+can make out what it's told to expect. The sheet stops crashes; it doesn't teach anyone to model. That's the worker model's job.
+
+**Measured handoffs aren't proven.** The prototype works (`worker-model/runner/measured.py`), but one pass in 12 can't say anything, and a script that crashes never gets to show whether its lamp sat on its table. It needs joined pieces, so it can't
+go into Chimera before the contract does. It stays in the eval until there's a measure of whether things sit where they should.
+

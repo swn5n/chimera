@@ -76,16 +76,28 @@ def synth_prompt(kind) -> str:
     return T.TODAY_SYNTH_HEAD + rules + T.TODAY_SYNTH_TAIL
 
 
+def piece_cap(sizes, limit) -> int:
+    """pieceCap (app/hydra.go): the combine's budget cuts only the longest pieces, and only over the limit."""
+    left = limit
+    for i, n in enumerate(sorted(sizes)):
+        rest = len(sizes) - i
+        if n * rest > left:
+            return left // rest
+        left -= n
+    return limit
+
+
 def combine_messages(goal, plan, outputs, room=4096) -> dict:
     """onePass's combine request (app/hydra.go 575-587). For the contract's fallback ("today's synthPrompt
     combine, with the handoffs added"), pass the pieces as written, handoff blocks included."""
     steps = plan["steps"]
     parts = [T.TODAY_COMBINE_HEAD % (goal, plan["title"], plan["summary"])]
-    budget = T.TODAY_COMBINE_BUDGET // len(steps)
-    for i, s in enumerate(steps):
+    outs = []
+    for s in steps:
         out, status, err = norm_output(outputs.get(s["id"]))
-        if status == "failed":
-            out = T.TODAY_COMBINE_FAILED % err
-        parts.append(T.TODAY_COMBINE_STEP % (i + 1, s["title"], truncate(out, budget)))
+        outs.append(T.TODAY_COMBINE_FAILED % err if status == "failed" else out)
+    limit = piece_cap([len(o) for o in outs], T.TODAY_COMBINE_BUDGET)
+    for i, s in enumerate(steps):
+        parts.append(T.TODAY_COMBINE_STEP % (i + 1, s["title"], truncate(outs[i], limit)))
     msgs = [{"role": "system", "content": synth_prompt(plan["kind"])}, {"role": "user", "content": "".join(parts)}]
     return {"messages": msgs, "need_ctx": history_tokens(msgs) + room}
