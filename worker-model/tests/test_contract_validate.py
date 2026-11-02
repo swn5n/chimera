@@ -186,12 +186,16 @@ class HandoffTests(unittest.TestCase):
                              deps=["s1"])
         self.assertIn("handoff_shape", codes(dup, "error"))
 
-    def test_uses_only_from_dependencies(self):
+    def test_uses_only_what_has_run(self):
         h = "```handoff\nprovides: x\nuses: s1's table and s3's lamp\nassumed: none\n```\n"
         p = blender(GOOD_S2, handoff=h, deps=["s1"])
         self.assertIn("uses_not_dependency", codes(p, "error"))
         self.assertIn("s3", p.reasons()[0])
         self.assertTrue(blender(GOOD_S2, handoff=h.replace(" and s3's lamp", ""), deps=["s1"]).ok)
+        # An earlier step it doesn't depend on has run by then: a note, not a fault.
+        p = blender(GOOD_S2, handoff=h.replace(" and s3's lamp", ""), deps=[])
+        self.assertTrue(p.ok, p.reasons())
+        self.assertIn("uses_undeclared", codes(p, "warn"))
 
     def test_negated_uses_and_own_name_are_not_dependencies(self):
         # Seen from qwen3.8:27b on Oct 29: "uses: nothing from s1 (s2 is independent of the floor)".

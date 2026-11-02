@@ -474,6 +474,10 @@ These are long scripts and one crash fails a task, so this test is blunt: 3 agai
 reading: wrong Principled socket names went from 3 of 140 to none of 294, but `qwen3.8:27b` hardly made that mistake, so it couldn't show much. 6 of 12 contract tasks fell back to the combine, 10 of 48 steps because a worker
 named a step it didn't depend on (`uses_not_dependency`). The plan's bar is 90% joined, so that rule has to loosen, since every earlier step is in the joined script anyway.
 
+**After loosening that rule.** A worker may now use any earlier step, since pieces run in plan order; only a later step is still a fault, and an undeclared earlier one is a note (`uses_undeclared`). Re-joining the 36 stored contract replies, which needs no
+model because the rule changes how replies are judged and not what workers write: 30 of 36 sets of pieces joined, up from 18, and the other 6 are real faults like syntax errors, empty replies or cut-offs. That's 83% against the bar's 90%. First-round passes went 3 to 2, 0 to 0 and 1 to 1: a task
+that passed through the fallback combine can crash once joined, because that combine also fixes things, so joined scripts need the repairs Chimera already has. The contract is about making pieces fit together, and it does that. It doesn't reduce crashes.
+
 **The names sheet on real tasks.** Most real crashes come from the weaker models on the pool, so the fair test is real tasks, with the same six goals on the same three computers:
 
 | Tasks | Crashes a task | The kind the sheet covers | First check clean | Ended passing | Median time |

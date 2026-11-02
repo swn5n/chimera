@@ -7,7 +7,7 @@ model cards. Training data rule as for Hydra 1.0: no Claude output in training d
 
 ## Decisions that are yours
 
-1. **Do you approve the sub-agent contract: the worker prompt, the mode rules, the 3-line handoff block, the user-message layout, the round-2 part and the repair message? Once training data is made it freezes, like the planner prompt.**
+1. **Approved by the user on Nov 1, after the task-level test (`docs/joint-task-oct31.md`, The harness), with the names sheet in worker prompts and `uses` allowed to name any earlier step.** Do you approve the sub-agent contract: the worker prompt, the mode rules, the 3-line handoff block, the user-message layout, the round-2 part and the repair message? Once training data is made it freezes, like the planner prompt.
    - Recommendation: Yes, after reading it next to tonight's baseline A/B (today's prompt against the draft). That includes: Blender 5.0 or newer only, steps named s1-s8 by position, saving and rendering moved to the end of the joined script, and the opening kept as 'You are one worker in Chimera: a sub-agent'.
    - Why: No training data can be made until this is fixed. Any later change means retraining, just as Hydra 1.0's three prompts can't change without retraining it.
 

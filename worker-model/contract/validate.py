@@ -600,10 +600,16 @@ def validate_piece(text, mode, sid="s1", deps=(), lone=False, step=None, done_re
                 if len(getattr(handoff, key)) > HANDOFF_LINE_MAX:
                     _err(p, "handoff_long", "the %s line has %d characters; the contract asks for one short line"
                          % (key, len(getattr(handoff, key))), level="warn")
-            bad = [s for s in uses_steps(handoff.uses) if s not in deps and s != sid]
+            used = [s for s in uses_steps(handoff.uses) if s not in deps and s != sid]
+            # Pieces run in plan order, so an earlier step's work is there whether or not the plan says so: in 36
+            # real tasks that was most of why pieces weren't joined. A later step's isn't there yet.
+            bad = [s for s in used if int(s[1:]) > int(sid[1:])]
             if bad:
-                _err(p, "uses_not_dependency", "uses names %s, which %s doesn't depend on (it depends on %s)"
+                _err(p, "uses_not_dependency", "uses names %s, which comes after %s (it depends on %s)"
                      % (", ".join(bad), sid, ", ".join(deps) or "nothing"))
+            elif used:
+                _err(p, "uses_undeclared", "uses names %s, earlier steps it doesn't depend on (it depends on %s)"
+                     % (", ".join(used), ", ".join(deps) or "nothing"), level="warn")
     p.body = strip_handoff(text, hblocks)
     taken = {b.open_line for b in hblocks}  # a plain block read as the handoff isn't code
     blocks = [b for b in code_blocks(text) if b.lang != "handoff" and b.open_line not in taken]
