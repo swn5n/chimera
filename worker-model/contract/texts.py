@@ -203,6 +203,11 @@ REFS_HEAD = ("\n\nKnown-good references from your network's library, checked by 
 REFS_ENTRY = "\n--- %s (%s) ---\n%s\n%s\n"
 REFS_CUT = 3000
 
+# app/blender_names.go, namesBlock's words in front of the names sheet. In the contract with the user's approval
+# (Nov 1, plan line 434): the sheet goes after refsBlock. The sheet itself is printed by Blender, not frozen here.
+NAMES_HEAD = ("\n\nThe exact names in the Blender this will run on, printed by that Blender. Use these, not ones you "
+              "remember from other versions:\n")
+
 # app/prompts.go 99-114, synthKindRules and synthPrompt (today's combine, and the contract's fallback).
 TODAY_SYNTH_KIND_RULES = {
     "code": "Produce the final, complete code: merge the pieces, fix mismatched names or interfaces between them, "

@@ -1,6 +1,6 @@
 # Hydra Worker 1.0: the sub-agent model (plan)
 
-Oct 29, 2026. Status on Oct 30: decisions 2-4 answered (the rule; both baselines downloaded; v1 and v2 in the Trash),
+Oct 29, 2026. Status on Nov 2: the contract is approved and in Go (`app/hydra_contract.go`, `hydra_piece.go`, `hydra_assemble.go`, `hydra_pyscan.go`), proven against the prototype by `worker-model/tools/check_contract_parity.py` and `check_join_parity.py`, with real tasks not yet switched to it. Status on Oct 30: decisions 2-4 answered (the rule; both baselines downloaded; v1 and v2 in the Trash),
 1 is yours to answer now that the A/B below has run; 9 is moot (the pilot measured 193 tok/s); the rule's score half and probes a-c are done, d is open (see "Probes a-c"); `worker-model/` built; nothing trained. Made by a design panel (three designs from
 different angles, two judges, one synthesis) that read Chimera's code and `helper-model/` and checked licences on the
 model cards. Training data rule as for Hydra 1.0: no Claude output in training data (`helper-model/datagen/README.md`).

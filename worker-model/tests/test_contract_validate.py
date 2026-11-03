@@ -33,6 +33,14 @@ if __name__ == "__main__":
     build_s2({"scene": bpy.context.scene, "collection": bpy.context.scene.collection, "objects": {}})'''
 
 
+class CrashTests(unittest.TestCase):
+    def test_a_type_statement_is_top_level_code(self):
+        # Found porting to Go: an ast.TypeAlias's .name is a node, which crashed the step-name check.
+        p = blender(GOOD_S2 + "\n\ntype Size = int")
+        self.assertIn("top_level_code", codes(p, "error"))
+        self.assertIn("top-level typealias isn't", " ".join(p.reasons()))
+
+
 class HandoffTests(unittest.TestCase):
     def test_reads_the_three_lines(self):
         h, blocks, issues = parse_handoff("text\n```handoff\nprovides: a, b\nuses: s1's c\nassumed: None.\n```\n")

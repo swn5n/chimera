@@ -56,6 +56,8 @@ func main() {
 	pluginOut := flags.String("plugin-out", "", "with --plugin-test: where to save the files it makes (default ./plugin-test-out)")
 	checkResult := flags.String("check-result", "", "check a long task's result (a reply .md or a .py script) the way looping mode does, print the verdict as JSON, and exit")
 	blenderNames := flags.Bool("blender-names", false, "print the Blender names long tasks' workers get, and quit")
+	workerRequest := flags.Bool("hydra-worker-request", false, "read a step as JSON on stdin, print the request a worker gets under the sub-agent contract, and exit")
+	assemble := flags.Bool("hydra-assemble", false, "read a plan and its pieces as JSON on stdin, print what joining them under the sub-agent contract gives, and exit")
 	checkGoal := flags.String("check-goal", "", "with --check-result: the task's goal (a Blender version named there is taken into account)")
 	_ = flags.Parse(args)
 
@@ -66,6 +68,14 @@ func main() {
 
 	if *blenderNames {
 		os.Exit(runBlenderNames())
+	}
+
+	if *workerRequest {
+		os.Exit(runWorkerRequest(os.Stdin, os.Stdout))
+	}
+
+	if *assemble {
+		os.Exit(runAssemble(os.Stdin, os.Stdout))
 	}
 
 	dir := *dataDir

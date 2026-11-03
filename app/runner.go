@@ -91,7 +91,7 @@ const renderStopMarker = "chimera-check: stopped at the render"
 
 // blenderStopAtRender ends Blender cleanly the moment a script starts a render:
 // a check is about whether the script runs, and a render can take hours.
-const blenderStopAtRender = `import bpy, os, sys
+const blenderStopAtRender = `import bpy, os, sys, time
 @bpy.app.handlers.persistent
 def _chimera_stop_at_render(*args):
     print("` + renderStopMarker + `", flush=True)
@@ -179,6 +179,8 @@ def _chimera_pose(scene, dg, data, where, seen, pts, low, high, vector):
         pose["clip_end"] = round(reachable, 1)
     return pose
 def _chimera_scene():
+    sys.stdout.flush()
+    time.sleep(0.05)  # its output and errors go by separate pipes: the script's has to arrive first
     print("\n` + sceneStartMarker + `", file=_chimera_err, flush=True)
     full = [s for s in bpy.data.scenes if s.objects]
     if len(full) > 1 or (full and full[0] != bpy.context.scene):

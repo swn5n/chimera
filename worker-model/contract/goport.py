@@ -55,9 +55,8 @@ def clean_plan(plan: dict) -> dict:
         p["kind"] = "general"
     ids = set()
     for i, s in enumerate(steps):
-        s.setdefault("id", "")
-        s.setdefault("title", "")
-        s.setdefault("instructions", "")
+        for key in ("id", "title", "instructions"):  # a JSON null decodes to "" in Go
+            s[key] = s.get(key) or ""
         if s["id"] == "" or s["id"] in ids:
             s["id"] = f"s{i + 1}"
         ids.add(s["id"])
@@ -74,7 +73,7 @@ def clean_plan(plan: dict) -> dict:
         seen.add(s["id"])
     if go_trim_space(p.get("title") or "") == "":
         p["title"] = "Long task"
-    p.setdefault("summary", "")
+    p["summary"] = p.get("summary") or ""
     p["steps"] = steps
     return p
 

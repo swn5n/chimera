@@ -62,8 +62,13 @@ def outline(plan, i):
     return "\n".join(out)
 
 
-def system_prompt(plan, i, goal="", refs=None):
-    """The worker system prompt for step i, refsBlock appended unchanged."""
+def names_block(names):
+    """The names sheet with namesBlock's words (app/blender_names.go), "" without a sheet."""
+    return T.NAMES_HEAD + names if names else ""
+
+
+def system_prompt(plan, i, goal="", refs=None, names=""):
+    """The worker system prompt for step i, refsBlock appended unchanged, then the names sheet."""
     steps = plan["steps"]
     sid, n = "s%d" % (i + 1), len(steps)
     mode = planinfo.step_mode(plan, i, goal)
@@ -77,7 +82,7 @@ def system_prompt(plan, i, goal="", refs=None):
         parts = [T.fill(T.CONTRACT_OPENING, sid=sid, n=n), project,
                  T.CONTRACT_PLAN_HEAD + "\n" + outline(plan, i) + "\n" + used,
                  T.CONTRACT_JOIN_HEAD + "\n" + rules, T.CONTRACT_HANDOFF]
-    return "\n\n".join(parts) + refs_block(refs)
+    return "\n\n".join(parts) + refs_block(refs) + names_block(names)
 
 
 def dep_part(plan, j, outputs):
@@ -108,10 +113,11 @@ def user_message(plan, i, outputs=None, prev_result=None, critique=None, goal=""
     return "\n\n".join(parts), matched
 
 
-def worker_request(plan, i, outputs=None, goal="", refs=None, prev_result=None, critique=None, room=T.STEP_ROOM):
+def worker_request(plan, i, outputs=None, goal="", refs=None, prev_result=None, critique=None, room=T.STEP_ROOM,
+                   names=""):
     """The contract request for step i (0-based). NeedCtx as runStep: historyTokens(msgs) + room."""
     user, matched = user_message(plan, i, outputs, prev_result, critique, goal)
-    msgs = [{"role": "system", "content": system_prompt(plan, i, goal, refs)}, {"role": "user", "content": user}]
+    msgs = [{"role": "system", "content": system_prompt(plan, i, goal, refs, names)}, {"role": "user", "content": user}]
     return WorkerRequest(msgs, history_tokens(msgs) + room, planinfo.step_mode(plan, i, goal), "s%d" % (i + 1),
                          len(plan["steps"]), len(plan["steps"]) == 1, planinfo.dep_names(plan, i), matched)
 
@@ -138,9 +144,9 @@ def repair_text(piece, crash, runner=""):
                   source=crash.get("source", ""), exception=crash.get("error", ""), piece=piece.strip())
 
 
-def repair_request(plan, i, outputs, piece, crash, goal="", refs=None, room=T.STEP_ROOM):
+def repair_request(plan, i, outputs, piece, crash, goal="", refs=None, room=T.STEP_ROOM, names=""):
     """Looping mode's step repair: the step's request as above, then the repair message."""
-    req = worker_request(plan, i, outputs, goal, refs, room=room)
+    req = worker_request(plan, i, outputs, goal, refs, room=room, names=names)
     req.messages[1]["content"] += "\n\n" + repair_text(piece, crash)
     req.need_ctx = history_tokens(req.messages) + room
     return req

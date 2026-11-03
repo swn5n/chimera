@@ -157,6 +157,15 @@ class SystemPromptTests(unittest.TestCase):
         self.assertTrue(prompt.system_prompt(p, 1, refs=refs).endswith(
             T.CONTRACT_HANDOFF + T.REFS_HEAD + "\n--- R (lesson) ---\nS\nC\n"))
 
+    def test_names_sheet_goes_after_the_refs(self):
+        p = plan_of(("Scene", "blender", "Build it.", []), ("Lamp", "blender", "Add it.", ["s1"]), kind="blender")
+        refs = [{"title": "R", "kind": "lesson", "summary": "S", "content": "C"}]
+        self.assertEqual(prompt.system_prompt(p, 1, refs=refs, names="Light: energy"),
+                         prompt.system_prompt(p, 1, refs=refs) + T.NAMES_HEAD + "Light: energy")
+        self.assertEqual(prompt.system_prompt(p, 1, names=""), prompt.system_prompt(p, 1))
+        self.assertTrue(prompt.repair_request(p, 1, {}, "x", {}, names="Light: energy").messages[0]["content"]
+                        .endswith(T.NAMES_HEAD + "Light: energy"))
+
 
 class UserMessageTests(unittest.TestCase):
     def test_dependency_with_handoff(self):

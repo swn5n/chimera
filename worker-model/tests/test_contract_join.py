@@ -10,6 +10,7 @@ import unittest
 from tests import _paths  # noqa: F401
 from tests import contract_fixtures as F
 from contract import prompt
+from contract.goport import clean_plan
 from contract.join import alone_script, find_part, join, merge_python, slug, uses_names
 from contract.validate import validate_piece
 from contract.linemap import LineMap, locate_check
@@ -51,6 +52,29 @@ def module_level_unbound(script):
             for t in (node.targets if isinstance(node, ast.Assign) else [node.target]):
                 bound.update(n.id for n in ast.walk(t) if isinstance(n, ast.Name))
     return out
+
+
+class LoneCarriageReturnTests(unittest.TestCase):
+    def test_it_ends_a_line_as_it_does_for_ast(self):
+        # Found porting to Go: ast counts it as a line end and split("\\n") doesn't, so the joiner took the wrong lines
+        # or ran off the end of them.
+        plan = clean_plan({"title": "T", "kind": "code", "steps": [
+            {"id": "a", "title": "A", "kind": "code", "instructions": "Do it."},
+            {"id": "b", "title": "B", "kind": "code", "instructions": "Then this."}]})
+        piece = "```python\ndef main():\n    a = 1\r    b = 2\n```\n\n```handoff\nprovides: x\nuses: none\nassumed: none\n```\n"
+        j = join(plan, {"a": piece, "b": None})
+        self.assertFalse(j.fallback, j.reasons)
+        self.assertIn("    a = 1\n    b = 2\n", j.script)
+
+
+class LibraryEntryThatWontWrapTests(unittest.TestCase):
+    def test_it_is_a_seam_and_a_fallback_not_a_crash(self):
+        # Found porting to Go: hoisting an import cuts a statement that shares its line in two.
+        j = join(F.BLENDER_PLAN, dict(F.BLENDER_OUTPUTS, **{F.BLENDER_PLAN["steps"][0]["id"]: {
+            "output": "```python\nimport os; x = (1,\n 2)\n```", "status": "library"}}))
+        self.assertTrue(j.fallback)
+        self.assertIn("library_seam", seam_codes(j))
+        self.assertEqual(j.reasons[0], "s1: the library entry can't be joined")
 
 
 class BlenderJoinTests(unittest.TestCase):

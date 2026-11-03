@@ -51,6 +51,8 @@ old file before building: macOS kills a signed binary overwritten in place):
 - `python3 tools/rna_dump.py show ShaderNodeBsdfPrincipled RenderSettings.engine`: what the dumps say.
 - `python3 tools/rna_dump.py diff`: what one version has and the other doesn't.
 - `python3 tools/check_overlap.py train.jsonl`: before every training run (both canaries, all three eval sets; exit 1 on a hit).
+- `python3 tools/check_contract_parity.py`: Go's worker requests against the prototype's, byte for byte, on every frozen plan and eval case, lone steps, failed dependencies, round 2, repairs and random text (about 20 s; exit 1 on any difference; needs `CHIMERA_BIN`, except `--texts-only`).
+- `python3 tools/check_join_parity.py`: Go's validator and joiner against the prototype's on every stored reply and task, the tests' fixtures, seeded random replies and joins, real Python files and damaged code (about a minute; exit 1 on any difference; `--sample N --fuzz N --random N` for less; `--python DIR` for more files; needs `CHIMERA_BIN`).
 - `python3 tools/verify_eval.py`: re-runs every eval check in both Blenders (about 2 min; fails without both; run folders under `$WM_SCRATCH`, else `data/`); add `--part w2`, `--case w2-13`, `--write`.
 - `CHIMERA_BIN=... python3 tools/verify_eval.py --part w3 --write`: also records what `chimera --check-result` says about each W3 crash.
 - `python3 tools/verify_eval.py --part w4l --write --tokens qwen3:4b-instruct-2507-q4_K_M`: rebuilds the long inputs and measures their tokens (10 short Ollama calls).
@@ -181,6 +183,20 @@ baseline A/B, the task-level runner and the data-generation smoke run use it unt
 contract. Then it moves into Go (`prompts.go`, `hydra_assemble.go`, `--hydra-worker-request` and
 `--hydra-assemble`) and data generation switches to the binary; `contract/texts.py` is what to diff the Go
 texts against. Nothing in it calls a model.
+
+The user approved the contract on Nov 1, with the names sheet in worker prompts. The worker request is now in
+Go: `app/hydra_contract.go` (texts, modes, system prompt, user message, round 2, repairs) and
+`chimera --hydra-worker-request`, which takes one JSON object on stdin (see `app/workerrequest_cli.go`). Real tasks
+don't use it yet. `tools/check_contract_parity.py` holds the two byte-identical; `prompt.py` got `names` for that.
+
+So are the validator and the joiner: `app/hydra_piece.go`, `app/hydra_assemble.go` and `chimera --hydra-assemble`,
+which reads a plan and its pieces as JSON on stdin and prints what joining them gives (see `app/assemble_cli.go`). The
+app has no Python to ask, so `app/hydra_pyscan.go` reads scripts into the same tree `ast` makes. Real tasks don't use
+any of it yet. `tools/check_join_parity.py` holds them to `validate.py`, `join.py` and `linemap.py`. Three bugs turned
+up in the prototype on the way, fixed in both: a top-level `type X = int` crashed the blender checks, a lone carriage
+return in code made the joiner take the wrong lines or run off the end of them, and a library entry whose import
+shared a line with a statement that runs on crashed the join. The joined script and the verdicts are now Go's to say;
+a syntax error the reader doesn't see only reaches the result check, which runs the script.
 
 | File | What |
 |---|---|

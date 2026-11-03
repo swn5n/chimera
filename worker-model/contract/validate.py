@@ -338,6 +338,11 @@ def is_docstring(node) -> bool:
     return isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str)
 
 
+def def_name(node):
+    """A def's or class's name, else None (a `type X = int` statement's .name is a node, not a string)."""
+    return node.name if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) else None
+
+
 def assigned_names(node):
     """Names a top-level Assign / AnnAssign binds (None if a target isn't a plain name)."""
     targets = node.targets if isinstance(node, ast.Assign) else [node.target]
@@ -666,7 +671,7 @@ def _blender_top_level(p):
     settings, builds, guards = [], [], []
     for node in p.tree.body:
         line = at + node.lineno
-        name = getattr(node, "name", None)
+        name = def_name(node)
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             if isinstance(node, ast.ImportFrom) and any(a.name == "*" for a in node.names):
                 _err(p, "star_import", "from %s import *" % node.module, line, "warn")

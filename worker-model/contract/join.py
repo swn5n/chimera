@@ -23,7 +23,9 @@ plan's editor pass over them is a hook here (join's editor), not written.
 from __future__ import annotations
 
 import ast
+import io
 import re
+import tokenize
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
@@ -31,7 +33,7 @@ from . import planinfo
 from .goport import code_blocks, go_trim_space, python_lang, truncate
 from .linemap import LineMap
 from .today import norm_output
-from .validate import (Issue, Piece, assigned_names, ctx_keys, file_line, is_docstring, is_main_guard,
+from .validate import (Issue, Piece, assigned_names, ctx_keys, def_name, file_line, is_docstring, is_main_guard,
                        top_level_names, validate_piece)
 from . import texts as T
 
@@ -87,10 +89,15 @@ def slug(title):
 
 # ---------------------------------------------------------------- python source plumbing
 
+def source_lines(code):
+    """code's lines as Python's parser counts them: a lone carriage return ends a line for ast, not for split."""
+    return code.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+
+
 def segments(code, tree):
     """[(node, start, end)]: each top-level statement's 1-based line range, with the comment lines just above it
     (and its decorators). A statement sharing a line with the one before (a; b) gets that line's range."""
-    lines = code.split("\n")
+    lines = source_lines(code)
     out, prev_end = [], 0
     for node in tree.body:
         first = min([node.lineno] + [d.lineno for d in getattr(node, "decorator_list", [])])
@@ -188,6 +195,19 @@ class Script:
         return "\n".join(self.lines).rstrip("\n") + "\n"
 
 
+def _string_lines(code):
+    """The lines that start inside a multi-line string, which an indent would change."""
+    inside, opened = set(), []
+    for t in tokenize.generate_tokens(io.StringIO(code).readline):
+        if t.type == tokenize.STRING:
+            inside.update(range(t.start[0] + 1, t.end[0] + 1))
+        elif t.type == tokenize.FSTRING_START:
+            opened.append(t.start[0])
+        elif t.type == tokenize.FSTRING_END:
+            inside.update(range(opened.pop() + 1, t.end[0] + 1))
+    return inside
+
+
 def wrap_library(piece: Piece, sid, mode):
     """A library entry (a bare fenced block from runStep) as a contract piece: for blender its code goes into
     def build_sN(ctx): with the imports hoisted. Star imports or its own main guard count as a seam."""
@@ -205,17 +225,24 @@ def wrap_library(piece: Piece, sid, mode):
             or any(is_main_guard(n) for n in tree.body):
         seams.append(_seam("library_seam", "the library entry has a star import or its own main guard", sid))
     if mode == "blender":
-        lines = code.split("\n")
+        lines = source_lines(code)
         imports, rest = [], []
         segs = segments(code, tree)
+        in_string, written = _string_lines(code), 0
         for node, s, e in segs:
-            (imports if isinstance(node, (ast.Import, ast.ImportFrom)) else rest).append((s, e))
+            s = max(s, written + 1)  # statements can share a line: it goes out once
+            if s <= e:
+                (imports if isinstance(node, (ast.Import, ast.ImportFrom)) else rest).append((s, e))
+                written = e
         out = [lines[n - 1] for s, e in imports for n in range(s, e + 1)]
         out += ["SETTINGS_%s = {}" % sid, "", "def build_%s(ctx):" % sid]
-        body = [lines[n - 1] for s, e in rest for n in range(s, e + 1)]
-        out += ["    " + l if l.strip() else l for l in body] or ["    pass"]
+        body = [(n, lines[n - 1]) for s, e in rest for n in range(s, e + 1)]
+        out += ["    " + l if l.strip() and n not in in_string else l for n, l in body] or ["    pass"]
         code = "\n".join(out)
-        tree = ast.parse(code)
+        try:
+            tree = ast.parse(code)
+        except SyntaxError as e:  # import a; b = (1,\n 2): hoisting the import cuts the statement beside it in two
+            return seams + [_seam("library_seam", "the library entry doesn't parse: %s" % e.msg, sid)]
     piece.code, piece.tree, piece.code_line = code, tree, 1
     return seams
 
@@ -227,7 +254,7 @@ def alone_script(piece: Piece, keep_ctx=False, ctx_name="ctx", also=()):
     follows its dependencies' script, so a module-level dict named ctx_name already there that looks like a ctx
     (an "objects" dict and a "collection") is passed on instead, with what they registered (join_script's guard
     leaves one named ctx). also: more build functions to call after it, in order."""
-    lines = piece.code.split("\n")
+    lines = source_lines(piece.code)
     for node, a, b in segments(piece.code, piece.tree):
         if is_main_guard(node):
             for n in range(node.lineno, b + 1):
@@ -336,7 +363,7 @@ def _has_output(piece):
 def _part_of(node, sid, blender):
     """(part, function) a top-level statement of a piece gets in the line map. function is the def or class
     name, or the first name an assignment binds (a _s2_ constant), so a repair message can say where."""
-    name = getattr(node, "name", None)
+    name = def_name(node)
     if isinstance(node, (ast.Assign, ast.AnnAssign)):
         names = assigned_names(node) or []
         if blender and names == ["SETTINGS_" + sid]:
@@ -360,8 +387,8 @@ def join_script(plan, pieces, mode):
     titles = {("s%d" % (i + 1)): planinfo.one_line(st["title"]) for i, st in enumerate(plan["steps"])}
     bodies, mains = [], []
     for p in pieces:
-        code_lines = p.code.split("\n")
-        body, prev_end, dropped = [], None, False
+        code_lines = source_lines(p.code)
+        body, prev_end, dropped, written = [], None, False, 0
         for node, a, b in segments(p.code, p.tree):
             if isinstance(node, (ast.Import, ast.ImportFrom)):
                 imports.add(node, p.sid, node.lineno)
@@ -370,11 +397,13 @@ def join_script(plan, pieces, mode):
                 dropped = True  # the piece's own docstring and run-alone guard aren't part of the joined script
             else:
                 part, name = _part_of(node, p.sid, blender)
-                # blank lines before it: the piece's own (at most 2) when nothing was left out in between, else 2
-                gap = 2 if prev_end is None or dropped else min(2, a - prev_end - 1)
-                body.append((code_lines, a, b, part, name, gap))
-                prev_end, dropped = b, False
-                if not blender and isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "main":
+                a = max(a, written + 1)  # statements can share a line: it goes out once
+                if a <= b:
+                    # blank lines before it: the piece's own (at most 2) when nothing was left out in between, else 2
+                    gap = 2 if prev_end is None or dropped else min(2, a - prev_end - 1)
+                    body.append((code_lines, a, b, part, name, gap))
+                    prev_end, dropped, written = b, False, b
+                if not blender and isinstance(node, ast.FunctionDef) and node.name == "main":
                     mains.append(p.sid)
         bodies.append((p.sid, body))
     for name, (src1, sid1), (src2, sid2) in imports.conflicts:
@@ -591,19 +620,23 @@ def merge_python(base, parts):
             base_tree = ast.parse(base)
         except SyntaxError:
             return None
-        base_lines = base.split("\n")
+        base_lines = source_lines(base)
         for node in base_tree.body:
             if isinstance(node, (ast.Import, ast.ImportFrom)):
                 have.add(node, "base", node.lineno)
                 every.add(node, "base", node.lineno)
     chunks = []
     for sid, body, tree in trees:
-        lines = body.split("\n")
+        lines = source_lines(body)
+        written = 0  # statements can share a line: it goes out once
         for node, a, b in segments(body, tree):
             if isinstance(node, (ast.Import, ast.ImportFrom)):
                 every.add(node, sid, node.lineno)
             elif not (is_docstring(node) and node is tree.body[0]):
-                chunks.append("\n".join(lines[a - 1:b]))
+                a = max(a, written + 1)
+                if a <= b:
+                    chunks.append("\n".join(lines[a - 1:b]))
+                    written = b
     new_imports = [t for t, _ in every.lines(skip=set(have.origin))]
     if base_tree is None:
         return "\n\n\n".join(c for c in ["\n".join(new_imports)] + chunks if c.strip()) + "\n"
@@ -827,6 +860,7 @@ def find_part(prev_result, plan, i, mode):
     st = plan["steps"][i]
     sid = "s%d" % (i + 1)
     want = _norm(st["title"])
+    skip = sum(_norm(s["title"]) == want for s in plan["steps"][:i])  # steps with the same title get its parts in turn
     if mode in ("blender", "python-script"):
         # Chimera's own lines end a step's part: in blender its main(), in both the main guard (a python-script
         # step may define main() itself, which stays in its part).
@@ -836,6 +870,9 @@ def find_part(prev_result, plan, i, mode):
             heads = [(k, m.group(1), m.group(2)) for k, l in enumerate(lines) if (m := _HEADER_RE.match(l))]
             for n, (k, old, title) in enumerate(heads):
                 if _norm(title) != want:
+                    continue
+                if skip:
+                    skip -= 1
                     continue
                 end = heads[n + 1][0] if n + 1 < len(heads) else len(lines)
                 for e in range(k + 1, end):
@@ -865,6 +902,9 @@ def find_part(prev_result, plan, i, mode):
         lines = prev_result.split("\n")
         for k, l in enumerate(lines):
             if l.startswith("## ") and _norm(l[3:]) == want:
+                if skip:
+                    skip -= 1
+                    continue
                 end = next((e for e in range(k + 1, len(lines)) if lines[e].startswith(("# ", "## "))), len(lines))
                 return "\n".join(lines[k:end]).strip(), True
     return truncate(prev_result, T.CONTRACT_ROUND2_CUT), False
