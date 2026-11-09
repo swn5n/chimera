@@ -133,6 +133,11 @@
         </form>
       </section>
       <section>
+        <div id="engines-wrap" hidden>
+          <div class="section-head"><h2 class="section-title">This computer's own</h2><span class="section-note">Models outside Ollama, for your chats here only</span></div>
+          <div class="installed engines" id="engines"></div>
+          <div class="spaced"></div>
+        </div>
         <div class="section-head"><h2 class="section-title">Installed</h2><span class="section-note" id="installed-note"></span></div>
         <div class="installed" id="installed"></div>
         <div class="section-head spaced"><h2 class="section-title">Tools</h2><button class="btn small quiet" id="btn-rescan">Check again</button></div>
@@ -181,29 +186,44 @@
   <section class="view" id="view-chat" hidden>
     <div class="chat">
       <aside class="chat-list">
-        <button class="btn wide" id="btn-new-chat">New chat</button>
-        <ul id="sessions"></ul>
+        <div class="list-top">
+          <button class="btn wide" id="btn-new-chat" type="button">New chat</button>
+          <button class="btn quiet icon-btn more" id="btn-list-menu" type="button" aria-label="Groups and selecting chats" title="New group, select chats"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="3.5" cy="8" r="1.4"/><circle cx="8" cy="8" r="1.4"/><circle cx="12.5" cy="8" r="1.4"/></svg></button>
+        </div>
+        <input class="field search" id="chat-search" type="search" placeholder="Search chats" aria-label="Search chats (Command K)" autocomplete="off" spellcheck="false">
+        <div class="chat-tree" id="chat-tree"></div>
+        <div class="select-bar" id="select-bar" hidden></div>
       </aside>
       <div class="chat-main">
+        <div class="chat-head">
+          <button class="chat-title" id="chat-title" type="button" title="Rename this chat">New chat</button>
+          <span class="chip" id="chat-group" hidden></span>
+          <span class="grow"></span>
+          <button class="chip folder-chip" id="btn-folder" type="button"></button>
+        </div>
         <div class="messages" id="messages">
           <div class="chat-empty" id="chat-empty">
-            <h2 class="section-title">Test the network</h2>
-            <p>Send a prompt and Chimera runs it on a device that's lending, maybe someone else's. Each reply shows which computer and model wrote it.</p>
+            <h2 class="section-title">Start a chat</h2>
+            <p>Pick a model below and send a message.</p>
           </div>
         </div>
+        <button class="to-bottom" id="to-bottom" type="button" hidden aria-label="Go to the newest">↓</button>
         <form class="composer" id="composer" autocomplete="off">
           <div class="attachments" id="attachments" hidden></div>
           <textarea id="prompt" rows="1" placeholder="Ask something…" spellcheck="true"></textarea>
           <div class="composer-row">
             <button class="btn small quiet attach" type="button" id="btn-attach" title="Add a picture for a Head to work on (you can also paste or drop one)">+ Picture</button>
             <input type="file" id="file-attach" accept="image/png,image/jpeg,image/webp" hidden>
+            <input type="file" id="folder-attach" webkitdirectory multiple hidden>
             <label class="sel"><span>Model</span><select id="sel-model"></select></label>
-            <label class="sel"><span>Run on</span><select id="sel-device"></select></label>
+            <label class="sel" id="think-wrap" hidden title="How much the model thinks before it answers: more takes longer"><span>Thinking</span><select id="sel-think"></select></label>
+            <label class="sel" id="device-wrap"><span>Run on</span><select id="sel-device"></select></label>
             <label class="check"><input type="checkbox" id="chk-private"><span>Only my devices</span></label>
-            <label class="check" title="Hydra splits a bigger task into steps and runs them on several computers at once"><input type="checkbox" id="chk-task"><span>Long task</span></label>
+            <label class="check" id="task-wrap" title="Hydra splits a bigger task into steps and runs them on several computers at once"><input type="checkbox" id="chk-task"><span>Long task</span></label>
             <label class="check" id="loop-wrap" hidden title="After each round, a Blender or Python script in the result is run here in a sandbox (when that's on in Settings), and Hydra 1.0 (or else the biggest model) reviews the result; another round improves it until it's good enough"><input type="checkbox" id="chk-loop"><span>Keep going until done</span></label>
             <button class="btn primary send" type="submit" id="btn-send">Send</button>
           </div>
+          <div class="engine-line" id="engine-line" hidden></div>
         </form>
       </div>
     </div>

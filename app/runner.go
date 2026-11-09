@@ -785,34 +785,42 @@ func scriptEnv(dir string) []string {
 // description of the protection, and whether a real sandbox is available at
 // all. When ok is false the caller must not run the script.
 func sandboxed(name string, args []string, dir string) (argv []string, how string, ok bool) {
+	return sandboxedWith(name, args, dir)
+}
+
+// sandboxedWith is sandboxed, with folders the program may also read and write,
+// kept between runs (a turntable's compiled GPU kernels). Where the sandbox
+// can't show them (Linux's unshare hides the home folders), the run just goes
+// without them.
+func sandboxedWith(name string, args []string, dir string, rw ...string) (argv []string, how string, ok bool) {
 	switch runtime.GOOS {
 	case "darwin":
-		return macSandbox(name, args, dir)
+		return macSandbox(name, args, dir, rw...)
 	case "linux":
-		return linuxSandbox(name, args, dir)
+		return linuxSandbox(name, args, dir, rw...)
 	default:
 		return nil, "", false // no sandbox we trust on this platform
 	}
 }
 
-func macSandbox(name string, args []string, dir string) ([]string, string, bool) {
+func macSandbox(name string, args []string, dir string, rw ...string) ([]string, string, bool) {
 	p, err := exec.LookPath("sandbox-exec")
 	if err != nil {
 		return nil, "", false
 	}
-	return append([]string{p, "-p", macScriptProfile(name, dir), name}, args...), "sandboxed: no network or home folder", true
+	return append([]string{p, "-p", macScriptProfile(name, dir, rw...), name}, args...), "sandboxed: no network or home folder", true
 }
 
 // macScriptProfile is the macOS sandbox for a script run with the program name
 // in the throwaway folder dir: no network; the home folder and other volumes
-// unreadable; writes only to dir; no other programs, no new processes, no
+// unreadable; writes only to dir (and the rw folders); no other programs, no new processes, no
 // signals to other processes, and no Apple Events, Finder or clipboard. Blender and Python read their own
 // files, which may live in a home folder (~/Applications, pyenv), so the
 // program's whole app bundle or install prefix is readable.
-func macScriptProfile(name, dir string) string {
+func macScriptProfile(name, dir string, rw ...string) string {
 	realDir := resolved(dir)
-	var reads, execs strings.Builder
-	seen := map[*strings.Builder]map[string]bool{&reads: {}, &execs: {}}
+	var reads, execs, writes strings.Builder
+	seen := map[*strings.Builder]map[string]bool{&reads: {}, &execs: {}, &writes: {}}
 	rule := func(b *strings.Builder, kind, p string) {
 		if p != "" && !seen[b][kind+p] {
 			seen[b][kind+p] = true
@@ -826,6 +834,12 @@ func macScriptProfile(name, dir string) string {
 		rule(&execs, "subpath", execRoot(toolHome(p)))
 	}
 	rule(&reads, "subpath", realDir)
+	for _, d := range rw {
+		if d != "" {
+			rule(&reads, "subpath", resolved(d))
+			rule(&writes, "subpath", resolved(d))
+		}
+	}
 	program(name)
 	if in := shebangInterp(name); in != "" {
 		program(in) // a program that is a script (#!) runs its interpreter too
@@ -841,7 +855,7 @@ func macScriptProfile(name, dir string) string {
 (deny file-read* (subpath "/Users") (subpath "/Volumes") (subpath "/private/var/root"))
 (allow file-read*%s)
 (deny file-write*)
-(allow file-write* (subpath %s) (literal "/dev/null") (regex #"^/dev/tty") (regex #"^/dev/fd/"))
+(allow file-write* (subpath %s)%s (literal "/dev/null") (regex #"^/dev/tty") (regex #"^/dev/fd/"))
 (deny appleevent-send)
 (deny mach-lookup (global-name "com.apple.coreservices.launchservicesd") (global-name "com.apple.pasteboard.1"))
 (deny signal)
@@ -849,7 +863,7 @@ func macScriptProfile(name, dir string) string {
 (deny process-fork)
 (deny process-exec*)
 (allow process-exec*%s)`,
-		reads.String(), sbplQuote(realDir), execs.String())
+		reads.String(), sbplQuote(realDir), writes.String(), execs.String())
 }
 
 // hiddenRoot is d when the profile hides it (a program kept in a home folder
@@ -946,11 +960,11 @@ func shebangInterp(name string) string {
 	return fields[0]
 }
 
-func linuxSandbox(name string, args []string, dir string) ([]string, string, bool) {
+func linuxSandbox(name string, args []string, dir string, rw ...string) ([]string, string, bool) {
 	// bubblewrap is the strong option: a read-only view of the system, the home
 	// folders replaced with empty ones, writes only to the work folder, no network.
 	if p, err := exec.LookPath("bwrap"); err == nil {
-		return bwrapScriptArgs(p, name, args, dir), "sandboxed: no network or home folder", true
+		return bwrapScriptArgs(p, name, args, dir, rw...), "sandboxed: no network or home folder", true
 	}
 	// Otherwise a user + mount + network namespace: no network, and the home
 	// folders hidden behind empty mounts so secrets aren't readable. The user
@@ -973,14 +987,20 @@ func linuxSandbox(name string, args []string, dir string) ([]string, string, boo
 
 // bwrapScriptArgs is the bubblewrap command for a script run. /run is hidden
 // too: it holds the session's message bus, which can start other programs.
-func bwrapScriptArgs(bwrap, name string, args []string, dir string) []string {
+func bwrapScriptArgs(bwrap, name string, args []string, dir string, rw ...string) []string {
 	argv := []string{bwrap, "--unshare-all", "--die-with-parent", "--new-session",
 		"--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc",
 		"--tmpfs", "/home", "--tmpfs", "/root", "--tmpfs", "/tmp", "--tmpfs", "/run"}
 	if home := realHome(); home != "" && home != "/home" && home != "/root" {
 		argv = append(argv, "--tmpfs", home)
 	}
-	argv = append(argv, "--bind", dir, dir, "--chdir", dir, "--")
+	argv = append(argv, "--bind", dir, dir)
+	for _, d := range rw {
+		if d != "" {
+			argv = append(argv, "--bind", d, d)
+		}
+	}
+	argv = append(argv, "--chdir", dir, "--")
 	return append(argv, append([]string{name}, args...)...)
 }
 

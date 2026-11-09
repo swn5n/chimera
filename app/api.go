@@ -168,13 +168,15 @@ func (a *App) routes() http.Handler {
 	})
 	mux.HandleFunc("GET /api/sessions/{id}", a.handleGetSession)
 	mux.HandleFunc("DELETE /api/sessions/{id}", func(w http.ResponseWriter, r *http.Request) {
-		if err := a.sessions.Delete(r.PathValue("id")); err != nil {
+		if err := a.deleteChat(r.PathValue("id")); err != nil {
 			writeErr(w, 404, "no such chat")
 			return
 		}
 		writeJSON(w, 200, map[string]bool{"ok": true})
 	})
 	mux.HandleFunc("POST /api/chat", a.handleChat)
+	mux.HandleFunc("POST /api/uploads", a.handleUpload)                          // a file for a message about to be sent (attach.go)
+	mux.HandleFunc("GET /api/sessions/{id}/attached/{path...}", a.serveAttached) // a picture attached to one of its messages
 	mux.HandleFunc("GET /api/chat/{gen}/stream", a.handleChatStream)
 	mux.HandleFunc("POST /api/chat/{gen}/cancel", func(w http.ResponseWriter, r *http.Request) {
 		if err := a.gens.Cancel(r.PathValue("gen")); err != nil {
@@ -185,6 +187,7 @@ func (a *App) routes() http.Handler {
 	})
 
 	a.moreRoutes(mux)
+	a.chatRoutes(mux)
 
 	mux.HandleFunc("POST /api/open-folder", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {

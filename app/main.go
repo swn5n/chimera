@@ -62,6 +62,7 @@ func main() {
 	reviewReq := flags.Bool("hydra-review-request", false, "read a task and its result as JSON on stdin, print the request the looping reviewer gets, and exit")
 	readReply := flags.Bool("hydra-read-reply", false, "read a planner's or reviewer's reply as JSON on stdin, print what a long task makes of it, and exit")
 	checkGoal := flags.String("check-goal", "", "with --check-result: the task's goal (a Blender version named there is taken into account)")
+	turntable := flags.String("turntable", "", "render a turntable of a 3D model (glTF, OBJ, FBX, STL or PLY) beside it, as a chat does for an engine, print what was made as JSON, and exit")
 	_ = flags.Parse(args)
 
 	if *showVersion {
@@ -106,6 +107,9 @@ func main() {
 	}
 	if *checkResult != "" {
 		os.Exit(runCheckResult(dir, *checkResult, *checkGoal))
+	}
+	if *turntable != "" {
+		os.Exit(runTurntableCLI(dir, *turntable))
 	}
 	setupLogging(dir)
 	log.Printf("Chimera %s starting (data folder: %s)", Version, dir)

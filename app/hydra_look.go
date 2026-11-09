@@ -57,20 +57,11 @@ func wantsLook(goal, script string, f *sceneFacts) bool {
 // lookModel is the model the numbers above are for. Others can see too, but a
 // wrong_scene costs repairs: gemma4:12b flagged 9 of the same 77 good pictures.
 func (a *App) lookModel() (ModelInfo, bool) {
-	if a.ollama == nil {
-		return ModelInfo{}, false
-	}
 	name := os.Getenv("CHIMERA_LOOK_MODEL") // for measuring another model
 	if name == "" {
 		name = "qwen3.8:"
 	}
-	var eyes []ModelInfo
-	for _, m := range a.annotate(a.ollama.State().Models) {
-		if strings.HasPrefix(m.Name, name) {
-			eyes = append(eyes, m)
-		}
-	}
-	return pickLocalModel(eyes, "", []string{"vision"}, "largest", "")
+	return a.visionModel(name)
 }
 
 func (a *App) canLook() bool {

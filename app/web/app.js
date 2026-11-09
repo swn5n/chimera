@@ -920,10 +920,22 @@ async function joinNetwork() {
 }
 
 // ---------- chat ----------
-const chat = { sessions: [], current: null, busy: null, count: 0, images: [] };
+const chat = {
+  sessions: [], groups: [], current: null, sess: null, busy: null, count: 0,
+  files: [], // attached, not sent yet: {file, path, url}
+  turnOff: false, describeOff: false, glbOff: false, // the switches for those files: turntables, what pictures show, GLBs for pages (on unless switched off)
+  uploadCtl: null, // the copying of a message's files, while it lasts (Stop ends it)
+  q: "", found: null, selecting: false, selected: new Set(),
+  folder: "", group: "", // for a chat that doesn't exist yet: its folder and group, set on the first send
+  stream: null, // the fetch of the reply this window follows (detachStream stops following it)
+};
 
-// ---------- pictures (for plugins) ----------
-const IMAGE_MAX = 25 * 1024 * 1024;
+// ---------- attached files ----------
+// One of this computer's engines (DeepSeek) takes any files, and whole folders:
+// Chimera copies them into the chat's folder, where the chat's pages are shown
+// and saved, and tells the model each file's path and what it is. Every other
+// model takes one picture, for a Head to work on.
+const IMAGE_MAX = 25 * 1024 * 1024, ATTACH_MAX = 2000, ATTACH_FILE_MAX = 4 * 1024 ** 3;
 function fileURL(f, m) {
   return f.url || `/api/files/${encodeURIComponent((m && m._session) || chat.current || "")}/${encodeURIComponent(f.id)}`;
 }
@@ -939,74 +951,624 @@ function filesHTML(m) {
       ${mine ? "" : `<figcaption><span>${esc(f.name)}${dims ? ` · ${dims}` : ""}</span><a class="btn small quiet" href="${esc(u)}" download="${esc(f.name)}">Save</a></figcaption>`}</figure>`;
   }).join("")}</div>`;
 }
-function addImageFile(file) {
-  if (!file) return;
-  if (!/^image\/(png|jpeg|webp)$/.test(file.type)) { toast("Add a PNG, JPEG or WebP picture.", true); return; }
-  if (file.size > IMAGE_MAX) { toast("Pictures can be up to 25 MB.", true); return; }
-  const rd = new FileReader();
-  rd.onload = () => {
-    const data = String(rd.result).split(",")[1] || "";
-    chat.images.forEach((i) => URL.revokeObjectURL(i.url));
-    chat.images = [{ name: file.name || "picture.png", data, url: URL.createObjectURL(file), size: file.size }];
-    renderAttachments();
-    $("#prompt").focus();
-  };
-  rd.onerror = () => toast("Couldn't read that picture.", true);
-  rd.readAsDataURL(file);
+const fmtBytes = (n) => n >= 1024 ** 3 ? `${(n / 1024 ** 3).toFixed(1)} GB` : n >= 1024 ** 2 ? `${(n / 1024 ** 2).toFixed(1)} MB` : n >= 1024 ? `${Math.round(n / 1024)} KB` : `${n} bytes`;
+const isPicFile = (f) => /^image\/(png|jpeg|webp|gif|avif|svg\+xml)$/.test(f.type);
+const headPicture = (f) => /^image\/(png|jpeg|webp)$/.test(f.type) && f.size <= IMAGE_MAX;
+const attachEngine = () => engineFor($("#sel-model").value);
+const extOf = (p) => { const m = /\.([a-z0-9]{1,5})$/i.exec(p); return m ? m[1].toUpperCase() : "FILE"; };
+// Whether what's attached can go with the model picked now: anything with an
+// engine, else one picture (for a Head).
+function attachFits() {
+  const fs = chat.files;
+  return !fs.length || !!attachEngine() || (fs.length === 1 && headPicture(fs[0].file) && !fs[0].path.includes("/"));
 }
-function renderAttachments() {
-  const box = $("#attachments");
-  box.hidden = !chat.images.length;
-  setHTML(box, chat.images.map((i, n) => `<span class="attachment"><img src="${esc(i.url)}" alt=""><span>${esc(i.name)}</span>
-    <button class="link small" type="button" data-act="remove-attachment" data-n="${n}" aria-label="Remove ${esc(i.name)}">×</button></span>`).join(""));
-  $("#prompt").placeholder = chat.images.length ? "What should a Head do with this picture? (e.g. add a soft studio shadow)" : "Ask something…";
+function attachHint() {
+  const e = (S && S.engines || [])[0];
+  return `${e ? `Files go to ${e.name} (this computer's own): pick it in Model.` : "Files go to this computer's own models, and there are none here yet."} Other models take one picture, for a Head.`;
 }
 
-function md(src) {
-  const parts = String(src || "").split("```");
-  return parts.map((part, i) => {
-    if (i % 2 === 1) {
-      const nl = part.indexOf("\n");
-      const code = nl >= 0 ? part.slice(nl + 1) : part;
-      return `<pre><code>${esc(code.replace(/\n$/, ""))}</code></pre>`;
-    }
-    return mdBlocks(part);
-  }).join("");
-}
-function mdInline(t) {
-  t = esc(t);
-  t = t.replace(/`([^`]+)`/g, "<code>$1</code>");
-  t = t.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-  t = t.replace(/(^|[^*\w])\*([^*\n]+)\*(?!\w)/g, "$1<em>$2</em>");
-  t = t.replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
-  return t;
-}
-function mdBlocks(text) {
-  const lines = text.split("\n");
-  let out = "", list = null, para = [];
-  const flushPara = () => { if (para.length) { out += `<p>${mdInline(para.join("\n")).replace(/\n/g, "<br>")}</p>`; para = []; } };
-  const flushList = () => { if (list) { out += `<${list.t}>${list.items.map((x) => `<li>${mdInline(x)}</li>`).join("")}</${list.t}>`; list = null; } };
-  for (const line of lines) {
-    let m;
-    if (!line.trim()) { flushPara(); flushList(); continue; }
-    if ((m = line.match(/^#{1,6}\s+(.*)/))) { flushPara(); flushList(); out += `<h4>${mdInline(m[1])}</h4>`; continue; }
-    if ((m = line.match(/^\s*[-*+]\s+(.*)/))) { flushPara(); if (!list || list.t !== "ul") { flushList(); list = { t: "ul", items: [] }; } list.items.push(m[1]); continue; }
-    if ((m = line.match(/^\s*\d+[.)]\s+(.*)/))) { flushPara(); if (!list || list.t !== "ol") { flushList(); list = { t: "ol", items: [] }; } list.items.push(m[1]); continue; }
-    if (list && /^\s{2,}\S/.test(line)) { list.items[list.items.length - 1] += " " + line.trim(); continue; }
-    flushList();
-    para.push(line);
+// list: [{file, path}], path being where it is in what was attached ("logo.png", "site/img/logo.png").
+function addFiles(list) {
+  list = list.filter((x) => x.file && !x.path.split("/").some((seg) => seg.startsWith(".")));
+  if (!list.length) return;
+  if (chat.files.length + list.length > ATTACH_MAX) { toast(`Attach up to ${fmtNum(ATTACH_MAX)} files with one message.`, true); return; }
+  const big = list.find((x) => x.file.size > ATTACH_FILE_MAX);
+  if (big) { toast(`${big.path} is over 4 GB: that's too big to attach.`, true); return; }
+  for (const x of list) {
+    if (chat.files.some((y) => y.path === x.path && y.file.size === x.file.size && y.file.lastModified === x.file.lastModified)) continue;
+    chat.files.push({ file: x.file, path: x.path, url: isPicFile(x.file) && !x.path.includes("/") ? URL.createObjectURL(x.file) : "" });
   }
-  flushPara(); flushList();
+  renderAttachments();
+  $("#prompt").focus();
+}
+// For a Head, one picture at a time: a new one takes the old one's place.
+function takeFiles(list) {
+  if (!attachEngine() && list.length === 1 && headPicture(list[0].file)) clearFiles();
+  addFiles(list);
+}
+function clearFiles() {
+  chat.files.forEach((x) => x.url && URL.revokeObjectURL(x.url));
+  chat.files = [];
+  renderAttachments();
+}
+
+// What was dropped: its files, and the files in its folders (each with its folder's path).
+async function droppedFiles(dt) {
+  const entries = [...dt.items].filter((i) => i.kind === "file").map((i) => (i.webkitGetAsEntry ? i.webkitGetAsEntry() : null));
+  const plain = [...dt.files].map((f) => ({ file: f, path: f.name }));
+  if (!entries.length || entries.some((en) => !en)) return plain;
+  const out = [];
+  const walk = async (en, prefix) => {
+    if (en.name.startsWith(".") || out.length > ATTACH_MAX) return;
+    if (en.isFile) { out.push({ file: await new Promise((ok, no) => en.file(ok, no)), path: prefix + en.name }); return; }
+    const rd = en.createReader();
+    for (;;) {
+      const batch = await new Promise((ok, no) => rd.readEntries(ok, no));
+      if (!batch.length) break;
+      for (const c of batch) await walk(c, `${prefix}${en.name}/`);
+    }
+  };
+  for (const en of entries) await walk(en, "");
+  if (out.length > ATTACH_MAX) throw new Error(`That's over ${fmtNum(ATTACH_MAX)} files: attach a smaller folder.`);
   return out;
 }
 
+const ATTACH_CHIPS = 12;
+// Chips for what's attached: a folder is one chip, a file on its own is one.
+function attachGroups() {
+  const groups = new Map();
+  for (const x of chat.files) {
+    const key = x.path.includes("/") ? x.path.split("/")[0] + "/" : x.path;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(x);
+  }
+  return [...groups];
+}
+function renderAttachments() {
+  const box = $("#attachments"), fs = chat.files, eng = attachEngine();
+  box.hidden = !fs.length;
+  let groups = attachGroups(), rest = [];
+  if (groups.length > ATTACH_CHIPS) { rest = groups.slice(ATTACH_CHIPS - 1); groups = groups.slice(0, ATTACH_CHIPS - 1); }
+  const size = (xs) => fmtBytes(xs.reduce((n, x) => n + x.file.size, 0));
+  const rm = (key, label) => `<button class="link small" type="button" data-act="remove-attachment" data-key="${esc(key)}" aria-label="Remove ${esc(label)}">×</button>`;
+  const chips = groups.map(([key, xs]) => {
+    if (key.endsWith("/")) return `<span class="attachment folder" title="${esc(key)}">${FOLDER_ICON}<span>${esc(key.slice(0, -1))}</span><span class="fine">${plural(xs.length, "file")} · ${size(xs)}</span>${rm(key, key.slice(0, -1))}</span>`;
+    const x = xs[0];
+    return `<span class="attachment" title="${esc(x.path)}">${x.url ? `<img src="${esc(x.url)}" alt="">` : `<span class="ext">${esc(extOf(x.path))}</span>`}<span>${esc(x.path)}</span><span class="fine">${size(xs)}</span>${rm(key, x.path)}</span>`;
+  });
+  if (rest.length) {
+    const xs = rest.flatMap(([, v]) => v);
+    chips.push(`<span class="attachment more"><span>and ${plural(xs.length, "more file")}</span><span class="fine">${size(xs)}</span>${rm("*rest*", "the rest")}</span>`);
+  }
+  let hint = "";
+  if (fs.length && !attachFits()) hint = `<p class="attach-hint warn">${esc(attachHint())}</p>`;
+  else if (fs.length && eng) hint = `<p class="attach-hint">When you send, ${fs.length === 1 ? "it's" : "they're"} copied into this chat's folder (pages written here load from it), and ${esc(eng.name)} is told what each one is.</p>` + prepSwitches(fs);
+  setHTML(box, chips.join("") + hint);
+  $("#prompt").placeholder = !fs.length || !attachFits() ? "Ask something…" : eng ? "Ask about these files, or what to make with them…" : "What should a Head do with this picture? (e.g. add a soft studio shadow)";
+}
+// The switches for what an engine's files get first: GLBs for web pages and turntables
+// of the 3D models, and a line on what each picture shows. On unless switched off for the message.
+const MODEL_EXT = /\.(glb|gltf|obj|fbx|stl|ply)$/i, WEB_EXT = /\.(obj|fbx|stl|ply)$/i, PIC_EXT = /\.(png|jpe?g|webp|gif|heic|heif|tiff?|bmp|avif)$/i;
+function prepSwitches(fs) {
+  const t = (S && S.attach_tools) || {};
+  const models = fs.filter((x) => MODEL_EXT.test(x.path)).length;
+  const pics = new Set(fs.filter((x) => PIC_EXT.test(x.path)).map((x) => x.path.replace(/\d+(\.[^./]+)$/, "#$1"))).size; // a numbered run is one
+  const sw = (key, on, can, label, why) => `<label class="check prep" title="${esc(why)}"><input type="checkbox" data-prep="${key}"${can && on ? " checked" : ""}${can ? "" : " disabled"}><span>${label}</span></label>`;
+  const out = [], webs = fs.filter((x) => WEB_EXT.test(x.path)).length;
+  if (webs) out.push(sw("glb", !chat.glbOff, !!t.turntables, `Web GLBs${webs > 1 ? ` (${Math.min(webs, 24)})` : ""}`,
+    t.turntables ? "Blender saves each OBJ, FBX, STL or PLY beside it as a compressed GLB (Draco meshes, textures inside), a few seconds each, so a page can load the real model quickly: a 15 MB OBJ becomes about 1 MB" : `No GLBs here: ${t.no_turntables || "Blender isn't installed on this computer"}`));
+  if (models) out.push(sw("turn", !chat.turnOff, !!t.turntables, `Turntables${models > 1 ? ` (${Math.min(models, 12)})` : ""}`,
+    t.turntables ? `Blender renders each 3D model turning once (72 frames, 800 px, about a minute and a half each, in a sandbox) into the chat's folder, so a page can spin it without a 3D library` : `No turntables here: ${t.no_turntables || "Blender isn't installed on this computer"}`));
+  if (pics) out.push(sw("describe", !chat.describeOff, !!t.describe, `Describe pictures${pics > 1 ? ` (${Math.min(pics, 40)})` : ""}`,
+    t.describe ? `${t.describe} looks at each picture first (up to 40, a few seconds each) and writes what it shows, for a model that reads only text` : "No vision model here to describe pictures (qwen3.8 can be added in Models)"));
+  return out.length ? `<div class="prep-switches">${out.join("")}</div>` : "";
+}
+function removeAttachment(key) {
+  const groups = attachGroups();
+  const drop = key === "*rest*" ? new Set(groups.slice(ATTACH_CHIPS - 1).map(([k]) => k)) : new Set([key]);
+  chat.files = chat.files.filter((x) => {
+    const k = x.path.includes("/") ? x.path.split("/")[0] + "/" : x.path;
+    if (!drop.has(k)) return true;
+    if (x.url) URL.revokeObjectURL(x.url);
+    return false;
+  });
+  renderAttachments();
+}
+
+// The attach button: files or a folder for an engine, a picture for a Head.
+function syncAttachButton() {
+  const eng = attachEngine(), b = $("#btn-attach"), input = $("#file-attach");
+  b.textContent = eng ? "+ Files" : "+ Picture";
+  b.title = eng ? `Attach files or a folder (or drop them here): they're copied into this chat's folder, and ${eng.name} is told what each one is` : "Add a picture for a Head to work on (you can also paste or drop one)";
+  input.multiple = !!eng;
+  if (eng) input.removeAttribute("accept"); else input.accept = "image/png,image/jpeg,image/webp";
+}
+
+// uploadFiles copies a message's files into Chimera, four at a time, and gives
+// what the message names them by.
+async function uploadFiles(files, progress, signal) {
+  const total = files.reduce((n, x) => n + x.file.size, 0);
+  const out = new Array(files.length);
+  let next = 0, done = 0, sent = 0, failed = false;
+  const one = async () => {
+    while (next < files.length && !failed) {
+      const i = next++, x = files[i];
+      let res;
+      try {
+        res = await fetch(`/api/uploads?name=${encodeURIComponent(x.path)}`, { method: "POST", headers: { "X-Chimera": "1", "Content-Type": "application/octet-stream" }, body: x.file, signal });
+      } catch (e) {
+        failed = true;
+        throw signal && signal.aborted ? new Error("Stopped: nothing was sent.") : new Error(`Couldn't read ${x.path}: was it moved or deleted?`);
+      }
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) { failed = true; throw new Error(`${x.path}: ${j.error || "it didn't arrive"}`); }
+      out[i] = { upload: j.id, path: x.path };
+      done++; sent += x.file.size;
+      progress(done, files.length, sent, total);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(4, files.length) }, one));
+  return out;
+}
+
+const readBase64 = (file) => new Promise((ok, no) => {
+  const rd = new FileReader();
+  rd.onload = () => ok(String(rd.result).split(",")[1] || "");
+  rd.onerror = () => no(new Error("Couldn't read that picture."));
+  rd.readAsDataURL(file);
+});
+
+// The files attached to a message of yours: a line saying how many and where,
+// a few of its pictures, a few names, and what the model was told about them.
+function attachedHTML(m) {
+  const list = m.attached || m._attaching || [];
+  if (!list.length) return "";
+  const sid = m._session || chat.current || "";
+  const src = (f) => f.url || (m.attached && sid ? `/api/sessions/${encodeURIComponent(sid)}/attached/${f.path.split("/").map(encodeURIComponent).join("/")}` : "");
+  // One picture of each numbered run ("f00.webp" … "f71.webp", a turn's frames), eight at most.
+  const runs = new Set();
+  const pics = list.filter((f) => {
+    if (f.kind !== "picture" || !/\.(png|jpe?g|webp|gif)$/i.test(f.path) || !src(f)) return false;
+    if (f.made === "turntable" && !/\d\.[^./]+$/.test(f.path)) return false; // its poster is frame 0 again
+    const run = f.path.replace(/\d+(\.[^./]+)$/, "#$1");
+    if (run !== f.path && runs.has(run)) return false;
+    runs.add(run);
+    return true;
+  }).slice(0, 8);
+  // What Chimera made for them (turntables) is counted apart from what was attached.
+  const attached = list.filter((f) => !f.made), made = list.filter((f) => f.made === "turntable");
+  const names = attached.filter((f) => f.kind !== "picture").slice(0, 6), more = attached.length - pics.filter((f) => !f.made).length - names.length;
+  const total = attached.reduce((n, f) => n + (f.bytes || 0), 0);
+  const where = m.attached_in ? `<span title="${esc(m.attached_in)}">${esc(folderName(m.attached_in))}</span>` : "this chat's folder";
+  const what = attached.length === 1 ? esc(attached[0].path) : plural(attached.length, "file");
+  const madeLine = madeHTML(list);
+  const tip = (f) => f.shows ? `${f.path}\n${f.shows}` : f.path;
+  return `<div class="attached">
+    <div class="att-head">${FOLDER_ICON}<span>${what} · ${fmtBytes(total)}, ${m._attaching ? "copied into" : "in"} ${where}</span></div>
+    ${pics.length ? `<div class="att-pics">${pics.map((f) => f.made === "turntable" ? spinThumb(f, list, src) : `<a href="${esc(src(f))}" target="_blank" rel="noopener" title="${esc(tip(f))}"><img src="${esc(src(f))}" alt="${esc(f.shows || f.path)}" loading="lazy"></a>`).join("")}</div>` : ""}
+    ${madeLine}
+    ${list.length > 1 && (names.length || more > 0) ? `<ul class="att-names">${names.map((f) => `<li>${esc(f.path)}</li>`).join("")}${more > 0 ? `<li class="fine">and ${fmtNum(more)} more</li>` : ""}</ul>` : ""}
+    ${m.files_note ? `<details class="att-told"><summary>What the model was told about ${list.length === 1 ? "it" : "them"}</summary><pre>${esc(m.files_note)}</pre></details>` : ""}
+  </div>`;
+}
+
+// ---------- turntables you can turn ----------
+// A turntable's frames, the same ones the model was told about: its thumbnail turns
+// while the mouse rests on it and follows a drag (right turns it the way the frame
+// numbers go up), and a click (or Enter) opens it large, playing, to drag or step.
+const spinSets = new Map(); // id -> {urls, name, first, shows}
+function spinThumb(first, list, src) {
+  const frames = list.filter((x) => x.made === "turntable" && x.from === first.from && /\d\.[^./]+$/.test(x.path))
+    .sort((a, b) => Number(/(\d+)\.[^./]+$/.exec(a.path)[1]) - Number(/(\d+)\.[^./]+$/.exec(b.path)[1]));
+  const urls = frames.map(src).filter(Boolean);
+  if (urls.length < 2) return `<a href="${esc(src(first))}" target="_blank" rel="noopener"><img src="${esc(src(first))}" alt="${esc(first.path)}" loading="lazy"></a>`;
+  const id = urls[0], name = (first.from || first.path).split("/").pop();
+  spinSets.set(id, { urls, name, first: first.path.split("/").pop(), shows: first.shows || "" });
+  return `<button type="button" class="att-spin" data-spin="${esc(id)}" title="${esc(`The turntable of ${name}: ${urls.length} frames, as the model was told about them. Drag to turn it; click to open it.`)}">` +
+    `<img src="${esc(urls[0])}" alt="${esc(first.shows || `turntable of ${name}`)}" loading="lazy" draggable="false"><span class="spin-badge">360°</span></button>`;
+}
+function spinState(el) {
+  if (!el._spin) {
+    const set = spinSets.get(el.dataset.spin) || { urls: [] };
+    set.imgs = set.imgs || set.urls.map((u) => { const im = new Image(); im.decoding = "async"; im.src = u; return im; }); // all of them once, so turning never waits
+    el._spin = { set, i: 0, timer: 0 };
+  }
+  return el._spin;
+}
+function spinTo(el, i) {
+  const s = spinState(el), n = s.set.urls.length;
+  if (!n) return;
+  s.i = ((Math.round(i) % n) + n) % n;
+  const img = el.querySelector("img");
+  if (img) img.src = s.set.urls[s.i];
+  el.dispatchEvent(new CustomEvent("spun", { detail: s.i }));
+}
+function spinPlay(el, on, ms = 60) {
+  const s = spinState(el);
+  clearInterval(s.timer);
+  s.timer = on ? setInterval(() => {
+    if (!el.isConnected) { clearInterval(s.timer); s.timer = 0; return; } // redrawn under the pointer
+    spinTo(el, s.i + 1);
+  }, ms) : 0;
+}
+const stillPlease = () => { try { return matchMedia("(prefers-reduced-motion: reduce)").matches; } catch { return false; } };
+function openSpin(id, at) {
+  const set = spinSets.get(id);
+  if (!set) return;
+  const n = set.urls.length, box = document.createElement("div");
+  box.className = "overlay spin-view";
+  box.innerHTML = `<div class="spin-panel" role="dialog" aria-modal="true" aria-label="${esc(`Turntable of ${set.name}`)}">
+    <div class="spin-stage" data-spin="${esc(id)}" tabindex="0" title="Drag to turn it"><img alt="${esc(set.shows || `turntable of ${set.name}`)}" draggable="false"></div>
+    <div class="spin-bar"><button class="btn small" type="button" data-spin-play>Pause</button><span class="spin-count"></span>
+      <span class="fine">${esc(set.name)} · drag to turn it, ← → a frame at a time</span><button class="btn small quiet" type="button" data-spin-close>Close</button></div>
+    ${set.shows ? `<p class="spin-shows" title="${esc(set.shows)}">The model was told ${esc(set.first)} shows: ${esc(set.shows)}</p>` : ""}</div>`;
+  document.body.appendChild(box);
+  const stage = $(".spin-stage", box), count = $(".spin-count", box), play = $("[data-spin-play]", box);
+  stage.addEventListener("spun", (e) => { count.textContent = `${set.urls[e.detail].split("/").pop()} · ${Math.round(e.detail * 3600 / n) / 10}° on from frame 0`; });
+  const playing = (on) => { spinPlay(stage, on); play.textContent = on ? "Pause" : "Play"; };
+  stage.addEventListener("pointerdown", () => playing(false));
+  spinTo(stage, at || 0);
+  playing(!stillPlease());
+  play.addEventListener("click", () => playing(!spinState(stage).timer));
+  const close = () => { spinPlay(stage, false); box.remove(); document.removeEventListener("keydown", key, true); };
+  const key = (e) => {
+    if (e.key === "Escape") close();
+    else if (e.key === "ArrowRight" || e.key === "ArrowLeft") { playing(false); spinTo(stage, spinState(stage).i + (e.key === "ArrowRight" ? 1 : -1)); }
+    else if (e.key === " " && e.target === stage) playing(!spinState(stage).timer);
+    else return;
+    e.preventDefault(); e.stopPropagation();
+  };
+  document.addEventListener("keydown", key, true);
+  $("[data-spin-close]", box).addEventListener("click", close);
+  box.addEventListener("click", (e) => { if (e.target === box && e.detail < 2) close(); }); // not a double-click's second half
+  stage.focus();
+}
+// Dragging any of them turns it; a thumbnail that wasn't dragged opens on its click.
+document.addEventListener("pointerdown", (e) => {
+  const el = e.target.closest && e.target.closest(".att-spin, .spin-stage");
+  if (!el || e.button !== 0) return;
+  e.preventDefault(); // no picture drag or text selection; it also keeps mousedown away, so:
+  if ($("#menu")) closeMenu();
+  const s = spinState(el), x0 = e.clientX, i0 = s.i, step = el.classList.contains("spin-stage") ? 6 : 3;
+  spinPlay(el, false);
+  el._dragged = false;
+  el.setPointerCapture(e.pointerId);
+  const move = (ev) => { const dx = ev.clientX - x0; if (Math.abs(dx) > 3) el._dragged = true; if (el._dragged) spinTo(el, i0 + dx / step); };
+  const up = () => {
+    el.removeEventListener("pointermove", move); el.removeEventListener("pointerup", up); el.removeEventListener("pointercancel", up);
+    setTimeout(() => { el._dragged = false; }, 0); // after this release's click, wherever it went
+  };
+  el.addEventListener("pointermove", move);
+  el.addEventListener("pointerup", up);
+  el.addEventListener("pointercancel", up);
+});
+document.addEventListener("click", (e) => {
+  const el = e.target.closest && e.target.closest(".att-spin");
+  if (!el) return;
+  e.preventDefault();
+  if (el._dragged) { el._dragged = false; return; }
+  spinPlay(el, false);
+  openSpin(el.dataset.spin, spinState(el).i);
+});
+document.addEventListener("pointerover", (e) => {
+  const el = e.target.closest && e.target.closest(".att-spin");
+  if (el && e.pointerType === "mouse" && !el.contains(e.relatedTarget) && !stillPlease()) spinPlay(el, true, 70);
+});
+document.addEventListener("pointerout", (e) => {
+  const el = e.target.closest && e.target.closest(".att-spin");
+  if (el && !el.contains(e.relatedTarget)) spinPlay(el, false);
+});
+document.addEventListener("keydown", (e) => {
+  const el = e.target.closest && e.target.closest(".att-spin");
+  if (!el || (e.key !== "ArrowRight" && e.key !== "ArrowLeft")) return;
+  e.preventDefault();
+  spinTo(el, spinState(el).i + (e.key === "ArrowRight" ? 1 : -1));
+});
+
+// What Chimera made of a message's models: their GLBs for web pages and their
+// turntables, and what it couldn't make (in amber).
+function madeHTML(list) {
+  const base = (p) => esc(p.split("/").pop()), byPath = new Map(list.map((f) => [f.path, f]));
+  const glbs = list.filter((f) => f.made === "glb"), turned = list.filter((f) => f.turntable);
+  const parts = [], fails = [];
+  if (glbs.length) parts.push(`Web GLBs made here: ${glbs.map((g) => { const src = byPath.get(g.from); return `${base(g.path)} (${fmtBytes(g.bytes || 0)}${src ? `, from ${fmtBytes(src.bytes || 0)}` : ""})`; }).join(", ")}`);
+  if (turned.length) parts.push(`Turntables made here: ${turned.map((f) => `${base(f.path)} (${list.filter((x) => x.made === "turntable" && x.from === f.path && /\d\.[^./]+$/.test(x.path)).length} frames, in ${esc(f.turntable)}/)`).join(", ")}`);
+  for (const f of list) {
+    if (f.no_turn && f.no_turn === f.no_glb) fails.push(`no turntable or GLB of ${base(f.path)} (${esc(f.no_turn)})`);
+    else {
+      if (f.no_glb) fails.push(`no GLB of ${base(f.path)} (${esc(f.no_glb)})`);
+      if (f.no_turn) fails.push(`no turntable of ${base(f.path)} (${esc(f.no_turn)})`);
+    }
+  }
+  if (fails.length) parts.push(`<span class="warn">${fails.join("; ")}</span>`);
+  return parts.length ? `<div class="att-made">${parts.join("; ")}</div>` : "";
+}
+
+// Once the message is saved: its files as they are in the chat's folder, and
+// what the model was told.
+// The last one asked for wins: it was asked later, so it can't know less (the files
+// are saved again once their turntables and descriptions are made).
+const attachedAsks = new Map();
+async function refreshAttached(sid, idx, el) {
+  const key = `${sid}:${idx}`, my = (attachedAsks.get(key) || 0) + 1;
+  attachedAsks.set(key, my);
+  try {
+    const sess = await api("GET", `/api/sessions/${sid}`);
+    const m = sess.messages[idx];
+    // The element may have been redrawn since (by an earlier answer): find it again.
+    const cur = el.isConnected ? el : chat.current === sid ? $(`#messages .msg.user[data-index="${idx}"]`) : null;
+    if (m && m.role === "user" && cur && attachedAsks.get(key) === my) { m._session = sid; cur.replaceWith(messageEl(m, idx)); }
+  } catch { /* the reply goes on; the chat shows them when it's opened again */ }
+  loadSessions(); // its folder, if one was just made for it
+}
+
+// ---------- markdown ----------
+// A small Markdown renderer that's safe with any text: everything is escaped,
+// and only these become HTML: headings, paragraphs, lists (nested by indent, with
+// task boxes), quotes, tables, rules, code blocks (with their own toolbar), inline
+// code, bold, italics, strikethrough, and http, https and mailto links.
+function md(src, opts = {}) {
+  let text = String(src || "").replace(/\r\n?/g, "\n");
+  // A whole page written out without a code fence still gets shown as one.
+  if (!/^\s{0,3}(```|~~~)/m.test(text)) {
+    const doc = text.match(/<!doctype html[\s\S]*?<\/html>/i) || (opts.live ? text.match(/<!doctype html[\s\S]*$/i) : null);
+    if (doc) text = text.slice(0, doc.index) + "\n```html\n" + doc[0] + (opts.live && !/<\/html>/i.test(doc[0]) ? "" : "\n```\n") + text.slice(doc.index + doc[0].length);
+  }
+  const lines = text.split("\n"), out = [];
+  let buf = [], n = 0;
+  const flush = () => { if (buf.length) { out.push(mdBlocks(buf.join("\n"))); buf = []; } };
+  for (let i = 0; i < lines.length;) {
+    const f = lines[i].match(/^(\s{0,3})(`{3,}|~{3,})\s*([\w+#.-]*)/);
+    if (!f) { buf.push(lines[i++]); continue; }
+    flush();
+    const fence = f[2], lang = f[3].toLowerCase(), indent = f[1].length, code = [];
+    const close = new RegExp(`^\\s{0,3}\\${fence[0]}{${fence.length},}\\s*$`);
+    let closed = false;
+    for (i++; i < lines.length; i++) {
+      if (close.test(lines[i])) { closed = true; i++; break; }
+      code.push(indent ? lines[i].replace(new RegExp(`^ {0,${indent}}`), "") : lines[i]);
+    }
+    out.push(codeBlock(code.join("\n"), lang, n++, closed, opts));
+  }
+  flush();
+  return out.join("");
+}
+function mdInline(t) {
+  const codes = [];
+  t = String(t).replace(/`([^`\n]+)`/g, (_, c) => { codes.push(c); return `\u0000${codes.length - 1}\u0000`; });
+  t = esc(t);
+  t = t.replace(/\[([^\]\n]+)\]\(((?:https?:|mailto:)[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+  t = t.replace(/(^|[\s(])(https?:\/\/[^\s<)]*[^\s<).,;:!?'"])/g, '$1<a href="$2" target="_blank" rel="noopener noreferrer">$2</a>');
+  t = t.replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>").replace(/(^|[^\w])__([^_\n]+)__(?!\w)/g, "$1<strong>$2</strong>");
+  t = t.replace(/(^|[^*\w])\*([^*\n]+)\*(?!\w)/g, "$1<em>$2</em>").replace(/(^|[^_\w])_([^_\n]+)_(?!\w)/g, "$1<em>$2</em>");
+  t = t.replace(/~~([^~\n]+)~~/g, "<del>$1</del>");
+  return t.replace(/\u0000(\d+)\u0000/g, (_, k) => `<code>${esc(codes[+k])}</code>`);
+}
+const LIST_RE = /^(\s*)([-*+]|\d{1,9}[.)])\s+(.*)$/;
+function mdBlocks(text) {
+  const lines = text.split("\n");
+  let out = "", para = [];
+  const flushPara = () => { if (para.length) { out += `<p>${mdInline(para.join("\n")).replace(/\n/g, "<br>")}</p>`; para = []; } };
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    let m;
+    if (!line.trim()) { flushPara(); continue; }
+    if ((m = line.match(/^ {0,3}(#{1,6})\s+(.*?)\s*#*\s*$/))) { flushPara(); const h = Math.min(6, m[1].length + 2); out += `<h${h}>${mdInline(m[2])}</h${h}>`; continue; }
+    if (/^ {0,3}([-*_])(\s*\1){2,}\s*$/.test(line)) { flushPara(); out += "<hr>"; continue; }
+    if (/^ {0,3}>/.test(line)) {
+      flushPara();
+      const q = [];
+      for (; i < lines.length && /^ {0,3}>/.test(lines[i]); i++) q.push(lines[i].replace(/^ {0,3}> ?/, ""));
+      i--;
+      out += `<blockquote>${mdBlocks(q.join("\n"))}</blockquote>`;
+      continue;
+    }
+    if (line.includes("|") && i + 1 < lines.length && /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(lines[i + 1])) {
+      flushPara();
+      const rows = [line];
+      let j = i + 2;
+      for (; j < lines.length && lines[j].includes("|") && lines[j].trim(); j++) rows.push(lines[j]);
+      out += mdTable(rows, lines[i + 1]);
+      i = j - 1;
+      continue;
+    }
+    if (LIST_RE.test(line)) {
+      flushPara();
+      const items = [];
+      for (; i < lines.length && (LIST_RE.test(lines[i]) || (items.length && /^\s{2,}\S/.test(lines[i]))); i++) items.push(lines[i]);
+      i--;
+      out += mdList(items);
+      continue;
+    }
+    para.push(line);
+  }
+  flushPara();
+  return out;
+}
+function mdList(lines) {
+  const items = [];
+  for (const l of lines) {
+    const m = l.match(LIST_RE);
+    if (m) items.push({ ind: m[1].replace(/\t/g, "    ").length, ol: /\d/.test(m[2]), start: parseInt(m[2], 10), text: m[3] });
+    else if (items.length) items[items.length - 1].text += " " + l.trim();
+  }
+  let html = "";
+  const stack = [];
+  for (const it of items) {
+    const tag = it.ol ? "ol" : "ul";
+    while (stack.length && it.ind < stack[stack.length - 1].ind) html += `</li></${stack.pop().tag}>`;
+    const top = stack[stack.length - 1];
+    if (!top || it.ind > top.ind) {
+      html += `<${tag}${it.ol && it.start > 1 ? ` start="${it.start}"` : ""}>`;
+      stack.push({ ind: it.ind, tag });
+    } else {
+      html += "</li>";
+      if (top.tag !== tag) { html += `</${stack.pop().tag}><${tag}>`; stack.push({ ind: it.ind, tag }); }
+    }
+    let t = it.text, box = "";
+    const tm = t.match(/^\[([ xX])\]\s+(.*)$/);
+    if (tm) { box = `<span class="task-box${tm[1] !== " " ? " on" : ""}" role="img" aria-label="${tm[1] !== " " ? "done" : "not done"}"></span>`; t = tm[2]; }
+    html += `<li${box ? ' class="task-item"' : ""}>${box}${mdInline(t)}`;
+  }
+  while (stack.length) html += `</li></${stack.pop().tag}>`;
+  return html;
+}
+function mdTable(rows, sep) {
+  const cells = (r) => r.trim().replace(/^\|/, "").replace(/\|$/, "").split(/(?<!\\)\|/).map((c) => c.trim().replace(/\\\|/g, "|"));
+  const align = cells(sep).map((c) => (/^:-+:$/.test(c) ? "center" : /-:$/.test(c) ? "right" : ""));
+  const al = (k) => (align[k] ? ` style="text-align:${align[k]}"` : "");
+  const head = cells(rows[0]);
+  let h = `<div class="table-wrap"><table><thead><tr>${head.map((c, k) => `<th${al(k)}>${mdInline(c)}</th>`).join("")}</tr></thead><tbody>`;
+  for (const r of rows.slice(1)) {
+    const cs = cells(r);
+    h += `<tr>${head.map((_, k) => `<td${al(k)}>${mdInline(cs[k] || "")}</td>`).join("")}</tr>`;
+  }
+  return h + "</tbody></table></div>";
+}
+
+// ---------- code blocks ----------
+const CODE_EXT = { html: "html", htm: "html", svg: "svg", css: "css", js: "js", javascript: "js", ts: "ts", typescript: "ts", json: "json", python: "py", py: "py", bash: "sh", sh: "sh", zsh: "sh", shell: "sh", go: "go", rust: "rs", c: "c", cpp: "cpp", java: "java", swift: "swift", sql: "sql", yaml: "yaml", yml: "yaml", xml: "xml", md: "md", markdown: "md", glsl: "glsl", lua: "lua", ruby: "rb", php: "php" };
+const isPageCode = (lang, code) => lang === "html" || lang === "htm" || (!lang && /^\s*(<!doctype html|<html[\s>])/i.test(code));
+const isSVGCode = (lang, code) => lang === "svg" || (lang === "xml" && /^\s*<svg[\s>]/i.test(code)) || (!lang && /^\s*<svg[\s>]/i.test(code));
+function codeBlock(code, lang, n, closed, opts) {
+  const lines = code ? code.split("\n").length : 0;
+  const page = isPageCode(lang, code), svg = isSVGCode(lang, code);
+  // A finished page or drawing can be shown; a whole page is shown straight away.
+  const preview = closed && !opts.live && (page || svg) ? (svg || /<!doctype html|<html[\s>]/i.test(code) ? "auto" : "manual") : "";
+  const long = lines > 24;
+  const tabs = preview ? `<button type="button" class="code-tab on" data-code-act="code">Code</button><button type="button" class="code-tab" data-code-act="preview">${svg ? "Picture" : "Preview"}</button>` : "";
+  return `<div class="code${long ? " long" : ""}" data-code="${n}" data-lang="${esc(lang)}"${preview ? ` data-preview="${preview}"` : ""}>
+<div class="code-head"><span class="code-lang">${esc(lang || "code")}</span><span class="code-lines">${plural(lines, "line")}${closed || !opts.live ? "" : ", still writing"}</span><span class="code-tools">${tabs}<button type="button" data-code-act="copy">Copy</button><button type="button" data-code-act="download">Download</button></span></div>
+<pre><code>${esc(code)}</code></pre>${long ? `<button type="button" class="code-more" data-code-act="more">Show all ${fmtNum(lines)} lines</button>` : ""}</div>`;
+}
+function codeText(block) { return $("pre code", block).textContent; }
+async function copyText(text, what = "Copied") {
+  try { await navigator.clipboard.writeText(text); toast(what); }
+  catch { toast("Couldn't copy. Select it and copy by hand.", true); }
+}
+function downloadText(text, name, type = "text/plain") {
+  const url = URL.createObjectURL(new Blob([text], { type }));
+  const a = document.createElement("a");
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+}
+function slug(s) { return String(s || "chimera").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "chimera"; }
+function codeFileName(block) {
+  const lang = block.dataset.lang, ext = CODE_EXT[lang] || (isPageCode(lang, codeText(block)) ? "html" : "txt");
+  const title = (chat.sess && chat.sess.title) || "chimera";
+  return `${slug(title)}-${Number(block.dataset.code) + 1}.${ext}`;
+}
+const pageHTML = (block) => {
+  const code = codeText(block);
+  return isSVGCode(block.dataset.lang, code) && !/^\s*<!doctype|^\s*<html/i.test(code)
+    ? `<!doctype html><meta charset="utf-8"><style>html,body{margin:0;height:100%;display:grid;place-items:center;background:#fff}svg{max-width:100%;max-height:100vh}</style>${code}` : code;
+};
+
+// Shows a finished page from a chat in a sandboxed frame. The page and the
+// files next to it (in the chat's folder) are served from a one-off address
+// that runs on an origin of its own, so it can't reach Chimera.
+async function showPreview(block) {
+  block.classList.add("previewing");
+  $$(".code-tab", block).forEach((b) => b.classList.toggle("on", b.dataset.codeAct === "preview"));
+  if ($(".preview", block)) return;
+  const box = document.createElement("div");
+  box.className = "preview";
+  box.innerHTML = `<p class="blank">Opening the page…</p>`;
+  block.appendChild(box);
+  let r;
+  try { r = await api("POST", "/api/preview", { session_id: chat.current || "", html: pageHTML(block) }); }
+  catch (e) { box.innerHTML = `<p class="err">${esc(e.message)}</p>`; return; }
+  const folderNote = r.folder ? "" : `<span class="fine">This chat has no folder, so pictures and files the page links to won't show. <button type="button" class="link small" data-chat-act="folder">Pick a folder</button></span>`;
+  box.innerHTML = `<div class="preview-bar">${folderNote}<span class="grow"></span>
+    <button type="button" class="btn small quiet" data-code-act="reload">Reload</button>
+    <button type="button" class="btn small quiet" data-code-act="full">Full screen</button>
+    <a class="btn small quiet" href="${esc(r.url)}" target="_blank" rel="noopener noreferrer">Open in a tab</a>
+    ${chat.current ? `<button type="button" class="btn small quiet" data-code-act="save">Save to folder</button>` : ""}</div>
+    <iframe sandbox="allow-scripts allow-forms allow-popups allow-modals allow-pointer-lock allow-downloads" src="${esc(r.url)}" title="Preview of the page"></iframe>`;
+}
+function showCode(block) {
+  block.classList.remove("previewing");
+  $$(".code-tab", block).forEach((b) => b.classList.toggle("on", b.dataset.codeAct === "code"));
+}
+function toggleFullscreen(p) {
+  if (document.fullscreenElement) { document.exitFullscreen().catch(() => {}); return; }
+  if (!p || !p.requestFullscreen) { toast("Full screen isn't available here.", true); return; }
+  p.requestFullscreen().catch(() => toast("Full screen isn't available here.", true));
+}
+// A page shown full screen keeps its bar on top, with a way back out.
+document.addEventListener("fullscreenchange", () => {
+  const fs = document.fullscreenElement;
+  $$('[data-code-act="full"]').forEach((b) => {
+    const on = !!fs && fs.contains(b);
+    b.textContent = on ? "Exit full screen (Esc)" : "Full screen";
+    b.classList.toggle("exit-full", on);
+  });
+});
+let previewSeen = null;
+function watchPreviews(root) {
+  const autos = $$('.code[data-preview="auto"]', root);
+  if (!autos.length) return;
+  if (!previewSeen) {
+    previewSeen = new IntersectionObserver((entries) => {
+      for (const en of entries) {
+        if (!en.isIntersecting) continue;
+        previewSeen.unobserve(en.target);
+        if (!en.target.dataset.shown) { en.target.dataset.shown = "1"; showPreview(en.target); }
+      }
+    }, { rootMargin: "200px" });
+  }
+  autos.forEach((b) => previewSeen.observe(b));
+}
+async function savePage(block, overwrite = false, name = "index.html") {
+  if (!chat.current) return;
+  if (!chat.sess || !chat.sess.folder) { toast("Pick a folder for this chat first: the page is saved there.", true); openFolderMenu(); return; }
+  try {
+    const r = await api("POST", `/api/sessions/${chat.current}/save-page`, { name, html: pageHTML(block), overwrite });
+    toast(`Saved ${r.name} in ${folderName(chat.sess.folder)}`);
+    block.dataset.saved = r.name;
+  } catch (e) {
+    if (/already in that folder/.test(e.message)) {
+      const choice = prompt(`${name} is already in ${folderName(chat.sess.folder)}. Type a new name, or keep this one to replace it:`, name);
+      if (!choice) return;
+      savePage(block, choice === name, choice);
+      return;
+    }
+    toast(e.message, true);
+  }
+}
+async function codeAction(t) {
+  const block = t.closest(".code");
+  if (!block) return;
+  switch (t.dataset.codeAct) {
+    case "copy": copyText(codeText(block), "Copied the code"); break;
+    case "download": downloadText(codeText(block), codeFileName(block), /html/.test(block.dataset.lang) ? "text/html" : "text/plain"); break;
+    case "more": block.classList.toggle("open"); t.textContent = block.classList.contains("open") ? "Show less" : `Show all ${fmtNum(codeText(block).split("\n").length)} lines`; break;
+    case "code": showCode(block); break;
+    case "preview": block.dataset.shown = "1"; showPreview(block); break;
+    case "reload": { const f = $("iframe", block); if (f) f.src = f.src; break; }
+    case "full": toggleFullscreen($(".preview", block)); break;
+    case "save": savePage(block); break;
+  }
+}
+
+// ---------- messages ----------
+function fmtDur(s) {
+  s = Math.max(0, Math.round(s || 0));
+  if (s < 60) return `${s} s`;
+  const m = Math.floor(s / 60), h = Math.floor(m / 60);
+  if (h) return `${h} h ${m % 60} min`;
+  return s % 60 ? `${m} min ${s % 60} s` : `${m} min`;
+}
 function metaText(m) {
   if (m.status === "error") return "";
   const bits = [];
   if (m.device) {
-    bits.push(m.local ? `Ran here with ${m.model}` : `Ran on ${deviceLabel(m.device, m.owner)} with ${m.model}`);
+    bits.push((m.local ? `Ran here with ${m.model}` : `Ran on ${deviceLabel(m.device, m.owner)} with ${m.model}`) + (m.think_level ? ` (thinking: ${m.think_level})` : ""));
   }
   if (m.tokens) bits.push(`${fmtNum(m.tokens)} tokens${m.tok_s ? ` at ${m.tok_s} per second` : ""}`);
+  if (m.think_s >= 1) bits.push(`Thought for ${fmtDur(m.think_s)}`);
+  if (m.cut) bits.push("Stopped at its token limit");
   if (m.status === "cancelled") bits.push("Stopped early");
   if (m.local) bits.push("Not through the network");
   else if (m.free) bits.push("Free, your own device");
@@ -1018,14 +1580,27 @@ function messageEl(m, idx) {
   const el = document.createElement("div");
   el.className = `msg ${m.role}${m.task ? " task" : ""}`;
   if (idx !== undefined) el.dataset.index = idx;
+  el._m = m;
   if (m.role === "user") {
-    el.textContent = m.content;
+    el.innerHTML = `<div class="bubble"></div><div class="msg-tools"><button type="button" class="tool-btn" data-msg-act="copy">Copy</button><button type="button" class="tool-btn" data-msg-act="edit" title="Change this message and send it again">Edit</button></div>`;
+    const b = $(".bubble", el);
+    b.textContent = m.content;
     const files = filesHTML(m);
-    if (files) el.insertAdjacentHTML("beforeend", files);
+    if (files) b.insertAdjacentHTML("beforeend", files);
+    const att = attachedHTML(m);
+    if (att) { b.insertAdjacentHTML("afterend", att); b.hidden = !m.content && !files; }
+    const lines = (m.content || "").split("\n").length;
+    if ((m.content || "").length > 1400 || lines > 18) {
+      b.classList.add("folded");
+      $(".msg-tools", el).insertAdjacentHTML("afterbegin", `<button type="button" class="tool-btn" data-msg-act="unfold">Show all ${fmtNum(lines)} lines</button>`);
+    }
     return el;
   }
-  el._m = m;
-  el.innerHTML = `<div class="note" hidden></div><div class="plan" hidden></div><details hidden><summary>Thinking</summary><div></div></details><div class="body"></div><div class="meta"></div><div class="rate-wrap"></div>`;
+  el.innerHTML = `<div class="note" hidden></div><div class="plan" hidden></div>
+<details class="think" hidden><summary><span class="think-title">Thinking</span><span class="think-time"></span></summary><div class="think-body"></div></details>
+<div class="body"></div><div class="meta"></div>
+<div class="msg-tools" hidden><button type="button" class="tool-btn" data-msg-act="copy">Copy</button><button type="button" class="tool-btn" data-msg-act="regen" hidden title="Write this reply again, with the model picked below">Write again</button></div>
+<div class="rate-wrap"></div>`;
   if (m.task) fillTask(el, m); else fillAssistant(el, m);
   return el;
 }
@@ -1036,27 +1611,71 @@ function setNote(el, text) {
   n.textContent = text || "";
 }
 
+// The model's thinking: open while it thinks, folded away once it answers
+// (unless you opened or closed it yourself).
+function fillThinking(el, m) {
+  const det = $(".think", el);
+  if (!det) return;
+  if (!m.thinking) { det.hidden = true; return; }
+  det.hidden = false;
+  const live = m.status === "pending", answering = !!(m.content || "").trim();
+  const body = $(".think-body", det);
+  const atEnd = body.scrollHeight - body.scrollTop - body.clientHeight < 48;
+  if (body._len !== m.thinking.length) { body.textContent = m.thinking; body._len = m.thinking.length; }
+  if (live && !answering) {
+    if (!m._thinkStart) m._thinkStart = Date.now();
+    $(".think-title", det).textContent = "Thinking…";
+    $(".think-time", det).textContent = `${fmtDur((Date.now() - m._thinkStart) / 1000)}, about ${fmtNum(Math.round(m.thinking.length / 4))} tokens`;
+    if (det._mine === undefined) det.open = true;
+    if (atEnd && det.open) body.scrollTop = body.scrollHeight;
+  } else {
+    if (live && answering && !m._answerAt) m._answerAt = Date.now();
+    const secs = m.think_s || (m._thinkStart && m._answerAt ? (m._answerAt - m._thinkStart) / 1000 : 0);
+    $(".think-title", det).textContent = secs >= 1 ? `Thought for ${fmtDur(secs)}` : secs ? "Thought for a moment" : "Thinking";
+    $(".think-time", det).textContent = `about ${fmtNum(Math.round(m.thinking.length / 4))} tokens`;
+    if (det._mine === undefined) det.open = false;
+  }
+}
+
+function lastAssistant(el) {
+  const all = $$(".msg.assistant", $("#messages"));
+  return all[all.length - 1] === el;
+}
+
 function fillAssistant(el, m) {
-  const body = $(".body", el), meta = $(".meta", el), det = $("details", el);
+  const body = $(".body", el), meta = $(".meta", el), tools = $(".msg-tools", el);
   setNote(el, m.note);
-  if (m.thinking) { det.hidden = false; $("div", det).textContent = m.thinking; } else det.hidden = true;
+  fillThinking(el, m);
+  const live = m.status === "pending";
+  const regen = $('[data-msg-act="regen"]', tools);
   if (m.status === "error") {
     body.innerHTML = m.content ? md(m.content) : "";
     meta.innerHTML = `<span class="err">${esc(m.error || "Something went wrong.")}</span>`;
+    tools.hidden = false;
+    $('[data-msg-act="copy"]', tools).hidden = !m.content;
+    regen.hidden = !(lastAssistant(el) && !m.plugin && chat.current);
     fillRate(el, m);
     return;
   }
-  let html = md(m.content);
-  if (m.status === "pending" && !m.plugin) {
+  // A finished reply is drawn once: its pages may be showing in frames that a redraw would reload.
+  const key = `${m.status}|${(m.content || "").length}|${(m.files || []).length}`;
+  if (!live && el._drawn === key) { meta.textContent = metaText(m); fillRate(el, m); return; }
+  el._drawn = live ? "" : key;
+  let html = md(m.content, { live });
+  if (live && !m.plugin && (m.content || !m.thinking)) {
     const caret = '<span class="caret"></span>';
     html = html.endsWith("</p>") ? html.slice(0, -4) + caret + "</p>" : html + caret;
   }
-  if (m.status === "pending" && m.plugin) {
+  if (live && m.plugin) {
     const pct = Math.round((m._fraction || 0) * 100);
     html += `<div class="plugin-progress"><span style="width:${pct}%"></span></div>`;
   }
   body.innerHTML = html + filesHTML(m);
-  meta.textContent = m.status === "pending" ? (m._runner || "Sending…") : metaText(m);
+  meta.textContent = live ? (m._runner || "Sending…") : metaText(m);
+  tools.hidden = live;
+  $('[data-msg-act="copy"]', tools).hidden = !m.content;
+  regen.hidden = live || !(lastAssistant(el) && !m.plugin && chat.current);
+  if (!live) watchPreviews(body);
   fillRate(el, m);
 }
 
@@ -1243,15 +1862,24 @@ async function sendRateNote(el, note) {
   fillRate(el, m);
 }
 
+function syncRegen() {
+  const all = $$(".msg.assistant", $("#messages"));
+  all.forEach((el, i) => {
+    const r = $('[data-msg-act="regen"]', el), m = el._m;
+    if (r && m) r.hidden = !(i === all.length - 1 && m.status !== "pending" && !m.plugin && !m.task && chat.current);
+  });
+}
+
+const EMPTY_CHAT = `<div class="chat-empty"><h2 class="section-title">Start a chat</h2><p>Pick a model below: one your network lends (each reply says which computer and model wrote it), or one of this computer's own, like an engine that runs only here. Turn on Long task for bigger jobs: Hydra splits them into steps that run on several computers at once.</p></div>`;
+
 function renderMessages(sess) {
   const box = $("#messages");
   box.innerHTML = "";
   chat.count = sess ? sess.messages.length : 0;
-  if (!sess || !sess.messages.length) {
-    box.innerHTML = `<div class="chat-empty"><h2 class="section-title">Test the network</h2><p>Send a prompt and Chimera runs it on a device that's lending, maybe a friend's. Each reply says which computer and model wrote it. Turn on Long task for bigger jobs: Hydra splits them into steps that run on several computers at once.</p></div>`;
-    return;
-  }
+  if (!sess || !sess.messages.length) { box.innerHTML = EMPTY_CHAT; renderChatHead(); return; }
   sess.messages.forEach((m, i) => { m._session = sess.id; box.appendChild(messageEl(m, i)); });
+  syncRegen();
+  renderChatHead();
   box.scrollTop = box.scrollHeight;
 }
 
@@ -1265,6 +1893,7 @@ function painter(el, m, fill) {
       const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 120;
       fill(el, m);
       if (nearBottom) box.scrollTop = box.scrollHeight;
+      else $("#to-bottom").hidden = false;
     });
   };
 }
@@ -1278,7 +1907,11 @@ function liveMessage(el) {
   return {
     on(ev) {
       switch (ev.type) {
-        case "started": chat.busy = { kind: "gen", id: ev.gen_id }; if (!chat.current) chat.current = ev.session_id; m._session = ev.session_id; m.content = ""; m.thinking = ""; break;
+        case "started":
+          chat.busy = { kind: "gen", id: ev.gen_id };
+          if (!chat.current) { chat.current = ev.session_id; chat.folder = ""; chat.group = ""; }
+          m._session = ev.session_id; m.content = ""; m.thinking = "";
+          break;
         case "note": m.note = ev.reason; break;
         case "queued": m._runner = m.plugin ? "Waiting for a computer with that Head…" : "Waiting for a free device…"; break;
         case "plugin": m.plugin = ev.plugin; m.model = ev.model; m._runner = `Using ${ev.model}…`; break;
@@ -1289,22 +1922,34 @@ function liveMessage(el) {
           break;
         case "status": {
           m._fraction = ev.fraction || 0;
-          const where = m.device ? (m.local ? "Here" : `On ${deviceLabel(m.device, m.owner)}`) : "";
+          const where = m.device && m.plugin ? (m.local ? "Here" : `On ${deviceLabel(m.device, m.owner)}`) : "";
           m._runner = `${where ? where + ": " : ""}${ev.reason || "Working"}${ev.fraction ? ` (${Math.round(ev.fraction * 100)}%)` : ""}`;
           break;
         }
         case "file": if (ev.file) m.files = (m.files || []).concat([ev.file]); break;
-        case "delta": m.content += ev.content || ""; m.thinking += ev.thinking || ""; break;
+        case "attached": {
+          // The message's files got their turntables and descriptions: show them.
+          const u = el.previousElementSibling;
+          if (u && u._m && u._m.role === "user" && (m._session || chat.current)) refreshAttached(m._session || chat.current, Number(u.dataset.index), u);
+          break;
+        }
+        case "delta":
+          if (ev.think_at) m._thinkStart = Date.parse(ev.think_at); // a replay: thinking began before this window opened the chat
+          else if (ev.thinking && !m._thinkStart) m._thinkStart = Date.now();
+          m.content += ev.content || ""; m.thinking += ev.thinking || "";
+          if (ev.content && m._runner && /Thinking|Reading/.test(m._runner)) m._runner = m.local ? `Writing here with ${m.model}…` : m._runner;
+          break;
         case "replay": m.content = ev.content || ""; m.thinking = ev.thinking || ""; break;
         case "requeued": m.content = ""; m.thinking = ""; m.note = `Moved to another device: ${ev.reason}`; m._runner = "Finding another device…"; break;
         case "done": case "cancelled":
           m.status = ev.type === "cancelled" ? "cancelled" : "";
-          Object.assign(m, { tokens: ev.tokens, tok_s: ev.tok_s, credits: ev.credits, free: ev.free });
+          Object.assign(m, { tokens: ev.tokens, tok_s: ev.tok_s, credits: ev.credits, free: ev.free, think_s: ev.think_s, cut: ev.done_reason === "length" });
           if (ev.local) m.local = true;
           break;
         case "error": m.status = "error"; m.error = ev.error; break;
       }
       schedule();
+      if (ev.type === "done" || ev.type === "cancelled" || ev.type === "error") requestAnimationFrame(syncRegen);
     },
     fail(msg) { m.status = "error"; m.error = msg; schedule(); },
   };
@@ -1336,27 +1981,319 @@ function liveTask(el) {
 
 async function enterChat() {
   await loadSessions();
-  if (!chat.current && chat.sessions[0]) await openSession(chat.sessions[0].id);
-  else if (!chat.current) renderMessages(null);
+  if (!chat.current && chat.sessions[0] && !chat.fresh) await openSession(chat.sessions[0].id);
+  else if (!chat.current) { renderMessages(null); }
   $("#prompt").focus();
 }
 
+// ---------- the chat list ----------
 async function loadSessions() {
-  try { chat.sessions = await api("GET", "/api/sessions"); } catch { chat.sessions = []; }
+  try {
+    const [list, groups] = await Promise.all([api("GET", "/api/sessions"), api("GET", "/api/chat-groups")]);
+    chat.sessions = list || []; chat.groups = groups || [];
+  } catch { chat.sessions = chat.sessions || []; }
+  const ids = new Set(chat.sessions.map((s) => s.id));
+  chat.selected.forEach((id) => { if (!ids.has(id)) chat.selected.delete(id); });
+  if (chat.current) chat.sess = chat.sessions.find((s) => s.id === chat.current) || chat.sess;
+  if (chat.q) await runSearch(); else renderSessions();
+  renderChatHead();
+}
+
+let searchSeq = 0;
+async function runSearch() {
+  const q = chat.q.trim(), seq = ++searchSeq;
+  if (!q) { chat.found = null; renderSessions(); return; }
+  let found = [];
+  try { found = await api("GET", `/api/sessions/search?q=${encodeURIComponent(q)}`); } catch { /* keep the list */ }
+  if (seq !== searchSeq) return;
+  chat.found = found;
   renderSessions();
+}
+
+function dayBucket(iso) {
+  const d = new Date(iso), now = new Date();
+  const day = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const diff = Math.round((day(now) - day(d)) / 86400000);
+  if (diff <= 0) return "Today";
+  if (diff === 1) return "Yesterday";
+  if (diff < 7) return "Previous 7 days";
+  if (diff < 30) return "Previous 30 days";
+  return d.getFullYear() === now.getFullYear() ? d.toLocaleString(undefined, { month: "long" }) : String(d.getFullYear());
+}
+
+const CHEVRON = '<svg class="chev" viewBox="0 0 12 12" aria-hidden="true"><path d="M4 2.5 7.5 6 4 9.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const DOTS = '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="3.5" cy="8" r="1.4"/><circle cx="8" cy="8" r="1.4"/><circle cx="12.5" cy="8" r="1.4"/></svg>';
+const FOLDER_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.8 4.2c0-.8.6-1.4 1.4-1.4h3l1.4 1.5h5.2c.8 0 1.4.6 1.4 1.4v6.1c0 .8-.6 1.4-1.4 1.4H3.2c-.8 0-1.4-.6-1.4-1.4z" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>';
+
+function chatRow(s) {
+  const on = s.id === chat.current, picked = chat.selected.has(s.id);
+  return `<div class="chat-row${on ? " on" : ""}${picked ? " picked" : ""}" data-chat="${esc(s.id)}" draggable="${chat.selecting ? "false" : "true"}">
+    ${chat.selecting ? `<input type="checkbox" class="pick" data-pick="${esc(s.id)}" ${picked ? "checked" : ""} aria-label="Select ${esc(s.title)}">` : ""}
+    <button type="button" class="chat-open" data-session="${esc(s.id)}" title="${esc(s.title)}"><span class="chat-name">${esc(s.title)}</span>${s.snippet ? `<span class="chat-snip">${esc(s.snippet)}</span>` : ""}</button>
+    ${s.pending ? `<span class="led ice pulse" title="A reply is being written"></span>` : ""}
+    ${chat.selecting ? "" : `<button type="button" class="more" data-chat-menu="${esc(s.id)}" aria-label="More for ${esc(s.title)}">${DOTS}</button>`}
+  </div>`;
 }
 
 function renderSessions() {
-  $("#sessions").innerHTML = chat.sessions.map((s) =>
-    `<li><button data-session="${esc(s.id)}" class="${s.id === chat.current ? "on" : ""}" title="${esc(s.title)}">${esc(s.title)}</button></li>`).join("");
+  const box = $("#chat-tree");
+  if (!box) return;
+  let html = "";
+  if (chat.found) {
+    html = chat.found.length ? `<div class="tree-label">${plural(chat.found.length, "chat")} found</div>${chat.found.map(chatRow).join("")}`
+      : `<p class="blank">No chat has “${esc(chat.q)}”.</p>`;
+  } else {
+    const byGroup = new Map(chat.groups.map((g) => [g.id, []]));
+    const loose = [];
+    for (const s of chat.sessions) (byGroup.has(s.group) ? byGroup.get(s.group) : loose).push(s);
+    for (const g of chat.groups) {
+      const list = byGroup.get(g.id);
+      html += `<div class="group${g.collapsed ? " folded" : ""}" data-group="${esc(g.id)}">
+        <div class="group-head" data-drop="${esc(g.id)}"><button type="button" class="group-toggle" data-group-toggle="${esc(g.id)}" aria-expanded="${!g.collapsed}">${CHEVRON}<span class="group-name">${esc(g.name)}</span><span class="count">${list.length}</span></button>
+        ${chat.selecting ? "" : `<button type="button" class="more" data-group-menu="${esc(g.id)}" aria-label="More for the group ${esc(g.name)}">${DOTS}</button>`}</div>
+        <div class="group-chats">${list.length ? list.map(chatRow).join("") : `<p class="blank small">Drag chats here, or use a chat's ⋯ menu.</p>`}</div></div>`;
+    }
+    let last = "";
+    html += `<div class="loose" data-drop="">`;
+    for (const s of loose) {
+      const b = dayBucket(s.updated);
+      if (b !== last) { html += `<div class="tree-label">${esc(b)}</div>`; last = b; }
+      html += chatRow(s);
+    }
+    if (!chat.sessions.length) html += `<p class="blank">No chats yet.</p>`;
+    html += `</div>`;
+  }
+  setHTML(box, html);
+  renderSelectBar();
+}
+
+function renderSelectBar() {
+  const bar = $("#select-bar");
+  bar.hidden = !chat.selecting;
+  if (!chat.selecting) return;
+  const n = chat.selected.size;
+  setHTML(bar, `<div class="sel-count">${n ? plural(n, "chat") + " selected" : "Pick chats"}</div>
+    <div class="sel-row"><button type="button" class="link small" data-sel-act="all">All</button><button type="button" class="link small" data-sel-act="old">Older than 30 days</button><button type="button" class="link small" data-sel-act="none">None</button></div>
+    <div class="sel-row"><button type="button" class="btn small" data-sel-act="move" ${n ? "" : "disabled"}>Move to…</button><button type="button" class="btn small danger" data-sel-act="delete" ${n ? "" : "disabled"}>Delete</button><button type="button" class="btn small quiet" data-sel-act="done">Done</button></div>`);
+}
+
+function setSelecting(on) {
+  chat.selecting = on;
+  if (!on) chat.selected.clear();
+  renderSessions();
+}
+
+async function deleteChats(ids) {
+  if (!ids.length) return;
+  const one = ids.length === 1 && chat.sessions.find((s) => s.id === ids[0]);
+  const what = one ? `“${one.title}”` : plural(ids.length, "chat");
+  if (!confirm(`Delete ${what}? This can't be undone.`)) return;
+  try {
+    const r = await api("POST", "/api/sessions/delete", { ids });
+    toast(`Deleted ${plural(r.deleted, "chat")}`);
+  } catch (e) { toast(e.message, true); return; }
+  ids.forEach((id) => chat.selected.delete(id));
+  if (ids.includes(chat.current)) { detachStream(); chat.current = null; chat.sess = null; renderMessages(null); }
+  await loadSessions();
+}
+
+async function moveChats(ids, group) {
+  for (const id of ids) {
+    try { await api("PATCH", `/api/sessions/${id}`, { group }); } catch (e) { toast(e.message, true); break; }
+  }
+  await loadSessions();
+}
+
+async function newGroup(moveIDs = []) {
+  const name = prompt("Name the new group:", "");
+  if (!name || !name.trim()) return null;
+  try {
+    const g = await api("POST", "/api/chat-groups", { name, move: moveIDs });
+    await loadSessions();
+    return g;
+  } catch (e) { toast(e.message, true); return null; }
+}
+
+function startRename(id) {
+  const row = $(`.chat-row[data-chat="${CSS.escape(id)}"]`);
+  const s = chat.sessions.find((x) => x.id === id);
+  if (!row || !s) return;
+  const open = $(".chat-open", row);
+  const input = document.createElement("input");
+  input.className = "field rename"; input.value = s.title; input.maxLength = 120;
+  open.replaceWith(input);
+  input.focus(); input.select();
+  let done = false;
+  const finish = async (save) => {
+    if (done) return;
+    done = true;
+    const title = input.value.trim();
+    if (save && title && title !== s.title) {
+      try { await api("PATCH", `/api/sessions/${id}`, { title }); } catch (e) { toast(e.message, true); }
+    }
+    loadSessions();
+  };
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); finish(true); } if (e.key === "Escape") { e.preventDefault(); finish(false); } });
+  input.addEventListener("blur", () => finish(true));
+}
+
+function exportChat(sess) {
+  const lines = [`# ${sess.title}`, ""];
+  for (const m of sess.messages) {
+    if (m.role === "user") {
+      lines.push(`**You** (${new Date(m.at).toLocaleString()}):`, "", m.content, "");
+      const att = (m.attached || []).filter((f) => !f.made), turned = (m.attached || []).filter((f) => f.turntable);
+      if (att.length) lines.push(`_Attached: ${att.slice(0, 20).map((f) => f.path).join(", ")}${att.length > 20 ? `, and ${att.length - 20} more` : ""}_`, "");
+      if (turned.length) lines.push(`_Turntables made here: ${turned.map((f) => `${f.turntable}/`).join(", ")}_`, "");
+      const glbs = (m.attached || []).filter((f) => f.made === "glb");
+      if (glbs.length) lines.push(`_GLBs made here for web pages: ${glbs.map((f) => f.path).join(", ")}_`, "");
+    }
+    else lines.push(`**${m.model || "Reply"}**${m.device ? ` on ${m.device}` : ""}:`, "", m.content || (m.error ? `_${m.error}_` : ""), "");
+  }
+  downloadText(lines.join("\n"), `${slug(sess.title)}.md`, "text/markdown");
+}
+
+// ---------- menus ----------
+function openMenu(anchor, items) {
+  closeMenu();
+  const menu = document.createElement("div");
+  menu.className = "menu"; menu.id = "menu"; menu.setAttribute("role", "menu");
+  menu.innerHTML = items.map((it) => it.sep ? `<div class="menu-sep"></div>` : it.label ? `<div class="menu-label">${esc(it.label)}</div>`
+    : `<button type="button" role="menuitem" class="${it.danger ? "danger" : ""}${it.sub ? " sub" : ""}" data-menu="${it.n}" ${it.disabled ? "disabled" : ""}>${esc(it.text)}</button>`).join("");
+  document.body.appendChild(menu);
+  const r = anchor.getBoundingClientRect(), mw = menu.offsetWidth, mh = menu.offsetHeight;
+  menu.style.left = `${Math.max(8, Math.min(window.innerWidth - mw - 8, r.right - mw))}px`;
+  menu.style.top = `${r.bottom + mh + 8 > window.innerHeight ? Math.max(8, r.top - mh - 4) : r.bottom + 4}px`;
+  menu._items = items;
+  const first = $("button", menu); if (first) first.focus();
+}
+function closeMenu() { const m = $("#menu"); if (m) m.remove(); }
+function menuChoose(n) {
+  const m = $("#menu");
+  if (!m) return;
+  const it = m._items.find((x) => x.n === n);
+  closeMenu();
+  if (it && it.act) it.act();
+}
+let menuN = 0;
+const mi = (text, act, more = {}) => ({ n: String(++menuN), text, act, ...more });
+
+function chatMenu(anchor, id) {
+  const s = chat.sessions.find((x) => x.id === id) || (chat.found || []).find((x) => x.id === id);
+  if (!s) return;
+  const items = [mi("Open", () => openSession(id)), mi("Rename", () => startRename(id))];
+  items.push({ label: "Move to group" });
+  for (const g of chat.groups) items.push(mi(g.name + (g.id === s.group ? "  ✓" : ""), () => moveChats([id], g.id), { sub: true, disabled: g.id === s.group }));
+  items.push(mi("New group…", () => newGroup([id]), { sub: true }));
+  if (s.group) items.push(mi("Out of its group", () => moveChats([id], ""), { sub: true }));
+  items.push({ sep: true });
+  items.push(mi(s.folder ? `Folder: ${folderName(s.folder)}…` : "Pick a folder for its pages…", () => { if (chat.current !== id) openSession(id).then(openFolderMenu); else openFolderMenu(); }));
+  items.push(mi("Export as Markdown", async () => { try { exportChat(await api("GET", `/api/sessions/${id}`)); } catch (e) { toast(e.message, true); } }));
+  items.push(mi("Select several…", () => { chat.selected.add(id); setSelecting(true); }));
+  items.push({ sep: true }, mi("Delete", () => deleteChats([id]), { danger: true }));
+  openMenu(anchor, items);
+}
+
+function groupMenu(anchor, gid) {
+  const g = chat.groups.find((x) => x.id === gid);
+  if (!g) return;
+  const n = chat.sessions.filter((s) => s.group === gid).length;
+  openMenu(anchor, [
+    mi("New chat in this group", () => newChat(gid)),
+    mi("Rename", async () => {
+      const name = prompt("Rename the group:", g.name);
+      if (!name || !name.trim()) return;
+      try { await api("PATCH", `/api/chat-groups/${gid}`, { name }); } catch (e) { toast(e.message, true); }
+      loadSessions();
+    }),
+    mi("Move up", () => api("PATCH", `/api/chat-groups/${gid}`, { at: Math.max(0, chat.groups.indexOf(g) - 1) }).then(loadSessions), { disabled: chat.groups.indexOf(g) === 0 }),
+    mi("Move down", () => api("PATCH", `/api/chat-groups/${gid}`, { at: chat.groups.indexOf(g) + 1 }).then(loadSessions), { disabled: chat.groups.indexOf(g) === chat.groups.length - 1 }),
+    { sep: true },
+    mi("Delete the group, keep its chats", async () => {
+      try { await api("DELETE", `/api/chat-groups/${gid}`); } catch (e) { toast(e.message, true); }
+      loadSessions();
+    }),
+    mi(`Delete the group and its ${plural(n, "chat")}`, async () => {
+      if (!confirm(`Delete “${g.name}” and the ${plural(n, "chat")} in it? This can't be undone.`)) return;
+      try { const r = await api("DELETE", `/api/chat-groups/${gid}?chats=delete`); toast(`Deleted ${plural(r.deleted, "chat")}`); } catch (e) { toast(e.message, true); }
+      if (chat.current && !chat.sessions.some((s) => s.id === chat.current && s.group !== gid)) { chat.current = null; renderMessages(null); }
+      loadSessions();
+    }, { danger: true, disabled: !n }),
+  ]);
+}
+
+function listMenu(anchor) {
+  openMenu(anchor, [
+    mi("New group…", () => newGroup()),
+    mi(chat.selecting ? "Stop selecting" : "Select chats…", () => setSelecting(!chat.selecting)),
+  ]);
+}
+
+function moveMenu(anchor) {
+  const ids = [...chat.selected];
+  openMenu(anchor, [{ label: `Move ${plural(ids.length, "chat")} to` },
+    ...chat.groups.map((g) => mi(g.name, () => moveChats(ids, g.id))),
+    mi("New group…", () => newGroup(ids)), mi("No group", () => moveChats(ids, ""))]);
+}
+
+// ---------- the open chat: its title and folder ----------
+const folderName = (p) => String(p || "").split("/").filter(Boolean).pop() || p;
+function renderChatHead() {
+  const s = chat.current ? chat.sess : null;
+  const title = s ? s.title : "New chat";
+  $("#chat-title").textContent = title;
+  $("#chat-title").disabled = !s;
+  const folder = s ? s.folder : chat.folder;
+  const chip = $("#btn-folder");
+  chip.innerHTML = `${FOLDER_ICON}<span>${folder ? esc(folderName(folder)) : "No folder"}</span>`;
+  chip.title = folder ? `Pages in this chat load their pictures and files from ${folder}` : "Pick a folder: pages written in this chat can then load the pictures and files in it, and be saved there";
+  chip.classList.toggle("set", !!folder);
+  const g = s ? chat.groups.find((x) => x.id === s.group) : chat.groups.find((x) => x.id === chat.group);
+  $("#chat-group").textContent = g ? g.name : "";
+  $("#chat-group").hidden = !g;
+}
+
+async function setFolder(path) {
+  if (!chat.current) { chat.folder = path; renderChatHead(); if (path) toast(`Pages in this chat will use ${folderName(path)}`); return; }
+  try {
+    const sum = await api("PATCH", `/api/sessions/${chat.current}`, { folder: path });
+    chat.sess = sum;
+    toast(path ? `Pages in this chat now load files from ${folderName(path)}` : "This chat has no folder now");
+    // Pages already showing were opened with the old folder: show them again.
+    $$("#messages .code.previewing").forEach((b) => { const p = $(".preview", b); if (p) p.remove(); showPreview(b); });
+  } catch (e) { toast(e.message, true); }
+  loadSessions();
+}
+
+function openFolderMenu() {
+  const s = chat.current ? chat.sess : null, folder = s ? s.folder : chat.folder;
+  openMenu($("#btn-folder"), [
+    { label: folder ? folder : "No folder yet" },
+    mi("Choose a folder…", async () => {
+      try {
+        const r = await api("POST", "/api/pick-folder");
+        if (r.path) setFolder(r.path);
+      } catch {
+        const p = prompt("Type the folder's full path:", folder || "");
+        if (p && p.trim()) setFolder(p.trim());
+      }
+    }),
+    mi("Type a path…", () => { const p = prompt("The folder's full path (pages in this chat load files from it):", folder || ""); if (p && p.trim()) setFolder(p.trim()); }),
+    mi("Show it in the Finder", () => api("POST", `/api/sessions/${chat.current}/open-page`, { name: "" }).catch((e) => toast(e.message, true)), { disabled: !folder || !chat.current }),
+    mi("Open its index.html", () => api("POST", `/api/sessions/${chat.current}/open-page`, { name: "index.html" }).catch((e) => toast(e.message, true)), { disabled: !folder || !chat.current }),
+    mi("No folder", () => setFolder(""), { disabled: !folder }),
+  ]);
 }
 
 async function openSession(id) {
-  if (chat.busy) return; // finish the current reply first
+  if (chat.busy) detachStream(); // the reply goes on; this chat picks it up again when opened
   chat.current = id;
+  chat.fresh = false;
+  chat.sess = chat.sessions.find((s) => s.id === id) || null;
   renderSessions();
   let sess;
   try { sess = await api("GET", `/api/sessions/${id}`); } catch (e) { toast(e.message, true); return; }
+  chat.sess = { ...(chat.sess || {}), id: sess.id, title: sess.title, folder: sess.folder || "", group: sess.group || "" };
   renderMessages(sess);
   const pending = sess.messages.find((m) => m.status === "pending" && (m.gen_id || m.task_id));
   if (pending) {
@@ -1367,6 +2304,15 @@ async function openSession(id) {
   }
 }
 
+function newChat(group = "") {
+  if (chat.busy) detachStream();
+  chat.current = null; chat.sess = null; chat.fresh = true;
+  chat.folder = ""; chat.group = group;
+  renderSessions();
+  renderMessages(null);
+  $("#prompt").focus();
+}
+
 function setBusy(on) {
   const b = $("#btn-send");
   const task = $("#chk-task").checked, loop = task && $("#chk-loop").checked;
@@ -1375,60 +2321,188 @@ function setBusy(on) {
   if (!on) chat.busy = null;
 }
 
+// The reply this window is following. Leaving its chat only stops following it:
+// the reply goes on in Chimera, and opening the chat again picks it up.
+let streamSeq = 0;
+function detachStream() {
+  if (chat.stream) { chat.stream.abort(); chat.stream = null; }
+  streamSeq++;
+  chat.busy = null;
+  setBusy(false);
+}
+
 async function attachStream(url, live, busy) {
-  chat.busy = busy;
+  const ctl = new AbortController(), my = ++streamSeq;
+  chat.stream = ctl; chat.busy = busy;
   setBusy(true);
   try {
-    const res = await fetch(url);
+    const res = await fetch(url, { signal: ctl.signal });
     if (res.ok) await readSSE(res, (ev) => live.on(ev));
-  } catch { /* finished meanwhile */ }
-  setBusy(false);
+  } catch { /* finished meanwhile, or left for another chat */ }
+  if (my === streamSeq) { chat.stream = null; setBusy(false); }
+  loadSessions();
+}
+
+// What a chat message goes with: the picked model, and where it may run.
+function chatBody(extra) {
+  const model = $("#sel-model").value;
+  const b = { session_id: chat.current || "", model, target: $("#sel-device").value, private: $("#chk-private").checked, ...extra };
+  if (engineFor(model)) { b.thinking = $("#sel-think").value; b.target = ""; b.private = false; }
+  if (!chat.current) { if (chat.folder) b.folder = chat.folder; if (chat.group) b.group = chat.group; }
+  return b;
+}
+
+// Posts a chat request and streams its reply into el.
+async function postReply(url, body, live, base) {
+  const ctl = new AbortController(), my = ++streamSeq;
+  chat.stream = ctl;
+  chat.busy = { kind: url === "/api/task" ? "task" : "gen", id: "starting" };
+  setBusy(true);
+  try {
+    const res = await fetch(url, { method: "POST", headers: { "X-Chimera": "1", "Content-Type": "application/json" }, body: JSON.stringify(body), signal: ctl.signal });
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      if (base !== undefined) chat.count = base; // nothing was saved
+      live.fail(j.error || "Couldn't send that.");
+    } else {
+      await readSSE(res, (ev) => live.on(ev));
+    }
+  } catch {
+    if (!ctl.signal.aborted) live.fail("Lost the connection to Chimera.");
+  }
+  if (my === streamSeq) { chat.stream = null; setBusy(false); }
   loadSessions();
 }
 
 async function send() {
   const ta = $("#prompt");
   const text = ta.value.trim();
-  const images = chat.images.slice();
-  if ((!text && !images.length) || chat.busy) return;
-  const asTask = $("#chk-task").checked;
-  if (asTask && images.length) { toast("Pictures go to Heads. Untick Long task to send this one.", true); return; }
+  const files = chat.files.slice();
+  if ((!text && !files.length) || chat.busy) return;
+  const asTask = $("#chk-task").checked && !$("#task-wrap").hidden;
+  const eng = !asTask && attachEngine();
+  if (asTask && files.length) { toast("Pictures go to Heads, and files to this computer's own models: untick Long task to send this one.", true); return; }
+  if (!attachFits()) { toast(attachHint(), true); return; }
   const body = asTask
     ? { session_id: chat.current || "", goal: text, private: $("#chk-private").checked, loop: $("#chk-loop").checked }
-    : { session_id: chat.current || "", message: text, model: $("#sel-model").value, target: $("#sel-device").value, private: $("#chk-private").checked };
-  if (images.length) body.images = images.map((i) => ({ name: i.name, data: i.data }));
+    : chatBody({ message: text });
+  if (files.length && !eng) {
+    try { body.images = [{ name: files[0].file.name || "picture.png", data: await readBase64(files[0].file) }]; } catch (e) { toast(e.message, true); return; }
+  }
+  const switches = { turnOff: chat.turnOff, describeOff: chat.describeOff, glbOff: chat.glbOff };
+  if (eng && files.length) {
+    if (switches.turnOff) body.turntables = false;
+    if (switches.describeOff) body.describe = false;
+    if (switches.glbOff) body.web_glb = false;
+  }
   ta.value = "";
-  chat.images = [];
+  chat.files = [];
+  chat.turnOff = chat.describeOff = chat.glbOff = false; // on again for the next message
   renderAttachments();
   autosize();
   const box = $("#messages");
-  if (box.querySelector(".chat-empty")) { box.innerHTML = ""; chat.count = 0; }
+  const wasEmpty = !!box.querySelector(".chat-empty");
+  if (wasEmpty) { box.innerHTML = ""; chat.count = 0; }
   const base = chat.count;
-  box.appendChild(messageEl({ role: "user", content: text, _previews: images.map((i) => ({ url: i.url, name: i.name })) }, base));
-  const el = messageEl(asTask ? { role: "assistant", status: "pending", content: "", task: { phase: "planning", steps: [] } } : { role: "assistant", status: "pending", content: "" }, base + 1);
+  const mine = { role: "user", content: text };
+  if (eng) mine._attaching = files.map((x) => ({ path: x.path, bytes: x.file.size, kind: isPicFile(x.file) ? "picture" : "", url: x.url }));
+  else mine._previews = files.map((x) => ({ url: x.url || URL.createObjectURL(x.file), name: x.file.name }));
+  const userEl = messageEl(mine, base);
+  box.appendChild(userEl);
+  const el = messageEl(asTask ? { role: "assistant", status: "pending", content: "", task: { phase: "planning", steps: [] } } : { role: "assistant", status: "pending", content: "", think_level: body.thinking }, base + 1);
   box.appendChild(el);
   chat.count = base + 2;
   box.scrollTop = box.scrollHeight;
+  syncRegen();
   const live = asTask ? liveTask(el) : liveMessage(el);
-  chat.busy = { kind: asTask ? "task" : "gen", id: "starting" };
-  setBusy(true);
-  try {
-    const res = await fetch(asTask ? "/api/task" : "/api/chat", { method: "POST", headers: { "X-Chimera": "1", "Content-Type": "application/json" }, body: JSON.stringify(body) });
-    if (!res.ok) {
-      const j = await res.json().catch(() => ({}));
-      chat.count = base; // nothing was saved
-      live.fail(j.error || "Couldn't send that.");
-    } else {
-      await readSSE(res, (ev) => live.on(ev));
+  if (eng && files.length) {
+    // Copy the files in first; nothing is sent until they're all there.
+    chat.busy = { kind: "gen", id: "starting" };
+    setBusy(true);
+    const ctl = new AbortController();
+    chat.uploadCtl = ctl;
+    try {
+      body.attachments = await uploadFiles(files, (d, n, sent, total) => live.on({ type: "status",
+        reason: n > 1 ? `Copying your files: ${fmtNum(d)} of ${fmtNum(n)} (${fmtBytes(sent)} of ${fmtBytes(total)})…` : `Copying ${files[0].path}…` }), ctl.signal);
+    } catch (e) {
+      // Nothing was sent: the message and its files go back in the box.
+      chat.uploadCtl = null;
+      userEl.remove(); el.remove(); chat.count = base;
+      if (wasEmpty) renderMessages(null);
+      ta.value = text; chat.files = files; Object.assign(chat, switches); renderAttachments(); autosize();
+      chat.busy = null; setBusy(false);
+      toast(e.message, true);
+      return;
     }
-  } catch {
-    live.fail("Lost the connection to Chimera.");
+    chat.uploadCtl = null;
+    const on = live.on;
+    live.on = (ev) => { on(ev); if (ev.type === "started") refreshAttached(ev.session_id, base, userEl); };
   }
-  setBusy(false);
-  loadSessions();
+  await postReply(asTask ? "/api/task" : "/api/chat", body, live, base);
+}
+
+// Writes the last reply again, with the model and thinking picked now.
+async function regenerate(el) {
+  if (chat.busy || !chat.current) return;
+  const body = chatBody({ regenerate: true });
+  const fresh = messageEl({ role: "assistant", status: "pending", content: "", think_level: body.thinking }, Number(el.dataset.index));
+  el.replaceWith(fresh);
+  await postReply("/api/chat", body, liveMessage(fresh));
+}
+
+// Changes a message of yours and sends it again: what came after it goes.
+function editMessage(el) {
+  if (chat.busy || !chat.current) return;
+  const m = el._m, idx = Number(el.dataset.index);
+  const bubble = $(".bubble", el);
+  if (!bubble || el.classList.contains("editing")) return;
+  el.classList.add("editing");
+  const form = document.createElement("form");
+  form.className = "edit-form";
+  form.innerHTML = `<textarea class="field" rows="3"></textarea><div class="btn-row"><button class="btn small primary" type="submit">Send again</button><button class="btn small quiet" type="button" data-edit-cancel>Cancel</button><span class="fine">The replies after it are replaced.</span></div>`;
+  $("textarea", form).value = m.content;
+  const wasHidden = bubble.hidden; // a message of files alone has no words to show
+  bubble.hidden = true;
+  el.insertBefore(form, bubble.nextSibling);
+  const ta = $("textarea", form);
+  ta.style.height = Math.min(320, ta.scrollHeight + 4) + "px";
+  ta.focus();
+  const cancel = () => { form.remove(); bubble.hidden = wasHidden; el.classList.remove("editing"); };
+  $("[data-edit-cancel]", form).addEventListener("click", cancel);
+  ta.addEventListener("keydown", (e) => { if (e.key === "Escape") cancel(); if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) form.requestSubmit(); });
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const text = ta.value.trim();
+    if (!text) return;
+    let n = el.nextSibling;
+    while (n) { const next = n.nextSibling; n.remove(); n = next; }
+    const user = messageEl({ role: "user", content: text, attached: m.attached, attached_in: m.attached_in, files_note: m.files_note, _session: m._session }, idx);
+    el.replaceWith(user);
+    const body = chatBody({ message: text, edit_at: idx });
+    const reply = messageEl({ role: "assistant", status: "pending", content: "", think_level: body.thinking }, idx + 1);
+    $("#messages").appendChild(reply);
+    chat.count = idx + 2;
+    await postReply("/api/chat", body, liveMessage(reply));
+  });
+}
+
+async function msgAction(t) {
+  const el = t.closest(".msg");
+  if (!el || !el._m) return;
+  switch (t.dataset.msgAct) {
+    case "copy": copyText(el._m.content || "", "Copied"); break;
+    case "regen": regenerate(el); break;
+    case "edit": editMessage(el); break;
+    case "unfold": {
+      const b = $(".bubble", el), open = b.classList.toggle("folded") === false;
+      t.textContent = open ? "Show less" : `Show all ${fmtNum((el._m.content || "").split("\n").length)} lines`;
+      break;
+    }
+  }
 }
 
 async function stopGen() {
+  if (chat.uploadCtl) { chat.uploadCtl.abort(); return; }
   const b = chat.busy;
   if (!b || b.id === "starting") return;
   const path = b.kind === "task" ? `/api/task/${b.id}/cancel` : `/api/chat/${b.id}/cancel`;
@@ -1438,15 +2512,55 @@ async function stopGen() {
 function autosize() {
   const ta = $("#prompt");
   ta.style.height = "auto";
-  ta.style.height = Math.min(200, ta.scrollHeight + 2) + "px";
+  ta.style.height = Math.min(240, ta.scrollHeight + 2) + "px";
 }
 
 function lendingDevices() {
   return S.network.joined ? S.network.devices.filter((d) => d.online && d.lending && d.ollama_ok) : [];
 }
 
+// ---------- engines (this computer's own models outside Ollama) ----------
+const engineFor = (value) => (S && S.engines || []).find((e) => e.model === value);
+const driveName = (p) => (/^\/Volumes\/([^/]+)/.exec(p || "") || [])[1] || (p ? "this computer's drive" : "");
+function engineLine(e) {
+  switch (e.status) {
+    case "stopped": return `${e.name} starts when you send${e.model_path ? `, reading the model from ${driveName(e.model_path)}` : ""}. It stops after ${e.idle_minutes} minutes unused.`;
+    case "starting": return `Starting ${e.name}…`;
+    case "ready": return e.busy ? `${e.name} is writing.` : `${e.name} is ready${e.external ? " (started outside Chimera)" : e.ready_secs ? ` (it took ${fmtDur(e.ready_secs)} to start)` : ""}. It stops after ${e.idle_minutes} minutes unused.`;
+    case "stopping": return `Stopping ${e.name}…`;
+    default: return e.error || "Something went wrong.";
+  }
+}
+const engineLED = (e) => (e.status === "ready" ? "ice" : e.status === "starting" || e.status === "stopping" ? "amber" : e.status === "stopped" ? "off" : "brick");
+function renderEngineLine(e) {
+  const box = $("#engine-line");
+  if (!e) { box.hidden = true; return; }
+  box.hidden = false;
+  let btn = "";
+  if (e.status === "ready" && !e.external) btn = `<button type="button" class="link small" data-engine-stop="${esc(e.id)}">Stop it now</button>`;
+  else if (e.status === "stopped") btn = `<button type="button" class="link small" data-engine-start="${esc(e.id)}">Start it now</button>`;
+  else if (e.status === "error" || e.status === "missing") btn = `<button type="button" class="link small" data-engine-start="${esc(e.id)}">Try again</button>`;
+  const lending = S.lending && S.lending.state && S.lending.state !== "disconnected";
+  setHTML(box, `<span class="led ${engineLED(e)}"></span><span>${esc(engineLine(e))}</span>${btn}${lending ? `<span class="warn">Lending is on, so someone's job could use this computer's memory while it runs.</span>` : ""}`);
+}
+function renderEngines() {
+  const box = $("#engines"), wrap = $("#engines-wrap");
+  if (!box) return;
+  const list = (S.engines || []);
+  wrap.hidden = !list.length;
+  setHTML(box, list.map((e) => {
+    const bits = [`up to <b>${ctxWord(e.context)}</b> context`, `answers up to ${ctxWord(e.max_tokens)} tokens`];
+    if (e.thinking && e.thinking.length) bits.push(`thinking ${esc(e.thinking.join(", "))}`);
+    let btn = "";
+    if (e.status === "ready" && !e.external) btn = `<button class="btn small quiet" data-engine-stop="${esc(e.id)}">Stop</button>`;
+    else if (e.status === "stopped" || e.status === "error" || e.status === "missing") btn = `<button class="btn small quiet" data-engine-start="${esc(e.id)}">Start</button>`;
+    return `<div class="inst"><span class="iname">${esc(e.name)}</span><span><span class="ifit"><span class="led ${engineLED(e)}"></span>${esc(e.status === "ready" && e.busy ? "writing" : e.status)}</span> ${btn}</span>
+      <span class="imeta">${e.note ? esc(e.note) + ". " : ""}${esc(engineLine(e))}<br>${bits.join(", ")}. Only your own chats on this computer use it: it's never lent.</span></div>`;
+  }).join(""));
+}
+
 function refreshPickers() {
-  const selM = $("#sel-model"), selD = $("#sel-device"), priv = $("#chk-private");
+  const selM = $("#sel-model"), selD = $("#sel-device"), priv = $("#chk-private"), selT = $("#sel-think");
   const joined = S.network.joined;
   let models = [];
   if (!joined) {
@@ -1463,12 +2577,37 @@ function refreshPickers() {
     models = [...map.values()].sort((a, b) => b.size - a.size)
       .map((x) => ({ value: x.value, label: `${x.value} (${x.devs.length === 1 ? x.devs[0] : x.devs.length + " devices"})` }));
   }
-  const htmlM = `<option value="">Best available</option>` + models.map((o) => `<option value="${esc(o.value)}">${esc(o.label)}</option>`).join("");
+  const engines = (S.engines || []).map((e) => ({ value: e.model, label: `${e.name} (only here)` }));
+  const opt = (o) => `<option value="${esc(o.value)}">${esc(o.label)}</option>`;
+  const htmlM = `<option value="">Best available</option>`
+    + (engines.length ? `<optgroup label="This computer's own">${engines.map(opt).join("")}</optgroup>` : "")
+    + (models.length ? `<optgroup label="${joined ? "Lent in the network" : "Ollama on this computer"}">${models.map(opt).join("")}</optgroup>` : "");
   if (selM._html !== htmlM) {
-    const prev = selM.value;
+    let prev = selM.value;
+    if (!selM._html) { try { prev = localStorage.getItem("chimera.model") || ""; } catch { /* private mode */ } }
     selM.innerHTML = htmlM; selM._html = htmlM;
-    selM.value = models.some((o) => o.value === prev) ? prev : "";
+    selM.value = models.concat(engines).some((o) => o.value === prev) ? prev : "";
   }
+  const eng = engineFor(selM.value);
+  // An engine always runs here, as a plain chat: no device to pick, and no long task.
+  $("#device-wrap").hidden = !!eng;
+  priv.closest("label").hidden = !joined || !!eng;
+  $("#task-wrap").hidden = !!eng;
+  if (eng && $("#chk-task").checked) { $("#chk-task").checked = false; setTaskMode(false); }
+  const levels = eng && eng.thinking ? eng.thinking : [];
+  $("#think-wrap").hidden = !levels.length;
+  if (levels.length) {
+    const htmlT = levels.map((l) => `<option value="${esc(l)}">${esc(l === "off" ? "Off" : l[0].toUpperCase() + l.slice(1))}</option>`).join("");
+    if (selT._html !== htmlT || selT._for !== eng.id) {
+      let want = selT.value;
+      try { want = localStorage.getItem(`chimera.think.${eng.id}`) || eng.default_thinking || want; } catch { want = eng.default_thinking || want; }
+      selT.innerHTML = htmlT; selT._html = htmlT; selT._for = eng.id;
+      selT.value = levels.includes(want) ? want : levels[levels.length - 1];
+    }
+  }
+  renderEngineLine(eng);
+  syncAttachButton();
+  if (chat.files.length) renderAttachments();
   let devs = [];
   if (joined) {
     const want = normModel(selM.value);
@@ -1485,7 +2624,7 @@ function refreshPickers() {
     selD.value = devs.some((o) => o.value === prev) ? prev : "";
   }
   selD.disabled = !joined;
-  priv.closest("label").hidden = !joined;
+  renderEngines();
 }
 
 // ---------- library ----------
@@ -2011,7 +3150,23 @@ document.addEventListener("toggle", (e) => {
 document.addEventListener("click", async (e) => {
   const t = e.target.closest("button, a");
   if (!t) return;
+  if (t.dataset.menu) { menuChoose(t.dataset.menu); return; }
   if (t.classList.contains("mode")) { setView(t.dataset.view); return; }
+  if (t.dataset.codeAct) { codeAction(t); return; }
+  if (t.dataset.msgAct) { msgAction(t); return; }
+  if (t.dataset.chatMenu) { chatMenu(t, t.dataset.chatMenu); return; }
+  if (t.dataset.groupMenu) { groupMenu(t, t.dataset.groupMenu); return; }
+  if (t.dataset.groupToggle) { toggleGroup(t.dataset.groupToggle); return; }
+  if (t.dataset.selAct) { selAction(t); return; }
+  if (t.dataset.chatAct === "folder") { openFolderMenu(); return; }
+  if (t.dataset.engineStart) { api("POST", `/api/engines/${t.dataset.engineStart}/start`).catch((err) => toast(err.message, true)); return; }
+  if (t.dataset.engineStop) {
+    const en = (S.engines || []).find((x) => x.id === t.dataset.engineStop);
+    if (en && en.busy && !confirm(`${en.name} is writing a reply. Stop it anyway? The reply ends where it is.`)) return;
+    api("POST", `/api/engines/${t.dataset.engineStop}/stop`).catch((err) => toast(err.message, true));
+    return;
+  }
+  if (t.dataset.session && chat.selecting) { togglePick(t.dataset.session); return; }
   if (t.dataset.copy) {
     try { await navigator.clipboard.writeText(t.dataset.copy); toast(`Copied ${t.dataset.copy}`); }
     catch { toast("Couldn't copy. Select it and copy by hand.", true); }
@@ -2069,8 +3224,7 @@ document.addEventListener("click", async (e) => {
       try { await api("POST", "/api/open-folder", { which: "head-try", id: hm.tryId }); } catch (err) { toast(err.message, true); }
       return;
     case "remove-attachment":
-      chat.images.splice(Number(t.dataset.n), 1).forEach((i) => URL.revokeObjectURL(i.url));
-      renderAttachments();
+      removeAttachment(t.dataset.key);
       return;
   }
 });
@@ -2084,6 +3238,9 @@ document.addEventListener("change", async (e) => {
     return;
   }
   if (el.dataset.share !== undefined) { setShared(el.dataset.share, el.checked); return; }
+  if (el.dataset.pick) { togglePick(el.dataset.pick); return; }
+  if (el.id === "sel-think" && el._for) { try { localStorage.setItem(`chimera.think.${el._for}`, el.value); } catch { /* private mode */ } return; }
+  if (el.id === "sel-model") { try { localStorage.setItem("chimera.model", el.value); } catch { /* private mode */ } }
   if (el.id === "sel-model" || el.id === "chk-private") refreshPickers();
   if (el.id === "chk-task") setTaskMode(el.checked);
   if (el.id === "chk-loop" && !chat.busy) $("#btn-send").textContent = el.checked ? "Start loop" : "Start task";
@@ -2169,13 +3326,96 @@ $("#su-skip").addEventListener("click", async () => {
 $("#su-done").addEventListener("click", closeSetup);
 $("#su-invite").addEventListener("keydown", (e) => { if (e.key === "Enter") joinNetwork(); });
 
-$("#btn-new-chat").addEventListener("click", () => {
-  if (chat.busy) return;
-  chat.current = null;
-  renderSessions();
-  renderMessages(null);
-  $("#prompt").focus();
+$("#btn-new-chat").addEventListener("click", () => newChat());
+$("#btn-list-menu").addEventListener("click", (e) => listMenu(e.currentTarget));
+$("#btn-folder").addEventListener("click", () => openFolderMenu());
+$("#chat-title").addEventListener("click", async () => {
+  if (!chat.current || !chat.sess) return;
+  const title = prompt("Rename this chat:", chat.sess.title);
+  if (!title || !title.trim()) return;
+  try { chat.sess = await api("PATCH", `/api/sessions/${chat.current}`, { title }); } catch (err) { toast(err.message, true); }
+  loadSessions();
 });
+let searchTimer = 0;
+$("#chat-search").addEventListener("input", (e) => {
+  chat.q = e.target.value;
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(runSearch, 180);
+});
+$("#chat-search").addEventListener("keydown", (e) => { if (e.key === "Escape") { e.target.value = ""; chat.q = ""; runSearch(); } });
+$("#to-bottom").addEventListener("click", () => { const b = $("#messages"); b.scrollTop = b.scrollHeight; $("#to-bottom").hidden = true; });
+$("#messages").addEventListener("scroll", () => {
+  const b = $("#messages");
+  if (b.scrollHeight - b.scrollTop - b.clientHeight < 120) $("#to-bottom").hidden = true;
+});
+// The thinking box is open while a model thinks and folds when it answers, unless you open or close it yourself.
+$("#messages").addEventListener("click", (e) => {
+  const sum = e.target.closest(".think > summary");
+  if (sum) sum.parentElement._mine = true;
+});
+// Drag a chat onto a group (or below the groups, for none).
+$("#chat-tree").addEventListener("dragstart", (e) => {
+  const row = e.target.closest(".chat-row");
+  if (!row) return;
+  e.dataTransfer.setData("text/x-chimera-chat", row.dataset.chat);
+  e.dataTransfer.effectAllowed = "move";
+});
+$("#chat-tree").addEventListener("dragover", (e) => {
+  const zone = e.target.closest("[data-drop]");
+  if (!zone || ![...e.dataTransfer.types].includes("text/x-chimera-chat")) return;
+  e.preventDefault();
+  $$("#chat-tree .drop-on").forEach((z) => { if (z !== zone) z.classList.toggle("drop-on", false); });
+  zone.classList.toggle("drop-on", true);
+});
+$("#chat-tree").addEventListener("dragleave", (e) => {
+  const zone = e.target.closest("[data-drop]");
+  if (zone && !zone.contains(e.relatedTarget)) zone.classList.toggle("drop-on", false);
+});
+$("#chat-tree").addEventListener("drop", (e) => {
+  const zone = e.target.closest("[data-drop]");
+  $$("#chat-tree .drop-on").forEach((z) => z.classList.toggle("drop-on", false));
+  const id = e.dataTransfer.getData("text/x-chimera-chat");
+  if (!zone || !id) return;
+  e.preventDefault();
+  const s = chat.sessions.find((x) => x.id === id);
+  if (s && (s.group || "") !== zone.dataset.drop) moveChats([id], zone.dataset.drop);
+});
+document.addEventListener("mousedown", (e) => { const m = $("#menu"); if (m && !m.contains(e.target)) closeMenu(); });
+window.addEventListener("resize", closeMenu);
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && $("#menu")) { closeMenu(); e.stopPropagation(); return; }
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k" && view === "chat") { e.preventDefault(); $("#chat-search").focus(); $("#chat-search").select(); }
+}, true);
+
+function togglePick(id) {
+  if (chat.selected.has(id)) chat.selected.delete(id); else chat.selected.add(id);
+  renderSessions();
+}
+async function toggleGroup(gid) {
+  const g = chat.groups.find((x) => x.id === gid);
+  if (!g) return;
+  g.collapsed = !g.collapsed;
+  renderSessions();
+  try { await api("PATCH", `/api/chat-groups/${gid}`, { collapsed: g.collapsed }); } catch (err) { toast(err.message, true); }
+}
+function selAction(t) {
+  const list = chat.found || chat.sessions;
+  switch (t.dataset.selAct) {
+    case "all": list.forEach((s) => chat.selected.add(s.id)); break;
+    case "none": chat.selected.clear(); break;
+    case "old": {
+      const cut = Date.now() - 30 * 86400000;
+      chat.selected.clear();
+      list.forEach((s) => { if (new Date(s.updated).getTime() < cut) chat.selected.add(s.id); });
+      if (!chat.selected.size) toast("No chat is older than 30 days.");
+      break;
+    }
+    case "move": moveMenu(t); return;
+    case "delete": deleteChats([...chat.selected]).then(() => { if (!chat.selected.size) setSelecting(false); }); return;
+    case "done": setSelecting(false); return;
+  }
+  renderSessions();
+}
 $("#composer").addEventListener("submit", (e) => {
   e.preventDefault();
   if (chat.busy) stopGen(); else send();
@@ -2187,18 +3427,31 @@ $("#prompt").addEventListener("keydown", (e) => {
   }
 });
 $("#prompt").addEventListener("input", autosize);
-$("#btn-attach").addEventListener("click", () => $("#file-attach").click());
-$("#file-attach").addEventListener("change", (e) => { addImageFile(e.target.files[0]); e.target.value = ""; });
+$("#btn-attach").addEventListener("click", () => {
+  if (!attachEngine()) { $("#file-attach").click(); return; }
+  openMenu($("#btn-attach"), [mi("Files…", () => $("#file-attach").click()), mi("A folder…", () => $("#folder-attach").click())]);
+});
+$("#attachments").addEventListener("change", (e) => {
+  const k = e.target && e.target.dataset ? e.target.dataset.prep : "";
+  if (k === "turn") chat.turnOff = !e.target.checked;
+  if (k === "describe") chat.describeOff = !e.target.checked;
+  if (k === "glb") chat.glbOff = !e.target.checked;
+});
+$("#file-attach").addEventListener("change", (e) => { takeFiles([...e.target.files].map((f) => ({ file: f, path: f.name }))); e.target.value = ""; });
+$("#folder-attach").addEventListener("change", (e) => { addFiles([...e.target.files].map((f) => ({ file: f, path: f.webkitRelativePath || f.name }))); e.target.value = ""; });
 $("#prompt").addEventListener("paste", (e) => {
-  const f = [...((e.clipboardData && e.clipboardData.files) || [])].find((x) => /^image\//.test(x.type));
-  if (f) { e.preventDefault(); addImageFile(f); }
+  const fs = [...((e.clipboardData && e.clipboardData.files) || [])].filter((x) => attachEngine() || /^image\//.test(x.type));
+  if (!fs.length) return;
+  e.preventDefault();
+  takeFiles((attachEngine() ? fs : fs.slice(0, 1)).map((f) => ({ file: f, path: f.name || "pasted" })));
 });
 $("#composer").addEventListener("dragover", (e) => { if ([...e.dataTransfer.types].includes("Files")) { e.preventDefault(); $("#composer").classList.add("drop"); } });
 $("#composer").addEventListener("dragleave", () => $("#composer").classList.remove("drop"));
 $("#composer").addEventListener("drop", (e) => {
   $("#composer").classList.remove("drop");
-  const f = [...e.dataTransfer.files].find((x) => /^image\//.test(x.type));
-  if (f) { e.preventDefault(); addImageFile(f); }
+  if (![...e.dataTransfer.types].includes("Files")) return;
+  e.preventDefault();
+  droppedFiles(e.dataTransfer).then(takeFiles, (err) => toast(err.message, true));
 });
 
 $("#btn-open-folder").addEventListener("click", () => api("POST", "/api/open-folder").catch((e) => toast(e.message, true)));

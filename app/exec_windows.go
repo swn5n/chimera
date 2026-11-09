@@ -3,6 +3,7 @@
 package main
 
 import (
+	"os"
 	"os/exec"
 	"syscall"
 )
@@ -39,3 +40,15 @@ func killGroup(cmd *exec.Cmd) {
 		_ = cmd.Process.Kill()
 	}
 }
+
+// interruptGroup: Windows has no Ctrl-C for a process started this way, so it stops it.
+func interruptGroup(cmd *exec.Cmd) error {
+	if cmd.Process == nil {
+		return nil
+	}
+	return cmd.Process.Kill()
+}
+
+// startWatchdog isn't available on Windows: a server Chimera started stops when
+// Chimera quits normally, but not if Chimera is killed.
+func startWatchdog(pgid int) (*exec.Cmd, *os.File) { return nil, nil }

@@ -37,6 +37,8 @@ type App struct {
 	tasks    *TaskManager
 	perf     *PerfStore
 	tools    *ToolScanner
+	engines  *EngineManager // models of this computer's own, outside Ollama (engines.go)
+	previews previewStore   // pages from chats, shown sandboxed (api_chat.go)
 
 	hubMu  sync.Mutex
 	hub    *Hub
@@ -75,6 +77,7 @@ func NewApp(dataDir string, uiPort, hubPort int, ollamaURL string) *App {
 	a.tasks = NewTaskManager(a)
 	a.perf = NewPerfStore(dataDir)
 	a.tools = NewToolScanner(a)
+	a.engines = NewEngineManager(a, dataDir)
 	_ = saveConfig(dataDir, a.cfg)
 	return a
 }
@@ -101,6 +104,7 @@ func (a *App) Start() {
 	}()
 	go a.ollama.loop()
 	go a.tools.loop()
+	go a.engines.idleLoop()
 	go a.node.membershipLoop()
 	go a.staleHubWatch()
 
@@ -359,6 +363,7 @@ func (a *App) rejoinSomewhere(cfg Config) {
 }
 
 func (a *App) Shutdown() {
+	a.engines.StopAll() // they hold a lot of memory: never leave one running
 	a.tasks.CancelAll()
 	a.node.Disconnect("now")
 	time.Sleep(300 * time.Millisecond)

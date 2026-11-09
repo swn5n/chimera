@@ -94,6 +94,16 @@ type UIState struct {
 	Helper   HelperView    `json:"helper"` // Hydra 1.0, the helper model (helper_share.go)
 	// MadeHeads are the Heads installed here that the Head maker made (it can open them again).
 	MadeHeads []string `json:"made_heads"`
+	// Engines are this computer's own models outside Ollama (engines.go): only its own chats use them.
+	Engines []EngineView `json:"engines"`
+	// What a message's files for an engine can get here first (attach_prep.go).
+	AttachTools AttachToolsView `json:"attach_tools"`
+}
+
+type AttachToolsView struct {
+	Turntables   bool   `json:"turntables"`              // Blender, in a sandbox
+	NoTurntables string `json:"no_turntables,omitempty"` // why not
+	Describe     string `json:"describe,omitempty"`      // the vision model that says what pictures show
 }
 
 func (a *App) buildState() UIState {
@@ -118,8 +128,14 @@ func (a *App) buildState() UIState {
 		Profile:   a.profile(),
 		Help:      []HelpItem{},
 		MadeHeads: a.tools.MadeHeads(),
+		Engines:   a.engines.Views(),
 	}
 	s.Ollama.Models = a.annotate(s.Ollama.Models)
+	_, noTurn := a.turntableBlender()
+	s.AttachTools = AttachToolsView{Turntables: noTurn == "", NoTurntables: noTurn}
+	if m, ok := a.describeModel(); ok {
+		s.AttachTools.Describe = m.Name
+	}
 	items, best := a.catalogFor()
 	s.Catalog = CatalogView{Items: items, Roles: rolesSorted(best)}
 	if s.Settings.Unshared == nil {

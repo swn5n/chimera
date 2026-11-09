@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -34,6 +35,9 @@ type genEvent struct {
 	Free         bool    `json:"free,omitempty"`
 	Local        bool    `json:"local,omitempty"`
 	DoneReason   string  `json:"done_reason,omitempty"` // "length": the model stopped at its output limit
+	ThinkSecs    float64 `json:"think_s,omitempty"`     // how long it thought before answering
+	ThinkAt      string  `json:"think_at,omitempty"`    // when it started thinking (on a replay, for a window that opens the chat later)
+	WaitSecs     float64 `json:"wait_s,omitempty"`      // how long until its first word (reading the prompt)
 	// Plugin replies: which plugin, how far along it is, and the files it made.
 	Plugin   string       `json:"plugin,omitempty"`
 	Fraction float64      `json:"fraction,omitempty"`
@@ -62,6 +66,7 @@ type generation struct {
 	statusMsg  string // what the plugin is doing now
 	fraction   float64
 	files      []SessionFile // what it made
+	thinkAt    time.Time     // its first thinking
 }
 
 type GenManager struct {
@@ -87,6 +92,22 @@ type chatReq struct {
 	Target    string      `json:"target"`
 	Private   bool        `json:"private"`
 	Images    []chatImage `json:"images,omitempty"` // a picture for a plugin to work on
+	// Files for an engine, uploaded first (POST /api/uploads): they're copied into the
+	// chat's folder and the model is told what each one is (attach.go).
+	Attachments []chatAttachment `json:"attachments,omitempty"`
+	// For those files, both on unless set false: turntables of the 3D models, and a
+	// line on what each picture shows (attach_prep.go).
+	Turntables *bool  `json:"turntables,omitempty"`
+	Describe   *bool  `json:"describe,omitempty"`
+	WebGLB     *bool  `json:"web_glb,omitempty"`  // and a GLB of each OBJ, FBX, STL or PLY for web pages
+	Thinking   string `json:"thinking,omitempty"` // an engine's thinking level (off, low, medium, high, max)
+	// Regenerate writes the chat's last reply again (Message is ignored); EditAt
+	// replaces the message at that index, and everything after it, with Message.
+	Regenerate bool `json:"regenerate,omitempty"`
+	EditAt     *int `json:"edit_at,omitempty"`
+	// For a new chat: the group it goes in, and the folder its pages load files from.
+	Group  string `json:"group,omitempty"`
+	Folder string `json:"folder,omitempty"`
 }
 
 type chatImage struct {
@@ -117,8 +138,23 @@ func decodeChatImage(img chatImage) ([]byte, string, error) {
 // Start adds the message to the chat and begins writing a reply.
 func (g *GenManager) Start(req chatReq) (*generation, error) {
 	text := strings.TrimSpace(req.Message)
-	if text == "" && len(req.Images) == 0 {
+	engine, isEngine := engineID(req.Model)
+	if req.Regenerate {
+		req.Images, req.Attachments, text = nil, nil, ""
+	} else if text == "" && len(req.Images) == 0 && len(req.Attachments) == 0 {
 		return nil, errors.New("type a message first")
+	}
+	if len(req.Attachments) > 0 {
+		switch {
+		case !isEngine:
+			return nil, errors.New("files go to this computer's own models (like DeepSeek): pick one in Model. Other models take one picture, for a Head")
+		case len(req.Images) > 0:
+			return nil, errors.New("send the picture as one of the files")
+		case len(req.Attachments) > attachCountMax:
+			return nil, fmt.Errorf("attach up to %s files at once", fmtNum(attachCountMax))
+		case req.EditAt != nil:
+			return nil, errors.New("a changed message keeps its files: send new ones with a new message")
+		}
 	}
 	if len(req.Images) > 1 {
 		return nil, errors.New("send one picture at a time for now")
@@ -139,24 +175,74 @@ func (g *GenManager) Start(req chatReq) (*generation, error) {
 		}
 	}
 	if sess == nil {
+		if req.Regenerate || req.EditAt != nil {
+			return nil, errors.New("can't find that chat")
+		}
 		sess = store.New()
+		if req.Group != "" && store.HasGroup(req.Group) {
+			sess.Group = req.Group
+		}
+		if f, err := cleanChatFolder(req.Folder); err == nil {
+			sess.Folder = f
+		}
 	}
 	for _, m := range sess.Messages {
 		if m.Status == "pending" && (g.Get(m.GenID) != nil || g.app.tasks.Get(m.TaskID) != nil) {
 			return nil, errors.New("a reply is still being written in this chat")
 		}
 	}
+	userAt := time.Now()
+	var kept SessionMessage // the message answered again, or changed: it keeps its files
+	switch {
+	case req.Regenerate:
+		// Write the last reply again: drop it, then answer the message before it once more.
+		if i := len(sess.Messages) - 1; i >= 0 && sess.Messages[i].Role == "assistant" {
+			last := sess.Messages[i]
+			if last.Task != nil || last.TaskID != "" {
+				return nil, errors.New("a long task's result can't be written again from here: start the task again")
+			}
+			if last.Plugin != "" {
+				return nil, errors.New("a Head made that reply: send your request again to run it again")
+			}
+			sess.Messages = sess.Messages[:i]
+		}
+		j := len(sess.Messages) - 1
+		if j < 0 || sess.Messages[j].Role != "user" {
+			return nil, errors.New("there's no message to answer again")
+		}
+		if len(sess.Messages[j].Files) > 0 {
+			return nil, errors.New("that message has a picture: send it again for a Head to work on")
+		}
+		text, userAt, kept = sess.Messages[j].Content, sess.Messages[j].At, sess.Messages[j]
+		sess.Messages = sess.Messages[:j]
+	case req.EditAt != nil:
+		k := *req.EditAt
+		if k < 0 || k >= len(sess.Messages) || sess.Messages[k].Role != "user" {
+			return nil, errors.New("can't find that message to change")
+		}
+		kept = sess.Messages[k]
+		sess.Messages = sess.Messages[:k]
+	}
 	gen := &generation{id: randomID(6), sessionID: sess.ID, status: "running", subs: map[chan genEvent]struct{}{}}
-	if len(sess.Messages) == 0 || sess.Title == "New chat" {
+	if !sess.Named && (len(sess.Messages) == 0 || sess.Title == "New chat") {
 		sess.Title = titleFrom(text)
 		if text == "" && len(req.Images) == 1 {
 			sess.Title = titleFrom(req.Images[0].Name)
 		}
+		if text == "" && len(req.Attachments) > 0 {
+			sess.Title = titleFrom(strings.Split(strings.Trim(strings.ReplaceAll(req.Attachments[0].Path, "\\", "/"), "/"), "/")[0])
+		}
 	}
 	now := time.Now()
+	user := SessionMessage{Role: "user", Content: text, At: userAt,
+		Attached: kept.Attached, AttachedIn: kept.AttachedIn, FilesNote: kept.FilesNote}
+	if len(req.Attachments) > 0 {
+		if err := g.attach(sess, &user, req.Attachments, engine); err != nil {
+			return nil, err
+		}
+	}
 	history := buildHistory(sess.Messages)
-	history = append(history, ChatMessage{Role: "user", Content: text})
-	user := SessionMessage{Role: "user", Content: text, At: now}
+	history = append(history, ChatMessage{Role: "user", Content: withFilesNote(text, user.FilesNote)})
 	var img *SessionFile
 	if imgData != nil {
 		f, err := store.SaveFile(sess.ID, req.Images[0].Name, imgMIME, imgData)
@@ -166,19 +252,27 @@ func (g *GenManager) Start(req chatReq) (*generation, error) {
 		user.Files = []SessionFile{f}
 		img = &f
 	}
-	sess.Messages = append(sess.Messages,
-		user,
-		SessionMessage{Role: "assistant", At: now, Status: "pending", GenID: gen.id, Model: req.Model},
-	)
+	reply := SessionMessage{Role: "assistant", At: now, Status: "pending", GenID: gen.id, Model: req.Model}
+	if isEngine && img == nil {
+		reply.Model, reply.ThinkLevel = g.app.engines.Name(engine), req.Thinking
+	}
+	sess.Messages = append(sess.Messages, user, reply)
 	if err := store.Save(sess); err != nil {
 		return nil, err
 	}
 	g.mu.Lock()
 	g.gens[gen.id] = gen
 	g.mu.Unlock()
+	var prep *attachPrep
+	if p := (attachPrep{text: text, turntables: req.Turntables == nil || *req.Turntables, describe: req.Describe == nil || *req.Describe,
+		webGLB: req.WebGLB == nil || *req.WebGLB}); len(req.Attachments) > 0 && wantsPrep(user.Attached, p) {
+		prep = &p
+	}
 	switch {
 	case img != nil:
 		go g.runPlugin(gen, req, text, img, imgData, nil)
+	case isEngine: // a model of this computer's own, outside Ollama: never through the network
+		go g.runEngine(gen, req, engine, history, prep)
 	case req.Model == "": // "Best available": a Head may be the best available
 		go g.runWordsOrHead(gen, req, text, history)
 	default:
@@ -187,13 +281,129 @@ func (g *GenManager) Start(req chatReq) (*generation, error) {
 	return gen, nil
 }
 
+// runEngine writes a reply with one of this computer's engines (engines.go).
+// These replies can take hours, so what's written so far is kept in the chat as
+// it goes: if Chimera stops halfway, the chat still has it. A message's files may
+// first get turntables and descriptions (prep, attach_prep.go).
+func (g *GenManager) runEngine(gen *generation, req chatReq, engine string, history []ChatMessage, prep *attachPrep) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	gen.mu.Lock()
+	gen.cancelFn = cancel
+	gen.mu.Unlock()
+	if prep != nil {
+		if note := g.prepAttachments(ctx, gen, engine, *prep); note != "" && len(history) > 0 {
+			history[len(history)-1].Content = withFilesNote(prep.text, note)
+		}
+		if ctx.Err() != nil {
+			gen.emit(genEvent{Type: "cancelled", Local: true})
+			g.saveResult(gen)
+			g.forgetLater(gen)
+			return
+		}
+	}
+	stop := make(chan struct{})
+	go func() {
+		t := time.NewTicker(30 * time.Second)
+		defer t.Stop()
+		saved := -1
+		for {
+			select {
+			case <-stop:
+				return
+			case <-t.C:
+				saved = g.savePartial(gen, saved)
+			}
+		}
+	}()
+	final := g.app.engines.Run(ctx, engine, history, req.Thinking, gen.emit)
+	close(stop)
+	gen.emit(final)
+	g.saveResult(gen)
+	g.forgetLater(gen)
+}
+
+// forgetLater drops a finished reply from the ones a window can still follow.
+func (g *GenManager) forgetLater(gen *generation) {
+	time.AfterFunc(2*time.Minute, func() {
+		g.mu.Lock()
+		delete(g.gens, gen.id)
+		g.mu.Unlock()
+	})
+}
+
+// savePartial keeps what a reply has written so far in its chat (it stays pending).
+// It returns the length saved, and does nothing if that hasn't changed.
+func (g *GenManager) savePartial(gen *generation, saved int) int {
+	content, thinking, _ := gen.Snapshot()
+	n := len(content) + len(thinking)
+	if n == saved {
+		return saved
+	}
+	_, err := g.app.sessions.Update(gen.sessionID, func(s *Session) {
+		for i := range s.Messages {
+			if m := &s.Messages[i]; m.GenID == gen.id && m.Status == "pending" {
+				m.Content, m.Thinking = content, thinking
+			}
+		}
+	})
+	if err != nil {
+		return saved
+	}
+	return n
+}
+
+// usingLocal says whether one of this computer's chats is writing with this Ollama model now.
+func (g *GenManager) usingLocal(model string) bool {
+	g.mu.Lock()
+	gens := make([]*generation, 0, len(g.gens))
+	for _, gen := range g.gens {
+		gens = append(gens, gen)
+	}
+	g.mu.Unlock()
+	for _, gen := range gens {
+		gen.mu.Lock()
+		busy := gen.status == "running" && gen.meta.Local && normModel(gen.meta.Model) == normModel(model)
+		gen.mu.Unlock()
+		if busy {
+			return true
+		}
+	}
+	return false
+}
+
+// attach copies a message's files into its chat's folder (making one when the
+// chat has none) and writes what the model is told about them.
+func (g *GenManager) attach(sess *Session, user *SessionMessage, atts []chatAttachment, engine string) error {
+	if sess.Folder == "" {
+		f, err := newChatFolder(sess.Title)
+		if err != nil {
+			return fmt.Errorf("couldn't make a folder for this chat's files: %v", err)
+		}
+		sess.Folder = f
+	} else if err := os.MkdirAll(sess.Folder, 0o755); err != nil {
+		return fmt.Errorf("couldn't open the chat's folder: %v", err)
+	}
+	files, err := placeAttachments(g.app.uploadDir(), sess.Folder, atts)
+	if err != nil {
+		return err
+	}
+	user.Attached, user.FilesNote = describeAttachments(sess.Folder, files, g.app.engines.TextBudget(engine))
+	user.AttachedIn = sess.Folder
+	return nil
+}
+
 func buildHistory(msgs []SessionMessage) []ChatMessage {
 	var out []ChatMessage
 	for _, m := range msgs {
 		if m.Role == "assistant" && (m.Status == "pending" || m.Status == "error" || m.Content == "") {
 			continue
 		}
-		out = append(out, ChatMessage{Role: m.Role, Content: m.Content})
+		content := m.Content
+		if m.Role == "user" {
+			content = withFilesNote(content, m.FilesNote)
+		}
+		out = append(out, ChatMessage{Role: m.Role, Content: content})
 	}
 	if len(out) > 40 {
 		out = out[len(out)-40:]
@@ -211,6 +421,9 @@ func (gen *generation) emit(ev genEvent) {
 	case "note":
 		gen.note = ev.Reason
 	case "delta":
+		if ev.Thinking != "" && gen.thinkAt.IsZero() {
+			gen.thinkAt = time.Now()
+		}
 		gen.content.WriteString(ev.Content)
 		gen.thinking.WriteString(ev.Thinking)
 	case "replay":
@@ -274,7 +487,11 @@ func (gen *generation) Subscribe() ([]genEvent, chan genEvent) {
 		replay = append(replay, genEvent{Type: "file", GenID: gen.id, File: &gen.files[i]})
 	}
 	if gen.content.Len() > 0 || gen.thinking.Len() > 0 {
-		replay = append(replay, genEvent{Type: "delta", GenID: gen.id, Content: gen.content.String(), Thinking: gen.thinking.String()})
+		d := genEvent{Type: "delta", GenID: gen.id, Content: gen.content.String(), Thinking: gen.thinking.String()}
+		if !gen.thinkAt.IsZero() {
+			d.ThinkAt = gen.thinkAt.Format(time.RFC3339Nano)
+		}
+		replay = append(replay, d)
 	}
 	if gen.final != nil {
 		return append(replay, *gen.final), nil
@@ -369,6 +586,10 @@ func (g *GenManager) saveResult(gen *generation) {
 			}
 			m.Device, m.Owner, m.Local, m.Note = meta.DeviceName, meta.Owner, meta.Local, note
 			m.Tokens, m.TokPerSec, m.Credits, m.Free = final.Tokens, final.TokPerSec, final.Credits, final.Free
+			m.ThinkSecs, m.WaitSecs, m.Cut = final.ThinkSecs, final.WaitSecs, final.DoneReason == "length"
+			if final.PromptTokens > 0 {
+				m.PromptTokens = final.PromptTokens
+			}
 			m.At = time.Now()
 			switch final.Type {
 			case "done":
