@@ -1,6 +1,39 @@
-# Chimera 0.8.0
+# Chimera 0.9.0
 
 Share idle GPUs — and the tools on them — with friends through Ollama, SheepIt style. One person hosts the pool; everyone else's Chimera finds it and joins on its own — on the same Wi-Fi automatically, and across the internet once you point it at the host's address. Press Connect to lend your GPU: prompts from the pool run on your models, and you earn credits for the work.
+
+## New in 0.9
+
+This one is about **your own big model in the chat**, and handing it your files.
+
+- **Engines: models outside Ollama.** A model that runs from its own server, like DeepSeek V4.1 Flash read from an SSD by InferSSD, can be listed in `engines.json` in Chimera's data folder (below). It shows in the chat's model picker under "This computer's own", starts on your first message to it, and stops after a while unused, when you press Stop, or when Chimera quits. Only this computer's own chats use it, never the pool, long tasks or Heads. Long replies are saved as they're written.
+- **A new chat page.** Tables, lists and code blocks with Copy and Download; the model's thinking in a box that folds away when it answers; Write again and Edit; search (Cmd-K); groups to drag chats into; select and delete old chats. A web page or SVG the model writes can be shown right in the chat, sandboxed, and saved to the chat's folder.
+- **Files for the engine.** With an engine picked, attach files or whole folders (**+ Files**, drop them, or paste). They're copied into the chat's folder, keeping their paths, and the model gets a note of facts about each: sizes, see-through backgrounds, lengths, a 3D model's parts by name and its size, and the words of text files. Before it reads them, Chimera makes what it can use:
+  - a compressed GLB of each OBJ, FBX, STL or PLY model, for web pages (an 82 MB OBJ became 2.6 MB);
+  - a turntable of each 3D model, 72 frames rendered with your Blender;
+  - a line on what each picture shows, from `qwen3.8` on your computer, since the engine itself may read only text.
+
+  Each has a switch by the attachments for that message. In the chat, a turntable's thumbnail is a 360° viewer of the frames the model got: rest the mouse on it, drag it, or click to open it large.
+- **Long tasks: Blender steps get Blender's real names.** Workers now see the names your Blender really has, so fewer scripts crash on a wrong one: in real tasks, the crashes it covers fell from 1.2 to 0.3 a task.
+
+An engine in `engines.json`, for example:
+
+```json
+[
+  {
+    "id": "my-model",
+    "name": "My big model",
+    "command": ["/path/to/llama-server", "-m", "{model}", "--port", "{port}", "-c", "{context}"],
+    "model_paths": ["/path/to/model.gguf"],
+    "port": 8080,
+    "context": 32768
+  }
+]
+```
+
+The server has to answer `/health` on that port and speak the OpenAI chat API, streamed. Also there if you want them: `max_tokens`, `thinking` (its levels, `off` first) and `default_thinking`, `idle_minutes` (20), `start_seconds` (600), `free_ollama` (unload Ollama's idle models first), `dir` and `note`. Chimera reads the file again when it changes. Only InferSSD has been tried for real.
+
+What it needs: turntables and GLBs need Blender on the computer you chat from, and run in the same sandbox as the script checks, so macOS (or Linux with bubblewrap, not yet tried) and not Windows. The first turntable with a Blender version spends about 3 minutes preparing its GPU code. Picture lines need `qwen3.8` (**Models**), and while the engine is running, only if there's memory to spare beside it. Engines and attachments have only been used on one Mac.
 
 ## New in 0.8
 
@@ -105,7 +138,7 @@ Everyone in a pool should run the same version. Device cards show a warning next
 
 In order, most common first:
 
-1. **Is it really 0.8.0?** Settings shows the version at the bottom. If not, open the new app once more; it replaces the old one.
+1. **Is it really 0.9.0?** Settings shows the version at the bottom. If not, open the new app once more; it replaces the old one.
 2. **macOS Local Network permission.** System Settings → Privacy & Security → **Local Network** → Chimera must be on, on *both* Macs. If Chimera isn't listed, quit it from Settings, open it again and say **Allow** to the prompt.
 3. **Same Wi-Fi, really?** Some routers put 2.4 GHz and 5 GHz on separate networks, or have a "guest"/"isolated" mode that stops devices talking to each other. Both Macs should show the same network name, and the laptop should be able to open `http://<studio's address>:7480/v1/ping` in a browser (the Studio's address is under Settings → Network → Addresses on the Studio) and see `{"app":"chimera-hub"…}`. If that page doesn't load, it's the network, not Chimera — try a different Wi-Fi, or join by typing that address in the Network tab.
 4. **Firewall.** See "Opening it the first time".
@@ -151,6 +184,8 @@ Settings, chats, the log (`chimera.log`), measured model speeds (`perf.json`) an
 
 - Mac: `~/Library/Application Support/Chimera`
 - Windows: `%AppData%\Chimera`
+
+Your engines are in `engines.json` there. A chat's files go in a folder of its own, `~/Documents/Chimera/<chat title>` unless you pick another.
 
 ## Ports
 

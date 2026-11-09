@@ -26,7 +26,7 @@ import (
 	"time"
 )
 
-const Version = "0.8.0"
+const Version = "0.9.0"
 
 const (
 	defaultUIPort  = 7470
