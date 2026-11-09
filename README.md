@@ -6,7 +6,7 @@
 
 <p align="center">
   <b>Split the task, not the model.</b><br>
-  Agentic loops on a pool of local GPUs. Lend yours, borrow everyone's, SheepIt style.
+  A shared pool of local GPUs for AI jobs. Lend yours, borrow everyone's.
 </p>
 
 <p align="center">
@@ -20,20 +20,18 @@
 
 ## What is Chimera?
 
-Chimera is a desktop app for macOS, Windows and Linux. It links computers that run [Ollama](https://ollama.com) into one **pool**, so friends, or just your own machines, can share their GPUs and the tools installed on them.
+Chimera is an app for macOS, Windows and Linux that links computers running [Ollama](https://ollama.com) into one shared **pool**, like a render farm for AI. If you know [SheepIt](https://www.sheepit-renderfarm.com), the community render farm for Blender, it's the same deal: lend your idle GPU, earn credits, spend them on other people's. Friends, or just your own machines, share their GPUs and the tools installed on them. Chimera runs in the background and shows its window in Chrome, Edge or your browser.
 
-- **Lend.** Press **Connect** and the pool can run work on your models while you get on with your day. Every job earns you credits.
+- **Lend.** Press **Connect** and the pool can run work on your models while you get on with your day. Every job earns you credits, which keep the pool fair. They aren't money.
 - **Borrow.** Ask in **Chat** and Chimera runs your message on the best model the pool has free, or the one you pick. If nobody is lending, it runs on your own best model and says so.
-- **Split big jobs.** Switch on **Long task** and Chimera breaks the job into steps, runs them at the same time on different computers, and combines the results. Add **Keep going until done** and it also runs what came back, repairs what crashes, checks it against your goal, and goes another round until it's done.
+- **Split big jobs.** Switch on **Long task** and Chimera breaks the job into steps, runs them at the same time on different computers, and combines the results into one finished piece of work: a script, a web page, a report. Add **Keep going until done** and it also runs the Blender or Python script the steps produced, repairs what crashes, checks the result against your goal, and goes another round until it's done.
 - **Share tools, not just models.** A **Head** is a tool installed on one computer (an image generator, a 3D-model maker, a Blender render). Anyone in the pool can use it without installing anything.
 - **Bring your own big model.** A model that runs outside Ollama, like DeepSeek V4.1 Flash from its own server, can join your chats on this computer, and you can hand it your files.
-
-If you know [SheepIt](https://www.sheepit-renderfarm.com), the community render farm for Blender, this is the same deal for AI: lend your idle GPU, earn credits, spend them on other people's.
 
 **Split the task, not the model.** Spreading one model across several computers needs very fast links between them. Chimera hands each step, whole, to one computer with a model (or a tool) that fits it, so ordinary Wi-Fi is plenty.
 
 > [!NOTE]
-> Chimera is an early, fast-moving project. Most testing has been on Apple-silicon Macs and one Windows PC; the Linux build passes the automated tests but hasn't had much real use. Read [Safety, privacy and limits](#safety-privacy-and-limits) before you invite anyone in.
+> Chimera is an early, fast-moving project, mostly tested on Apple-silicon Macs. **Pools are open and unencrypted:** the host of a pool can read every prompt sent through it, and Chimera joins an open pool it finds on your Wi-Fi by itself. Use it with people and networks you trust. More in [Safety, privacy and limits](#safety-privacy-and-limits).
 
 ## How it works
 
@@ -59,10 +57,12 @@ If you know [SheepIt](https://www.sheepit-renderfarm.com), the community render 
 | **Pool** (or network) | The computers working together. The **Network** tab shows it. |
 | **Host** | The computer that runs the pool's hub. It matches work to computers and keeps the credits and the library. |
 | **Connect** | The switch that lends this computer to the pool. While it's off, nobody else can use your computer. |
-| **Credits** | What lending earns and asking spends. Your own computers are free to use. |
-| **Long task** | A big job split into steps that run on several computers at once. Chimera's name for the system behind it is **Hydra**. |
+| **Credits** | What lending earns and asking spends. They aren't money. Your own computers are free to use. |
+| **Long task** | A big job split into steps that run on several computers at once. |
+| **Step** | One piece of a long task, run whole on one computer. |
+| **Hydra** | The name of the long-task system: the planner, the workers and the checks. |
+| **Hydra 1.0** | A small helper model (2.9 GB) that belongs to Hydra. It plans long tasks, reviews their results and decides when a Head should answer. |
 | **Head** | A tool on one computer that the whole pool can call: an image generator, a 3D-model maker, a Blender render. |
-| **Hydra 1.0** | A small helper model (2.9 GB) trained to plan long tasks, review their results and decide when a Head should answer. |
 | **Library** | Code, Blender scripts and lessons saved from replies rated 4 or 5 stars. Long tasks reuse them. |
 | **Engine** | A model that runs outside Ollama, from its own server. It's for your own chats on this computer, never the pool. |
 
@@ -73,16 +73,15 @@ If you know [SheepIt](https://www.sheepit-renderfarm.com), the community render 
 - **A computer.** A Mac with Apple silicon (macOS 13 or newer), a 64-bit Windows PC, or a 64-bit Linux PC. There is no Intel Mac build yet.
 - **[Ollama](https://ollama.com/download)**, installed and open. Chimera needs it running before a computer can connect.
 - **A GPU**, or an Apple-silicon Mac, for decent speed. Chimera suggests models that fit each computer's memory with room to spare.
+- **Optional:** [Blender](https://www.blender.org) for the script checks and the 3D features, and the `qwen3.8` vision model for the picture check and picture descriptions. You don't need either to chat.
 
 ### 1. Install Chimera
 
 Download the file for your system from the [latest release](https://github.com/swn5n/chimera/releases/latest):
 
-| System | File | Then |
-|---|---|---|
-| Mac | `Chimera-mac.zip` | Unzip it, move **Chimera.app** to your Applications folder and open it. |
-| Windows | `Chimera-windows.zip` | Unzip it and run **Chimera.exe**. |
-| Linux | `Chimera-linux.tar.gz` | Run `tar xzf Chimera-linux.tar.gz`, then `./chimera`. Install `bubblewrap` too if you want sandboxed Heads and script checks. |
+- **Mac:** `Chimera-mac.zip`. Unzip it, move **Chimera.app** to your Applications folder and open it.
+- **Windows:** `Chimera-windows.zip`. Unzip it and run **Chimera.exe**.
+- **Linux:** `Chimera-linux.tar.gz`. Run `tar xzf Chimera-linux.tar.gz`, then `./chimera`. Install `bubblewrap` too if you want sandboxed Heads and script checks.
 
 <details>
 <summary><b>The first time you open it: Mac and Windows warnings</b></summary>
@@ -99,13 +98,13 @@ Chimera runs in the background. Its window opens as an app window in Chrome or E
 
 ### 2. Set up this computer
 
-Type your name (friends see it next to your credits) and a name for this computer. You can ignore **Host a network** and **Join a network**: click **Skip for now** and Chimera looks for a pool on your Wi-Fi by itself. It joins one if it finds it, or starts one if there isn't one.
+Type your name (friends see it next to your credits) and a name for this computer. You can ignore **Host a network** and **Join a network**: click **Skip for now** and Chimera looks for a pool on your Wi-Fi by itself. It joins one if it finds one, or starts one if there isn't one. Pools are open and unencrypted, so do this on a network you trust (see [Safety, privacy and limits](#safety-privacy-and-limits)).
 
 If you'd rather choose: **Host a network** starts a pool on this computer and shows the address and invite code to give friends. **Join a network** lists the pools it finds on your Wi-Fi, or takes an address and invite code.
 
 ### 3. Get a model
 
-Open **Models**. It shows how much memory this computer has for models and recommends a download for each job (chat, coding, vision, planning). Press **Download** on the ones you want. The helper model, Hydra 1.0, has its own row: see [The helper model, Hydra 1.0](#the-helper-model-hydra-10).
+Open **Models**. It shows how much memory this computer has for models and recommends a download for each job (chat, coding, vision, planning). Press **Download** on the ones you want. Models are big, from a few GB to tens of GB, so the first download takes a while. The helper model, Hydra 1.0, has its own row: see [The helper model, Hydra 1.0](#the-helper-model-hydra-10).
 
 ### 4. Say hello
 
@@ -113,19 +112,25 @@ Open **Chat**, leave **Model** on **Best available** and send a message. Each re
 
 ### 5. Lend your computer
 
-On **Network**, press **Connect**. Your models are now available to the pool, and you earn credits when they're used. Press **Disconnect** any time; if a step is running, Chimera offers to finish it first or stop now (a stopped step goes to another computer that has the same model).
+On **Network**, press **Connect**. Your models are now available to the pool, and you earn credits when they're used. Press **Disconnect** any time; if a step is running, Chimera offers to finish it first or stop now (a stopped step goes to another computer that has the same model). Light use of your computer is fine while you're connected, but a big model leaves less memory for you: **Settings → Lending → Largest model to lend** sets a cap.
 
 ### 6. Add more computers
 
-Repeat steps 1 to 3 on each computer. On the same Wi-Fi they find each other within about 20 seconds: one hosts, the rest join. Press **Connect** on each, and they show up on the **Network** tab. For friends on other networks, see [Connecting over the internet](#connecting-over-the-internet).
+Do 1 to 3 again on each computer. On the same Wi-Fi they find each other within about 20 seconds: one hosts, the rest join. Press **Connect** on each, and they show up on the **Network** tab. For friends on other networks, see [Connecting over the internet](#connecting-over-the-internet).
 
 ### 7. Try a long task
 
-In **Chat**, switch on **Long task**, describe a bigger job, and try **Keep going until done**. See [Long tasks](#long-tasks).
+In **Chat**, switch on **Long task**, describe a bigger job, and send it. For example:
+
+- *"Write a Python script that sorts the photos in a folder into subfolders by year."*
+- *"Write a 1,000-word beginner's guide to home networking."*
+- *"Build a Blender scene of a desk with a lamp, a mug and a book, with a camera that shows them all."*
+
+The chat shows the plan, then each step with the computer and model working on it, and finally the combined result. Switch on **Keep going until done** too, and the task card also shows each round and what the checks found. See [Long tasks](#long-tasks).
 
 ### 8. Rate the replies
 
-Rate a good reply 5 stars and say what worked. Once it's been checked it appears in **Library**, and long tasks can reuse it.
+Rate a good reply 5 stars and say what worked. The pool's biggest model turns it into a **Library** entry and checks it, and long tasks reuse entries that pass.
 
 ## Using Chimera
 
@@ -170,32 +175,36 @@ Steps that match a checked entry in the [library](#the-library) reuse it instead
 
 Switch on **Keep going until done** and one pass isn't the end. Chimera checks the facts before anyone gives an opinion:
 
-- **It runs the script.** A Blender or Python script in the result runs in a sandbox on your computer: no network, your home folder hidden, writes only to a throwaway folder. If it crashes, a model gets only the script, the error and Blender's real names for things, and fixes that spot, up to 8 repairs per round.
+- **It runs the script.** A Blender or Python script in the result runs in a sandbox on your computer: no network, your home folder hidden, writes only to a throwaway folder. If it crashes, a model gets only the script, the error and a list of the real names Blender uses (its settings, shader inputs and operators), so it doesn't have to guess, and fixes that spot, up to 8 repairs per round.
 - **It checks the scene.** A task that asks for a scene needs a camera, and that camera has to show what you named. Empty objects and a leftover default cube are caught too.
 - **A model looks at the picture.** Once everything else passes, a small render goes to a vision model on your computer (`qwen3.8`), which says what it can make out. If the picture is blank, or most of what you asked for can't be seen, the script goes back for repair.
 - **Then it reviews.** Hydra 1.0 (or else the biggest model) reads the result against your goal and says whether it's done. If not, the next round starts from the best result so far and edits it instead of starting again. There are up to six rounds, and you get the best one.
 
-A reply with no note on it has been run, measured and looked at. That doesn't make the picture good: nothing judges shape, scale or light yet, and a model that can't build a bicycle still can't.
+A reply with no note on it has been run, measured and looked at. That doesn't make the result good: nothing judges shape, scale or lighting yet, so a weak model still makes weak scenes.
 
-**What the checks need.** They run on the computer that starts the task, on macOS or Linux, with Blender installed (Linux also needs `bubblewrap`). The look also needs `qwen3.8` on that computer (**Models**); without it that step is skipped and the task runs the same. Windows gets the routing but no script checks. To turn the checks off: **Settings → Lending → Run my long tasks' scripts here to check them**.
+**What the checks need.** They run on the computer that starts the task, on macOS or Linux, with Blender installed (Linux also needs `bubblewrap`). The picture check also needs `qwen3.8`, a vision model you can download from **Models**, on that computer; without it that step is skipped and the task runs the same. Windows gets the routing but no script checks. To turn the checks off: **Settings → Lending → Run my long tasks' scripts here to check them**.
 
-How it works in detail: [hydra1/README.md](hydra1/README.md). Real runs and their numbers: [docs/joint-task-oct31.md](docs/joint-task-oct31.md).
+How it works in detail: [hydra1/README.md](hydra1/README.md). Measurements from the first real long tasks across three computers: [docs/joint-task-oct31.md](docs/joint-task-oct31.md).
 
 ### The helper model, Hydra 1.0
 
 Planning, reviewing and the "should a Head do this?" check run on **Hydra 1.0** (`hydra:1.0`): a small model (Qwen3-4B-Instruct-2507 with a trained LoRA, 2.9 GB) made for exactly those three jobs and small enough for every computer to run. Without it those jobs go to the biggest model in the pool, so it's recommended, not required. It never answers chats or works on steps, and the chat's model picker doesn't list it.
 
-**To get it:**
+**To get it,** on each computer use **Models → Helper → Get from host**. It copies the host's Hydra 1.0 straight into that computer's Ollama. Nothing is downloaded from the internet. The host needs Chimera 0.7.0 or newer and Hydra 1.0 in its own Ollama.
 
-- **From the host (easiest).** On each computer: **Models → Helper → Get from host**. It copies the host's Hydra 1.0 straight into that computer's Ollama. Nothing is downloaded from the internet. The host needs Chimera 0.7.0 or newer and Hydra 1.0 in its own Ollama.
-- **From GitHub (for the first computer).** Download both `.part` files and `Modelfile` from the [v0.7.0 release](https://github.com/swn5n/chimera/releases/tag/v0.7.0) into one folder. It comes in two parts because GitHub limits a release file to 2 GB. Then, with Ollama running:
+<details>
+<summary><b>No host to copy from? Download it from GitHub (for the first computer)</b></summary>
 
-  ```bash
-  cat hydra-1.0-q5_k_m.gguf.part-* > hydra-1.0-q5_k_m.gguf
-  ollama create hydra:1.0 -f Modelfile
-  ```
+Download both `.part` files and `Modelfile` from the [v0.7.0 release](https://github.com/swn5n/chimera/releases/tag/v0.7.0) into one folder. It comes in two parts because GitHub limits a release file to 2 GB. Then, with Ollama running:
 
-  On Windows, join the parts with `copy /b hydra-1.0-q5_k_m.gguf.part-aa + hydra-1.0-q5_k_m.gguf.part-ab hydra-1.0-q5_k_m.gguf` instead of `cat`. To check the download on a Mac, run `shasum -a 256 -c hydra-1.0-SHA256SUMS.txt`.
+```bash
+cat hydra-1.0-q5_k_m.gguf.part-* > hydra-1.0-q5_k_m.gguf
+ollama create hydra:1.0 -f Modelfile
+```
+
+On Windows, join the parts with `copy /b hydra-1.0-q5_k_m.gguf.part-aa + hydra-1.0-q5_k_m.gguf.part-ab hydra-1.0-q5_k_m.gguf` instead of `cat`. To check the download on a Mac, run `shasum -a 256 -c hydra-1.0-SHA256SUMS.txt`.
+
+</details>
 
 Only put Hydra 1.0 on computers running Chimera 0.7.0 or newer: an older Chimera treats it as an ordinary chat model. Hydra 1.0 is released under the Apache License 2.0 (`LICENSE-hydra-1.0.txt` on that release). How it was trained and measured: [helper-model/](helper-model/README.md).
 
@@ -220,7 +229,7 @@ Results come back into your chat with a **Save** link. Meshes download as GLB; o
 1. Open **Settings → Heads → Open heads folder** (`~/Library/Application Support/Chimera/plugins/` on a Mac, `%AppData%\Chimera\plugins\` on Windows, `~/.config/Chimera/plugins/` on Linux).
 2. Copy the Head's folder in. (Internally a Head is a *plugin*: its folder holds a `plugin.json`.)
 3. Within a minute it appears under **Settings → Heads**. If it says *Can't run here*, the note says what's missing, usually a server to start or a program to install.
-4. Leave **Let the pool use my Heads** on and press **Connect**. Ollama must be running with at least one shared model, because the fastest shared model reads each job's settings out of the request. A small fast one is plenty.
+4. Leave **Let the pool use my Heads** on and press **Connect**. Ollama must be running with at least one model you lend, because a model on the Head's computer reads each job's settings out of the request. A small fast one is plenty.
 
 ### Make a Head without code
 
@@ -231,15 +240,15 @@ Results come back into your chat with a **Save** link. Meshes download as GLB; o
 The Heads below are in the [`heads/`](heads/) folder of this repository. They aren't part of the app download.
 
 - **`comfyui-image/`** makes pictures from words through ComfyUI (SD 1.5, SDXL, Flux, any checkpoint you have). It needs ComfyUI running, with a checkpoint.
-- **`hunyuan3d-mac/`** makes a textured 3D model (GLB) from one picture, with Hunyuan3D 2.1 on a Mac's GPU: about 3 minutes on an M3 Ultra. It needs the Hunyuan3D 2.1 Mac port. [scripts/chimera-studio-install.sh](scripts/chimera-studio-install.sh) installs it, along with other tools unless you set `SKIP=image,music,tts,vision,planner`, so read it before you run it.
+- **`hunyuan3d-mac/`** makes a textured 3D model (GLB) from one picture, with Hunyuan3D 2.1 on a Mac's GPU: about 3 minutes on an M3 Ultra. It needs the Hunyuan3D 2.1 Mac port. The script [scripts/chimera-studio-install.sh](scripts/chimera-studio-install.sh) is how the author set up their own Mac: it installs the port along with other tools unless you set `SKIP=image,music,tts,vision,planner`, so read it before you run it.
 - **`hunyuan3d-mesh/`** makes a 3D mesh (GLB or OBJ) from one picture through Hunyuan3D 2's API server. It's for Nvidia PCs and needs a Hunyuan3D 2 API server running (2.1's differs slightly).
 - **`TEMPLATE/`** is a skeleton to copy for a Head written by hand.
 
-`hunyuan3d-mac` has run for real. `comfyui-image` and `hunyuan3d-mesh` were tested only against stand-in servers that speak the same API, so if one trips on your setup, run it alone as described in [heads/README.md](heads/README.md) and [open an issue](https://github.com/swn5n/chimera/issues).
+`hunyuan3d-mac` has been run end to end on a real Mac. `comfyui-image` and `hunyuan3d-mesh` have only been tested against mock servers that imitate the real API, so if one trips on your setup, run it alone as described in [heads/README.md](heads/README.md) and [open an issue](https://github.com/swn5n/chimera/issues).
 
 ## Your own big model and files
 
-An **engine** is a model that runs outside Ollama, from its own server: DeepSeek V4.1 Flash read from an SSD by InferSSD, for example. It's for your own chats on this computer only. It's never lent to the pool, and long tasks and Heads don't use it.
+This part is for people who run a large model with their own server program. An **engine** is a model that runs outside Ollama, from that server: for example DeepSeek V4.1 Flash, streamed from an SSD by a program called InferSSD. An engine is for your own chats on this computer only. It's never lent to the pool, and long tasks and Heads don't use it.
 
 **Add one** by listing it in `engines.json` in Chimera's data folder (**Settings → App → Data folder → Open folder** opens it):
 
@@ -275,7 +284,8 @@ Each has a switch by the attachments for that message. In the chat, a turntable'
 Credits keep an open pool fair. When your GPU runs a step for someone, credits move from them to you. One credit is about 1,000 output tokens (roughly 750 words) from an 8B model; bigger models cost more, and Head steps are charged by the minute of work. Using your own computers is free.
 
 - If you run out, you can't send work to other people's GPUs until you earn more. Your own computers (or **Only my devices**) still work.
-- While Chimera is being tested, everyone starts with **1,000,000 credits** so credits stay out of the way. That will go back to 100.
+- While Chimera is being tested, everyone starts with **1,000,000 credits**, so many that running out is unlikely: for now credits don't limit anyone in practice. The starting balance is planned to drop to 100.
+- Credits aren't money, and there's nothing to buy.
 - Your balance is in the top bar. **Activity** shows every step the pool ran.
 
 ## The library
@@ -284,7 +294,7 @@ Rate any reply out of 5 stars. For 4 or 5 stars Chimera asks what worked, and th
 
 - The biggest model checks new entries. When a lending computer has been idle for a while (10 minutes by default), the pool re-checks entries. Anything that fails or looks like spam waits in the host's **Library** tab for review.
 - Only the host reviews the library, and only the host can test-run scripts, and only if it turns on **Settings → Library → Test library scripts on this computer**. Scripts run in an empty temporary folder with a time limit; on a Mac they also run in a sandbox with no network and no access to your home folder.
-- Long tasks only reuse entries that passed the checks, so a new entry can't slip instructions to the workers.
+- Long tasks only reuse entries that passed the checks, so an unchecked entry never reaches the workers.
 - The host can export every rated reply as a JSON-lines file: the pool's best answers, ready for fine-tuning a small model.
 
 ## Connecting over the internet
@@ -292,7 +302,7 @@ Rate any reply out of 5 stars. For 4 or 5 stars Chimera asks what worked, and th
 Computers on the same Wi-Fi find each other on their own. Computers on different networks can't: they need one address they can both reach. Pick an always-on computer as the host, then use one of these:
 
 - **Tailscale (private, recommended).** [Tailscale](https://tailscale.com) has a free plan for personal use. Install it on the host and on each friend's computer and share the host with them. On every computer, put the host's Tailscale address (`100.x.x.x:7480`) in **Settings → Network → Pool address**. From then on Chimera joins the pool on every launch, from anywhere.
-- **Tailscale Funnel (public; friends install nothing).** On the host, run `tailscale funnel 7480`. It gives the hub a public `https://<host>.<your-tailnet>.ts.net` address, and friends put that in **Pool address**. Anyone on the internet who has the address can join and use the pool, so credits are the only brake.
+- **Tailscale Funnel (public; friends install nothing).** On the host, run `tailscale funnel 7480`. It gives the hub a public `https://<host>.<your-tailnet>.ts.net` address, and friends put that in **Pool address**. Anyone on the internet who has the address can join and use the pool. Credits are the only limit, and while everyone starts with 1,000,000 they don't limit much.
 
 Never port-forward `7480` from your router: that exposes the hub with no encryption at all.
 
@@ -342,9 +352,9 @@ A chat's attached files go in a folder of its own, `~/Documents/Chimera/<chat ti
 
 ## Safety, privacy and limits
 
-**Privacy.** The pool is open and unencrypted. The host can see prompts, and anyone you let in can too. That's fine for friends, and not for anything sensitive. Encrypting traffic and hiding prompts from the host is something we're working on.
+**Privacy.** The pool is open and unencrypted. The host can see prompts, and anyone you let in can too. Replies you rate 4 or 5 stars are also copied to the host's library. That's fine for friends, and not for anything sensitive. Chimera joins an open pool it finds on your Wi-Fi by itself, so check the pool's name on the **Network** tab, and use it with people and networks you trust. (**Settings → Network → Leave network** leaves a pool.) Encrypting traffic and hiding prompts from the host is something we're working on.
 
-**What runs on your computer when you lend.** Prompts run on your Ollama models, and the pool can send words and pictures to a Head you installed yourself. The pool never sends code for your computer to run. (A host can choose to test-run library scripts in a sandbox; it's off unless they turn it on.) The scripts from your own long tasks run only on your own computer, in a sandbox. An engine is yours alone: Chimera starts the command you wrote in `engines.json`, and the pool never uses it.
+**What runs on your computer.** *When you lend,* prompts run on your Ollama models, and the pool can send words and pictures to a Head you installed yourself. The pool never sends code for your computer to run. (A host can choose to test-run library scripts in a sandbox; it's off unless they turn it on.) *When you start a long task with Keep going until done,* the Blender or Python script that came back runs on your own computer, in a sandbox with no network and your home folder hidden. Models on other people's computers helped write it, which is why it's sandboxed; you can turn that check off in **Settings → Lending**. An engine is yours alone: Chimera starts the command you wrote in `engines.json`, and the pool never uses it.
 
 **Heads and the sandbox.**
 
@@ -352,12 +362,12 @@ A chat's attached files go in a folder of its own, `~/Documents/Chimera/<chat ti
 - A Head that declares `"network": "localhost"` may talk to servers on your own computer, such as ComfyUI. **Known issue on macOS:** the sandbox rule for this doesn't yet stop such a Head from also reaching the internet and your local network. A fix has been tested but isn't in the app. On Linux a localhost Head gets the normal network. Only install localhost Heads you trust.
 - **Windows** has no sandbox Chimera trusts, so Heads are off there by default. **Settings → Heads → Run Heads without a sandbox on this computer** turns them on; then a Head runs with your normal permissions, so only install Heads you trust.
 
-**Open pools.** Anyone who can reach the host's address can join an open pool. Credits, not codes, are what stop people asking without contributing. On the host, turn off **Settings → Network → Let anyone join this pool** to require the invite code instead.
+**Open pools.** Anyone who can reach the host's address can join an open pool. Credits, not codes, are meant to stop people asking without contributing (with the 1,000,000 testing balance, they don't yet). On the host, turn off **Settings → Network → Let anyone join this pool** to require the invite code instead.
 
 **Limits today.**
 
-- Macs: Apple silicon only, macOS 13 or newer. Chimera is a local web app in a Chrome or Edge app window (or your browser), not a native window.
-- The script checks and the look have mostly run on Macs. They haven't run on Linux, and no long task has been started from Windows. On scenes it hadn't been tuned on, the look caught 15 of 27 bad results and flagged 0 of 13 good ones, a small sample, so expect it to miss things.
+- Macs: Apple silicon only, macOS 13 or newer. Chimera's window is a local web page (in a Chrome or Edge app window, or your browser), not a native window.
+- The script checks and the picture check have mostly run on Macs. They haven't run on Linux, and no long task has been started from Windows. On scenes it hadn't been tuned on, the picture check caught 15 of 27 bad results and flagged 0 of 13 good ones, a small sample, so expect it to miss things.
 - Engines and attached files have only been used on one Mac, with one engine: DeepSeek V4.1 Flash on InferSSD. Turntables and GLBs have never been made on Linux. The chat page has only been checked in Chrome.
 - Heads: one picture per message; long tasks don't call Heads yet; video and audio files from a Head download instead of playing in the chat.
 - Chimera finds and links tools like Blender and ComfyUI but doesn't install them. It does download Ollama models itself.
@@ -390,18 +400,19 @@ Newest first. Dates are given where the project's history records them. Every re
 
 This release is about **your own big model in the chat**, and handing it your files.
 
-- **Engines: models outside Ollama.** A model that runs from its own server, like DeepSeek V4.1 Flash read from an SSD by InferSSD, can be listed in `engines.json` in Chimera's data folder ([how](#your-own-big-model-and-files)). It shows in the chat's model picker under "This computer's own", starts on your first message to it, and stops after a while unused, when you press Stop, or when Chimera quits. Only this computer's own chats use it, never the pool, long tasks or Heads. Long replies are saved as they're written.
+- **Engines: models outside Ollama.** A model that runs from its own server, like DeepSeek V4.1 Flash streamed from an SSD by a program called InferSSD, can be listed in `engines.json` in Chimera's data folder ([how](#your-own-big-model-and-files)). It shows in the chat's model picker under "This computer's own", starts on your first message to it, and stops after a while unused, when you press Stop, or when Chimera quits. Only this computer's own chats use it, never the pool, long tasks or Heads. Long replies are saved as they're written.
 - **A new chat page.** Tables, lists and code blocks with Copy and Download; the model's thinking in a box that folds away when it answers; Write again and Edit; search (Cmd-K); groups to drag chats into; select and delete old chats. A web page or SVG the model writes can be shown right in the chat, sandboxed, and saved to the chat's folder.
 - **Files for the engine.** With an engine picked, attach files or whole folders (**+ Files**, drop them, or paste). They're copied into the chat's folder, keeping their paths, and the model gets a note of facts about each: sizes, see-through backgrounds, lengths, a 3D model's parts by name and its size, and the words of text files. Before it reads them, Chimera makes a compressed GLB of each OBJ, FBX, STL or PLY model for web pages, a 72-frame turntable of each 3D model with your Blender, and a line on what each picture shows from `qwen3.8`, since the engine itself may read only text. Each has a switch by the attachments. In the chat, a turntable's thumbnail is a 360° viewer of the frames the model got.
 - **Long tasks: Blender steps get Blender's real names.** Workers now see the names your Blender really has, so fewer scripts crash on a wrong one. In real tasks, the crashes it covers fell from 1.2 to 0.3 a task.
 
 **Needs:** an engine needs its own server on the same computer, answering `/health` and speaking the OpenAI chat API, streamed. Turntables and GLBs need Blender on the computer you chat from, in the same sandbox as the script checks: macOS, or Linux with bubblewrap (not yet tried), not Windows. Picture lines need `qwen3.8`.
 
-**Not tested:** engines and attached files have only been used on one Mac, with one engine. Dropping a folder from the Finder has only been tried against a stand-in folder tree. The chat page has only been checked in Chrome.
+**Not tested:** engines and attached files have only been used on one Mac, with one engine. Dropping a folder from the Finder has only been tried against a made-up folder tree. The chat page has only been checked in Chrome.
 
 **Updating:** 0.9.0 shares a pool with computers on 0.6.1 or newer. Update the computers you chat from or start long tasks from; the others can wait.
 
-### 0.8.0: long tasks that finish the job (Nov 1, 2026)
+<details>
+<summary><b>0.8.0: long tasks that finish the job (Nov 1, 2026)</b></summary>
 
 This release is about **Keep going until done**: long tasks that used to look finished without being finished.
 
@@ -412,11 +423,14 @@ This release is about **Keep going until done**: long tasks that used to look fi
 
 A reply with no note has been run, measured and looked at. It doesn't mean the picture is good.
 
-**Needs:** script checks run on the computer that starts the task, on macOS or Linux, with Blender installed. The look also needs `qwen3.8` on that computer. Windows gets the routing but no script checks.
+**Needs:** script checks run on the computer that starts the task, on macOS or Linux, with Blender installed. The picture check also needs `qwen3.8` on that computer. Windows gets the routing but no script checks.
 
 **Updating:** update the host first, because that's where routing lives. A computer needs 0.8.0 to get the new checks on tasks it starts, and computers on 0.6.1 or newer can stay in the same pool.
 
-### 0.7.0: a helper model, script checks, Make a Head (Oct 30, 2026)
+</details>
+
+<details>
+<summary><b>0.7.0: a helper model, script checks, Make a Head (Oct 30, 2026)</b></summary>
 
 - **Hydra 1.0, the pool's own helper model.** Planning a long task, the review in Keep going until done, and the "should a Head do this?" check now run on Hydra 1.0, a small model trained for exactly those jobs. Long tasks no longer wait for the biggest model to plan or review. If no computer has it, or a task is too big for it (roughly 13,000 characters going into a plan, 16,000 into a review), the jobs go to the biggest model as before, and if Chimera can't read Hydra's answer it asks once more without it. The task card says which computer and model planned, combined and reviewed. [How to get it.](#the-helper-model-hydra-10)
 - **Get it from the host, inside Chimera.** **Models → Helper → Get from host** copies the host's Hydra 1.0 into that computer's Ollama.
@@ -424,6 +438,8 @@ A reply with no note has been run, measured and looked at. It doesn't mean the p
 - **Make a Head without code.** **Settings → Heads → Make a Head** turns a program or a local server on your computer into a Head from a form, and **Try** runs it once, the way the pool would.
 - **Fixes.** "Run on" and "Only my devices" now apply when Chimera picks a Head (before, a better-rated Head on a computer you hadn't allowed could win, and the step failed). Pressing Connect just after launch no longer says none of your models are shared.
 - **Updating:** every computer needs 0.6.1 or newer. Only put Hydra 1.0 on computers running 0.7.0 or newer.
+
+</details>
 
 <details>
 <summary><b>0.6.1: Heads run where they live (Oct 25, 2026)</b></summary>
@@ -521,8 +537,8 @@ Chimera is meant to be copied. It's one Go program that uses only the standard l
 | [`heads/`](heads/) | Reference Heads and the [guide to making your own](heads/MAKE-A-HEAD.md). |
 | [`hydra1/`](hydra1/) | How long tasks and the helper model work. |
 | [`helper-model/`](helper-model/) | Training, evaluation and results for Hydra 1.0. |
-| [`worker-model/`](worker-model/) | Work toward Hydra Worker 1.0, a model for the workers' steps. Research in progress. |
-| [`tests/`](tests/) | End-to-end tests (Python) that start real Chimera copies against stand-in Ollama servers. The Go tests sit next to the code in `app/`. |
+| [`worker-model/`](worker-model/) | Early research toward a smaller model built for the workers' steps (Hydra Worker 1.0). Nothing is trained yet. |
+| [`tests/`](tests/) | End-to-end tests (Python) that start real Chimera copies against fake Ollama servers. The Go tests sit next to the code in `app/`. |
 | [`docs/`](docs/) | Notes from real runs and design handoffs. |
 | [`scripts/`](scripts/) | An install script one computer's set of tools was set up with. Read it before running it. |
 
