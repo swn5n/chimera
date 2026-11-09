@@ -28,6 +28,12 @@ Chimera is an app for macOS, Windows and Linux that links computers running [Oll
 - **Share tools, not just models.** A **Head** is a tool installed on one computer (an image generator, a 3D-model maker, a Blender render). Anyone in the pool can use it without installing anything.
 - **Bring your own big model.** A model that runs outside Ollama, like DeepSeek V4.1 Flash from its own server, can join your chats on this computer, and you can hand it your files.
 
+<p align="center">
+  <img src="docs/screenshots/network.png" width="880" alt="Chimera's Network tab: a pool called Friends with three computers lending models, and this computer's own models on the right">
+  <br>
+  <sub>The Network tab: three computers share one pool, each lending its own models. The screenshots in this README show a test pool with made-up names.</sub>
+</p>
+
 **Split the task, not the model.** Spreading one model across several computers needs very fast links between them. Chimera hands each step, whole, to one computer with a model (or a tool) that fits it, so ordinary Wi-Fi is plenty.
 
 > [!NOTE]
@@ -100,11 +106,21 @@ Chimera runs in the background. Its window opens as an app window in Chrome or E
 
 Type your name (friends see it next to your credits) and a name for this computer. You can ignore **Host a network** and **Join a network**: click **Skip for now** and Chimera looks for a pool on your Wi-Fi by itself. It joins one if it finds one, or starts one if there isn't one. Pools are open and unencrypted, so do this on a network you trust (see [Safety, privacy and limits](#safety-privacy-and-limits)).
 
+<p align="center">
+  <img src="docs/screenshots/setup.png" width="420" alt="Chimera's first-run card: a name, a computer name, and the choices Host a network, Join a network or Skip for now">
+</p>
+
 If you'd rather choose: **Host a network** starts a pool on this computer and shows the address and invite code to give friends. **Join a network** lists the pools it finds on your Wi-Fi, or takes an address and invite code.
 
 ### 3. Get a model
 
 Open **Models**. It shows how much memory this computer has for models and recommends a download for each job (chat, coding, vision, planning). Press **Download** on the ones you want. Models are big, from a few GB to tens of GB, so the first download takes a while. The helper model, Hydra 1.0, has its own row: see [The helper model, Hydra 1.0](#the-helper-model-hydra-10).
+
+<p align="center">
+  <img src="docs/screenshots/models.png" width="880" alt="Chimera's Models tab: a memory gauge for this computer and a recommended download for each job">
+  <br>
+  <sub>The Models tab: how much memory this computer has for models, and the biggest model that fits for each job.</sub>
+</p>
 
 ### 4. Say hello
 
@@ -127,6 +143,12 @@ In **Chat**, switch on **Long task**, describe a bigger job, and send it. For ex
 - *"Build a Blender scene of a desk with a lamp, a mug and a book, with a camera that shows them all."*
 
 The chat shows the plan, then each step with the computer and model working on it, and finally the combined result. Switch on **Keep going until done** too, and the task card also shows each round and what the checks found. See [Long tasks](#long-tasks).
+
+<p align="center">
+  <img src="docs/screenshots/long-task.png" width="860" alt="A long task in progress: four steps running on three different computers, planned by Hydra 1.0">
+  <br>
+  <sub>A long task in progress: four steps on three computers, and each step says where it's running.</sub>
+</p>
 
 ### 8. Rate the replies
 
@@ -157,6 +179,12 @@ Six tabs run along the top.
 | **Keep going until done** | Appears with Long task: check, repair and repeat until the job is done. |
 | **+ Picture** | Attach a picture for a Head to work on. You can also paste or drop one. With an engine picked it becomes **+ Files**. |
 
+<p align="center">
+  <img src="docs/screenshots/chat.png" width="860" alt="A chat reply from another computer, with the model, speed and credit cost under it, and the controls under the message box">
+  <br>
+  <sub>A reply that ran on another computer: the line under it says where it ran, how fast, and what it cost.</sub>
+</p>
+
 **In a chat.** Replies render as Markdown, with tables, lists, and code blocks that have **Copy** and **Download**. A model's thinking sits in a box that folds away when it answers. Replies have **Copy**, and **Write again** redoes the last reply with the model you've picked now; **Edit** changes one of your messages and asks again. Search your chats with Cmd-K (Ctrl-K on Windows and Linux), drag chats into groups, and select and delete old ones. If a model writes a web page or an SVG, you can show it right in the chat, sandboxed, and save it to the chat's folder.
 
 **Lending limits** are in **Settings → Lending**: how many steps to run at once, the largest model you'll lend, whether Chimera opens Ollama when you connect, and whether it connects when it starts.
@@ -170,6 +198,12 @@ Chat is for questions. A **long task** is for jobs too big for one reply: a smal
 3. **Combine.** The biggest model joins the pieces into one result.
 
 Steps that match a checked entry in the [library](#the-library) reuse it instead of asking a model. You can watch every step in the chat: which computer and model is on it, and what it wrote. Your own idle computers connect on their own to help, then stand down (**Settings → Lending → Let my devices help my long tasks**).
+
+<p align="center">
+  <img src="docs/screenshots/long-task-done.png" width="860" alt="The finished long task: each step shows its computer, model and cost, followed by the combined result">
+  <br>
+  <sub>The same task when it's done: which computer and model did each step and what it cost (work on your own computer is free), then the combined result.</sub>
+</p>
 
 ### Keep going until done
 
