@@ -15,11 +15,16 @@ stand on contract/validate.py and join.py, so the two must not differ. This scri
   out, each step failed in turn, each step as a library entry, and with reject_cut, comparing everything join returns
   (the script and text byte for byte, the line map, seams, reasons, notes, parts and every piece's verdict), and each
   good Blender piece's run-alone script;
-- fixtures: every call the contract's own tests make to the validator, the joiner and their helpers, recorded by
-  running those tests;
+- fixtures: every call the contract's own tests make to the validator, the joiner and their helpers (the uses reader,
+  join._uses_chunks, among them: Go's usesChunks through --hydra-assemble's uses_chunks), recorded by running those
+  tests;
 - random: seeded replies built from the forms the patterns tell apart (handoffs near and far from the contract's,
   File: lines, headings, links, odd spaces and letters), in every mode, seeded plans of files and sections, which the
-  stored tasks hardly have, and uses lines, whose heuristics no stored task reaches far into;
+  stored tasks hardly have, and uses lines, whose heuristics no stored task reaches far into; the uses reader's chunks
+  on those, on random_reader_uses' lines (ids, groups, ranges, brackets, quotes, marks, and since round 8 pairs,
+  breaks after "with" and SETTINGS_sN chains: what it tells apart) and on every stored task's uses lines, and
+  random_reader_plans' joins, whose last step's uses line is made the same way, and random_settings_plans' joins,
+  whose uses lines are made of SETTINGS_sN names and subscripts, for round 8's rule that they are sN's;
 - python: real Python files, source by source, and tests/python_syntax_cases.py's corners of the grammar: the reader's
   tree against ast's, or its error against Python's;
 - fuzz: seeded damage to the corpus's code, which is what shows a reader's weakness. Here Python is the judge: Go must
@@ -39,7 +44,9 @@ Known places Go and Python part, none of them reached by any reply, task or fixt
   nearly always the same line. Mostly CPython's second pass using results it memoized with its checks off, which has
   no meaning without its memo table;
 - NFKC: Python folds identifiers (a micro sign becomes mu), and the Go standard library can't;
-- str.isdigit counts superscripts as digits, and unicode.IsDigit doesn't (a uses word starting with \u00b2);
+- Unicode's version: Go 1.27's tables are 17.0 and Python 3.13's 15.1, so the 90 digits added since (Garay's, from
+  U+10D40) are digits only in Go. Until Nov 4 the prototype also took superscripts for digits (str.isdigit; it
+  uses isdecimal now), which the reseeded uses lines reached;
 - case, as in tools/check_contract_parity.py: Turkish dotted letters and a final Greek sigma;
 - a lone surrogate in a reply, which Go's JSON can't carry.
 
@@ -313,12 +320,21 @@ def alone_jobs(tasks):
     return out
 
 
+def task_uses(task):
+    """The uses lines of a stored task's pieces."""
+    out = []
+    for text in task[2].values():
+        if isinstance(text, str):
+            out += [m.group(1) for m in re.finditer(r"(?m)^\s*uses\s*:\s*(.*)$", text)]
+    return out
+
+
 def recorded_calls():
     """Every call the contract's tests make, recorded by running them against shims. Input only: each is run afresh
     below, on both sides."""
     calls = collections.defaultdict(list)
     real = {"validate": V.validate_piece, "join": J.join, "merge": J.merge_python, "alone": J.alone_script,
-            "uses": J.uses_names, "slug": J.slug, "locate": L.locate_check}
+            "uses": J.uses_names, "slug": J.slug, "locate": L.locate_check, "chunks": J._uses_chunks}
 
     def validate_piece(text, mode, sid="s1", deps=(), lone=False, step=None, done_reason="", reject_cut=True,
                        max_tokens=V.MAX_PIECE_TOKENS):
@@ -347,6 +363,10 @@ def recorded_calls():
         calls["uses"].append(chunk)
         return real["uses"](chunk)
 
+    def uses_chunks(uses):
+        calls["chunks"].append(uses)
+        return real["chunks"](uses)
+
     def slug(title):
         calls["slug"].append(title)
         return real["slug"](title)
@@ -358,6 +378,7 @@ def recorded_calls():
     V.validate_piece, J.validate_piece = validate_piece, validate_piece
     J.join, J.merge_python, J.alone_script = join, merge_python, alone_script
     J.uses_names, J.slug, L.locate_check = uses_names, slug, locate_check
+    J._uses_chunks = uses_chunks
     try:
         import importlib
         import io
@@ -370,6 +391,7 @@ def recorded_calls():
         V.validate_piece, J.validate_piece = real["validate"], real["validate"]
         J.join, J.merge_python, J.alone_script = real["join"], real["merge"], real["alone"]
         J.uses_names, J.slug, L.locate_check = real["uses"], real["slug"], real["locate"]
+        J._uses_chunks = real["chunks"]
     return calls
 
 
@@ -493,6 +515,13 @@ def check_helpers(binary, calls):
             d = first_difference(J.uses_names(s), g)
             if d:
                 diffs.append(("uses %r" % s[:60], d))
+    lines = calls.get("chunks") or []
+    if lines:
+        for batch in batched(lines, lambda s: len(s) // 40 + 1):
+            for s, g in zip(batch, go_call(binary, {"uses_chunks": batch})["uses_chunks"]):
+                d = first_difference([[list(st), t] for st, t in J._uses_chunks(s)], g)
+                if d:
+                    diffs.append(("uses_chunks %r" % s[:60], d))
     slugs = calls["slug"]
     if slugs:
         for s, g in zip(slugs, go_call(binary, {"slug": slugs})["slug"]):
@@ -521,7 +550,7 @@ def check_helpers(binary, calls):
 
 _SPACES = [" ", " ", " ", "  ", "\t", "\u00a0", "\u2003", "\u3000", "\x1c", "\x85", "\u202f", ""]
 _WORDS = ["none", "None.", "n/a", "-", "nothing", "no", "not yet", "nothing from s1", "s1", "s2", "s3", "s12", "s9", "s123",
-          "s\u0663", "table", "chimera_table", "ctx[\"objects\"][\"table\"]", "Store.all", "a/b.py", "`x.y`", "'a b'", "\"q\"",
+          "s\u0663", "table", "chimera_table", "ctx[\"objects\"][\"table\"]", "ctx[\"values\"][\"sofa_width\"]", "Store.all", "a/b.py", "`x.y`", "'a b'", "\"q\"",
           "foo()", "CamelCase", "\u00e9t\u00e9_x", "\u00b2x_y", "x.y.z", "x..y", ".hidden", "v1.2", "data.csv", "a-b.c", "_x_",
           "TODO", "todo", "FIXME", "placeholder", "placeholders", "implement this", "implement me", "# ...", "...", "as an AI",
           "language model", "other worker", "the workers", "sub-agent", "subagents", "http://a.b/c", "HTTPS://x", "doi: 10.1/x",
@@ -539,6 +568,18 @@ _CODE += ["import bpy\nSETTINGS_s1 = {}\n\ndef build_s1(ctx, more):\n    pass\n\
           "from bpy import *\nSETTINGS_s1 = {}\n\ndef build_s1(ctx):\n    pass\n\nif __name__ == \"__main__\":\n    build_s1({})",
           "SETTINGS_s1 = {}\n\ndef build_s1(ctx):\n    pass\n\nif __name__ == \"__main__\":\n    build_s1({})\nif __name__ == \"__main__\":\n    pass",
           "import bpy\nSETTINGS_s1 = {}\n\ndef build_s1(ctx, *, more=1):\n    pass\n\nif __name__ == \"__main__\":\n    build_s1({})", "x = 1\x00"]
+# ctx["values"] (contract question 1, decided Nov 4): each way a piece writes or reads it, as ctx_keys tells them apart
+_VALUES_BUILD = "import bpy\nSETTINGS_s1 = {\"sofa_width\": 2.2}\n\ndef build_s1(ctx):\n    %s\n\nif __name__ == \"__main__\":\n    build_s1({})"
+_CODE += [_VALUES_BUILD % body for body in (
+    "ctx[\"values\"][\"sofa_width\"] = SETTINGS_s1[\"sofa_width\"]", "w = ctx[\"values\"][\"sofa_width\"]",
+    "w = ctx[\"values\"].get(\"sofa_width\", 2.0)", "ctx[\"values\"].update(SETTINGS_s1)", "ctx[\"values\"] = dict(SETTINGS_s1)",
+    "ctx[\"values\"][k] = v", "ctx[\"values\"].setdefault(k, 1.0)", "ctx[\"values\"] |= SETTINGS_s1",
+    # through a bound name or straight into ctx.get() / ctx.setdefault() (join._bound_writes, Nov 4)
+    "v = ctx[\"values\"]\n    v[\"sofa_width\"] = 1", "v = ctx.setdefault(\"values\", {})\n    v[\"sofa_width\"] = 1",
+    "v: dict = ctx.get(\"values\", {})\n    v.setdefault(\"sofa_width\", 1)", "ctx.setdefault(\"values\", {})[\"sofa_width\"] = 1",
+    "ctx.get(\"values\")[\"sofa_width\"] = 1", "v = ctx[\"values\"]\n    v |= SETTINGS_s1", "v = ctx[\"values\"]\n    v[k] = 1",
+    "v = ctx[\"values\"]\n    v.update(SETTINGS_s1)", "ctx.setdefault(\"values\", {}).update(SETTINGS_s1)",
+    "v = ctx[\"values\"]\n    v = {}\n    v[\"sofa_width\"] = 1")]
 _HEADINGS = ["## Title", "# Title", "## Other", "### Title", "##Title", "## \u00c9t\u00e9", "## Notes (draft)", "## The plan!", "Title"]
 
 
@@ -671,6 +712,25 @@ def random_uses(n):
     return [rng.choice(_SPACES + [", ", "; ", " from "]).join(rng.choice(_WORDS) for _ in range(rng.randrange(1, 7))) for _ in range(n)]
 
 
+_READER_WORDS = ["s1", "s2", "s3", "s4", "s9", "s12", "s1\u0662", "s\u0661", "S2", "\"s1\"", "'s2'", "`s3`", "s1's", "x.s2",
+                 "src/s2/a.py", "from", "From", "step", "Steps", "(", ")", "[", "]", "{", "}", ",", ";", ":", "\uff1a", "->", "=>",
+                 "\u2192", "-", "\u2013", "\u2014", " - ", " \u2014 ", "/", "&", "+", "and", "or", ", and", "..", ".", "'", "\"",
+                 "`", "table_top", "lamp_shade", "ctx[\"objects\"][\"sofa\"]", "Store.all()", "make_leg()", "(failed)",
+                 "SETTINGS_s1", "Shah's", "\u00e9t\u00e9_x"]
+# round 8 (Nov 5): pairs ("s1's a with s2's b", "the s1 a"), breaks after "with its" or "with their" (plus; also and
+# then, which round 8 first took for breaks too, are none) and SETTINGS_sN names and subscripts
+_READER_WORDS += ["s2\u2019s", "'s", "\u2019s", "with", "With", "WITH", "its", "their", "Their", "the", "a", "plus", "PLUS",
+                  "also", "Also", "then", "Then", "It", "for", "SETTINGS_s2", "SETTINGS_s3", "SETTINGS_s4", "SETTINGS_s1[\"lamp_h\"]",
+                  "SETTINGS_s2['lamp_h']", "SETTINGS_s1['a']['b']", "SETTINGS_s12[\"x\"]", "MY_SETTINGS_s1[\"x\"]", "lamp_h",
+                  "[\"lamp_h\"]"]
+
+
+def random_reader_uses(n):
+    """uses lines made of what the reader tells apart (usesChunks): ids, groups, ranges, brackets, quotes, marks."""
+    rng = random.Random(FUZZ_SEED + 9)
+    return ["".join(rng.choice(_READER_WORDS) + rng.choice(_SPACES) for _ in range(rng.randrange(1, 14))) for _ in range(n)]
+
+
 def random_titles(n):
     rng = random.Random(FUZZ_SEED + 4)
     letters = ["A", "b", " ", "-", "_", "\u00e9", "\u00df", "\u4e2d", "9", "!", "\t"]
@@ -714,9 +774,90 @@ def random_plans(n):
     return [random_files_plan(rng, i) for i in range(n)]
 
 
+_READER_NAMES = ["table_top", "lamp_shade", "leg_height", "sofa_obj", "desk_top"]
+_READER_KEYS = ["lamp_h", "a", "b", "x", "table_top"]  # what a step's SETTINGS dict may hold (round 8)
+
+
+def random_reader_plans(n):
+    """Three-step code joins whose last piece's uses line is made as random_reader_uses' are, with names the first two
+    steps may or may not provide, either of them sometimes failed, and each step's SETTINGS dict sometimes there, with
+    some keys (round 8): the reader's groups and skips, and the SETTINGS_sN rule, through usesSeams."""
+    rng = random.Random(FUZZ_SEED + 10)
+    hand = "```handoff\nprovides: %s\nuses: %s\nassumed: none\n```\n"
+    words = _READER_WORDS + _READER_NAMES
+    out = []
+    for i in range(n):
+        deps = ["p0", "p1"] if rng.random() < 0.5 else []
+        plan = clean_plan({"title": "Reader %d" % i, "kind": "code", "summary": "A tool.", "steps": [
+            {"id": "p%d" % k, "title": "Part %d" % k, "kind": "code", "instructions": "Do it.",
+             "depends_on": deps if k == 2 else []} for k in range(3)]})
+        outputs = {}
+        for k in range(2):
+            names = [x for x in _READER_NAMES if rng.random() < 0.4] or ["x_%d" % k]
+            code = "\n".join("%s = %d" % (x, j) for j, x in enumerate(names))
+            if rng.random() < 0.5:
+                code += "\nSETTINGS_s%d = {%s}" % (k + 1, ", ".join("'%s': 1" % x for x in _READER_KEYS if rng.random() < 0.4))
+            outputs["p%d" % k] = None if rng.random() < 0.2 else "```python\n%s\n```\n\n" % code + hand % (", ".join(names), "none")
+        uses = "".join(rng.choice(words) + rng.choice(_SPACES) for _ in range(rng.randrange(1, 14)))
+        own = "SETTINGS_s3 = {}\n" if rng.random() < 0.5 else ""
+        outputs["p2"] = "```python\n%sdef main():\n    pass\n```\n\n" % own + hand % ("main", uses)
+        out.append(("reader plan %d" % i, plan, outputs, "", {}, False))
+    return out
+
+
+_SETTINGS_KEYS = ["width_m", "h_m", "lamp_h", "x", "colors", "shade", "s2", "SETTINGS_s2", " width_m ", "a b", "w.m", "lamp_h()"]
+
+
+def _settings_chain(rng):
+    """A SETTINGS_sN name with up to three subscripts, made right, made nearly right or not at all."""
+    sid = rng.choice(["s1", "s2", "s3", "s4", "s9", "s12", "s0", "s1\u0663"])
+    out = rng.choice(["", "", "", "MY_", "x", "(", "`", "'", '"', " "]) + "SETTINGS_" + sid
+    for _ in range(rng.randrange(0, 4)):
+        q = rng.choice(["'", '"'])
+        q2 = rng.choice([q, q, q, "'" if q == '"' else '"'])
+        sp = ["", " ", "  ", "\t", "\xa0", "\u3000"]
+        out += (rng.choice(sp) + "[" + rng.choice(sp) + q + rng.choice(_SETTINGS_KEYS) + q2 + rng.choice(sp)
+                + rng.choice(["]", "]", "", ")"]))
+    return out + rng.choice(["", "", "`", ")", "."])
+
+
+def random_settings_plans(n):
+    """Four-step code joins whose last piece's uses line is made of SETTINGS_sN names and subscripts among other items,
+    each of the first three steps sometimes failed and its SETTINGS dict holding some keys: round 8's rule that a
+    SETTINGS_sN name, and a key the line has only in SETTINGS_sN subscripts of one step, are sN's."""
+    rng = random.Random(FUZZ_SEED + 11)
+    hand = "```handoff\nprovides: %s\nuses: %s\nassumed: none\n```\n"
+    out = []
+    for i in range(n):
+        plan = clean_plan({"title": "Settings %d" % i, "kind": "code", "summary": "A tool.", "steps": [
+            {"id": "p%d" % k, "title": "Part %d" % k, "kind": "code", "instructions": "Do it.",
+             "depends_on": ["p0", "p1", "p2"] if k == 3 else []} for k in range(4)]})
+        outputs = {}
+        for k in range(3):
+            if rng.random() < 0.2:
+                outputs["p%d" % k] = None
+                continue
+            keys = rng.sample(["width_m", "h_m", "lamp_h", "colors", "shade"], rng.randrange(0, 4))
+            code = "SETTINGS_s%d = {%s}\nobj_%d = 1" % (k + 1, ", ".join("'%s': 1" % x for x in keys), k)
+            outputs["p%d" % k] = "```python\n%s\n```\n\n" % code + hand % ("obj_%d" % k, "none")
+        parts = [rng.choice([_settings_chain(rng), _settings_chain(rng), rng.choice(_SETTINGS_KEYS), "lamp_shade from s2",
+                             "table_top from s1", "(failed)", "from s3", "s2:", "falls back to", 'via ctx["values"]["w"]'])
+                 for _ in range(rng.randrange(1, 6))]
+        uses = (" " if rng.random() < 0.5 else ", ").join(parts)
+        outputs["p3"] = "```python\nSETTINGS_s4 = {}\ndef main():\n    pass\n```\n\n" + hand % ("main", uses)
+        out.append(("settings plan %d" % i, plan, outputs, "", {}, False))
+    return out
+
+
 def seam_plans():
-    """The seams nothing else reaches: two steps binding one name to different things, and statements that share a
-    line, which the joiner cuts apart (a = (1,\\n 2); b = 3)."""
+    """The seams nothing else reaches: two steps binding one name to different things, statements that share a
+    line, which the joiner cuts apart (a = (1,\\n 2); b = 3), ctx["values"] keys, which no stored task uses (one
+    no earlier step registers, one an update() wrote, which holds the channel back, and writes through a bound name or
+    into ctx.get() / ctx.setdefault(), join._bound_writes), and each form of uses line the reader tells apart (contract
+    question 4: suffix, bracket and prefix items, groups, a range, a failed member, a bare item, a deep bracket, quoted
+    ids, text no id comes after; round 8: SETTINGS_sN names and keys, in a chunk, in text no step reads and in a line
+    with no step id, a key the line also uses plainly inside a quote span of the whole line, pairs, and a list broken
+    by plus after "with its", with the forms read as round 7 reads them beside them) through a real join."""
     def plan(kind, words, n=2):
         return clean_plan({"title": "Seams", "kind": kind, "summary": words, "steps": [
             {"id": "p%d" % k, "title": "Part %d" % k, "kind": kind, "instructions": "Do it. " + words} for k in range(n)]})
@@ -732,6 +873,24 @@ def seam_plans():
         return {"p0": "```python\n%s\n```\n\n" % code + hand % (provides, "none"),
                 "p1": "```python\ndef main():\n    pass\n```\n\n" + hand % ("main", uses)}
 
+    def three(uses):  # two steps that make a name each, and a third whose uses line names them
+        hand = "```handoff\nprovides: %s\nuses: %s\nassumed: none\n```\n"
+        return {"p0": "```python\nctx_values_sofa_width = 1\n```\n\n" + hand % ("ctx_values_sofa_width", "none"),
+                "p1": "```python\nsofa_obj = 2\n```\n\n" + hand % ("sofa_obj", "none"),
+                "p2": "```python\ndef main():\n    pass\n```\n\n" + hand % ("main", uses)}
+
+    def settings_three(uses):  # the same, with each step's SETTINGS dict: s1's holds lamp_h
+        hand = "```handoff\nprovides: %s\nuses: %s\nassumed: none\n```\n"
+        return {"p0": "```python\nctx_values_sofa_width = 1\nSETTINGS_s1 = {'lamp_h': 1}\n```\n\n" + hand % ("ctx_values_sofa_width", "none"),
+                "p1": "```python\nsofa_obj = 2\nSETTINGS_s2 = {}\n```\n\n" + hand % ("sofa_obj", "none"),
+                "p2": "```python\nSETTINGS_s3 = {}\n\ndef main():\n    pass\n```\n\n" + hand % ("main", uses)}
+
+    def blender(sid, body, provides):
+        return ("```python\nimport bpy\n\nSETTINGS_%s = {\"sofa_width\": 2.2, \"sofa_depth\": 0.9}\n\n\ndef build_%s(ctx):\n    %s\n\n\n"
+                "if __name__ == \"__main__\":\n    build_%s({})\n```\n\n```handoff\nprovides: %s\nuses: none\nassumed: none\n```\n"
+                % (sid, sid, body, sid, provides))
+
+    sizes = 'ctx["values"]["sofa_width"]'
     shared = "a = (1,\n 2); b = 3\n\ndef main():\n    pass"
     twice = "File: x.py\n```python\nX = 1\n```\n\nFile: x.py\n```python\nY = 1\n```\n\n```handoff\nprovides: x\nuses: none\nassumed: none\n```\n"
     return [("seam: import conflict", plan("code", "A tool."), {"p0": piece("from a import b\n\ndef main():\n    pass"),
@@ -747,11 +906,87 @@ def seam_plans():
             ("seam: a file name inside a longer one", plan("code", "A tool."), scripts("xmy-data.csv", "X = 1", "`my-data.csv` from s1"), "", {}, False),
             ("seam: a name inside a longer one", plan("code", "A tool."), scripts("table_top1", "X = 1", "table_top from s1"), "", {}, False),
             ("seam: a name with an accent next to it", plan("code", "A tool."), scripts("\u00e9table_top", "X = 1", "table_top from s1"), "", {}, False),
+            ("seam: a values reader written suffix first", plan("code", "A tool.", 3), three(
+                "ctx_values_sofa_width from s1, sofa_obj from s2"), "", {}, False),
+            ("seam: a group with a name neither has", plan("code", "A tool.", 3), three("desk_top from s1 and s2"), "", {}, False),
+            ("seam: a group with a failed member", plan("code", "A tool.", 3), dict(three("desk_top from s1 and s2"), p1=None),
+             "", {}, False),
+            ("seam: a values reader in brackets", plan("code", "A tool.", 3), three(
+                "ctx_values_sofa_width (s1), sofa_obj (s2)"), "", {}, False),
+            ("seam: a values reader step first", plan("code", "A tool.", 3), three(
+                "s1: ctx_values_sofa_width; s2: sofa_obj"), "", {}, False),
+            ("seam: names given to the wrong steps", plan("code", "A tool.", 3), three(
+                "sofa_obj from s1, ctx_values_sofa_width from s2"), "", {}, False),
+            ("seam: an open id after a suffix one", plan("code", "A tool.", 3), dict(three(
+                "ctx_values_sofa_width from s1, s2: sofa_obj (failed)"), p1=None), "", {}, False),
+            ("seam: a failed item after another step's", plan("code", "A tool.", 3), dict(three(
+                "ctx_values_sofa_width from s1, sofa_obj from s2 (failed)"), p1=None), "", {}, False),
+            ("seam: items joined by and", plan("code", "A tool.", 3), three(
+                "ctx_values_sofa_width from s1 and sofa_obj from s2"), "", {}, False),
+            ("seam: a range", plan("code", "A tool.", 3), three("desk_top from s1-s2"), "", {}, False),
+            ("seam: a bare item after an id", plan("code", "A tool.", 3), three("desk_top from s1, s2 (merged)"), "", {}, False),
+            ("seam: a step's bracket inside another's item", plan("code", "A tool.", 3), dict(three(
+                "ctx_values_sofa_width from s1 (s2 failed, so desk_top is a stand-in)"), p1=None), "", {}, False),
+            ("seam: quoted ids", plan("code", "A tool.", 3), three(
+                '{"s1": ["ctx_values_sofa_width"], "s2": ["sofa_obj"]}'), "", {}, False),
+            ("seam: text no id comes after", plan("code", "A tool.", 3), three(
+                "scene_root; s1: ctx_values_sofa_width"), "", {}, False),
+            ("seam: a step's own SETTINGS in an aside", plan("code", "A tool.", 3), settings_three(
+                "sofa_obj from s2 (parameters taken from own SETTINGS_s3)"), "", {}, False),
+            ("seam: a SETTINGS key an earlier step holds", plan("code", "A tool.", 3), settings_three(
+                'sofa_obj from s2 sized by SETTINGS_s1["lamp_h"]'), "", {}, False),
+            ("seam: a SETTINGS key its step lacks, the item's step failed", plan("code", "A tool.", 3), dict(settings_three(
+                'sofa_obj from s2 sized by SETTINGS_s1["lamp_w"]'), p1=None), "", {}, False),
+            ("seam: a SETTINGS key of a failed step", plan("code", "A tool.", 3), dict(settings_three(
+                'sofa_obj from s2 sized by SETTINGS_s1["lamp_w"]'), p0=None), "", {}, False),
+            ("seam: SETTINGS of a step not in the join", plan("code", "A tool.", 3), settings_three(
+                "sofa_obj from s2 (falls back to SETTINGS_s4 defaults)"), "", {}, False),
+            ("seam: another step's SETTINGS in an item", plan("code", "A tool.", 3), settings_three(
+                "SETTINGS_s2 from s1"), "", {}, False),
+            ("seam: a SETTINGS key that also stands outside its chain", plan("code", "A tool.", 3), settings_three(
+                'width_m from s2 (overrides SETTINGS_s1["width_m"])'), "", {}, False),
+            ("seam: SETTINGS in a line with no step id", plan("code", "A tool.", 3), settings_three(
+                'SETTINGS_s1["lamp_w"]'), "", {}, False),
+            ("seam: SETTINGS in text no step reads", plan("code", "A tool.", 3), settings_three(
+                'sofa_obj from s2, SETTINGS_s1["lamp_w"] for its height'), "", {}, False),
+            ("seam: a SETTINGS key also used plainly in a quote span", plan("code", "A tool.", 3), settings_three(
+                "Uses s2's lamp_h; SETTINGS_s1['lamp_h'] is s1's default"), "", {}, False),
+            ("seam: pairs after a lead", plan("code", "A tool.", 3), three(
+                "Uses s1's ctx_values_sofa_width with s2's sofa_obj"), "", {}, False),
+            ("seam: a list broken by plus after with", plan("code", "A tool.", 3), three(
+                "frame_obj from s1 with its ctx_values_sofa_width plus sofa_obj from s2"), "", {}, False),
+            ("seam: a list broken by plus after With their", plan("code", "A tool.", 3), three(
+                "frame_obj (s1) With their ctx_values_sofa_width plus the sofa_obj (s2)"), "", {}, False),
+            ("seam: plus with no with before it", plan("code", "A tool.", 3), three(
+                "ctx_values_sofa_width (s1) feeds sofa_obj plus not_made (s2)"), "", {}, False),
+            ("seam: plus after a bare with", plan("code", "A tool.", 3), three(
+                "frame_obj from s1 with ctx_values_sofa_width plus sofa_obj from s2"), "", {}, False),
+            ("seam: then after with its", plan("code", "A tool.", 3), three(
+                "frame_obj (s1) with its ctx_values_sofa_width then sofa_obj (s2)"), "", {}, False),
+            ("seam: a possessive before a suffix id", plan("code", "A tool.", 3), three(
+                "Extends s1's ctx_values_sofa_width with desk_top from s2's output"), "", {}, False),
+            ("seam: an item after a pair item", plan("code", "A tool.", 3), three(
+                "Uses s1's ctx_values_sofa_width and s2's sofa_obj, desk_top"), "", {}, False),
             ("seam: odd space at the end of a section", plan("writing", "Notes.", 1), {"p0": "## Part 0\n\nText\x1c"}, "", {}, False),
             ("seam: a library entry that won't wrap", plan("blender", "A scene."), {
                 "p0": {"output": "```python\nimport os; x = (1,\n 2)\n```", "status": "library"}, "p1": None}, "", {}, False),
             ("seam: a package", plan("code", "Write pkg/__init__.py."), {
-                "p0": files("pkg/__init__.py", "", "def f():\n    pass"), "p1": files("app.py", "", "from pkg import f, g\nimport pkg.mod\nimport pkg.other")}, "", {}, False)]
+                "p0": files("pkg/__init__.py", "", "def f():\n    pass"), "p1": files("app.py", "", "from pkg import f, g\nimport pkg.mod\nimport pkg.other")}, "", {}, False),
+            ("seam: a value no earlier step registers", plan("blender", "A sofa."), {
+                "p0": blender("s1", sizes + ' = SETTINGS_s1["sofa_width"]', sizes),
+                "p1": blender("s2", 'w = ctx["values"]["sofa_depth"]', "chimera_sofa")}, "", {}, False),
+            ("seam: an update() writer, then a literal reader", plan("blender", "A sofa."), {
+                "p0": blender("s1", 'ctx["values"].update(SETTINGS_s1)', sizes),
+                "p1": blender("s2", "w = " + sizes, "chimera_sofa")}, "", {}, False)] + [
+            ("seam: %s, then a literal reader" % what, plan("blender", "A sofa."), {
+                "p0": blender("s1", body, sizes), "p1": blender("s2", "w = " + sizes, "chimera_sofa")}, "", {}, False)
+            for what, body in (  # join._bound_writes: each a false seam before it, the last two seams still
+                ("an alias writer", 'v = ctx["values"]\n    v["sofa_width"] = 1'),
+                ("a setdefault alias writer", 'v = ctx.setdefault("values", {})\n    v["sofa_width"] = 1'),
+                ("a store into ctx.get()", 'ctx.get("values")["sofa_width"] = 1'),
+                ("an alias's computed key", 'v = ctx["values"]\n    for k in SETTINGS_s1:\n        v[k] = 1'),
+                ("a name bound twice", 'v = ctx["values"]\n    v = {}\n    v["sofa_width"] = 1'),
+                ("a read through an alias", 'v = ctx["values"]\n    print(v["sofa_width"])'))]
 
 
 def uses_variants(tasks):
@@ -996,18 +1231,20 @@ def main(argv=None):
     diffs, scripts, fallbacks = check_join(a.chimera, calls["join"])
     rep.group("fixture joins", len(calls["join"]), diffs, "%d gave a script, %d fell back." % (scripts, fallbacks))
     rep.group("fixture alone", len(calls["alone"]), check_alone(a.chimera, calls["alone"]))
-    n = sum(len(calls[k]) for k in ("merge", "uses", "slug", "locate"))
+    n = sum(len(calls[k]) for k in ("merge", "uses", "slug", "locate", "chunks"))
     rep.group("helpers", n, check_helpers(a.chimera, calls))
 
     count = a.random
     rep.group("random replies", count, check_validate(a.chimera, random_replies(count)))
     rep.group("random wipes", count // 2, check_validate(a.chimera, random_wipes(count // 2)))
     rep.group("random literals", count // 4, check_validate(a.chimera, random_literals(count // 4)))
-    plans = random_plans(count // 4) + uses_variants(tasks) + seam_plans()
+    plans = (random_plans(count // 4) + uses_variants(tasks) + seam_plans() + random_reader_plans(count // 20)
+             + random_settings_plans(count // 20))
     diffs, scripts, fallbacks = check_join(a.chimera, plans)
     rep.group("random joins", len(plans), diffs, "%d gave a script, %d fell back." % (scripts, fallbacks))
-    words = {"merge": [], "locate": [], "uses": random_uses(count), "slug": random_titles(count // 4)}
-    rep.group("random words", count + count // 4, check_helpers(a.chimera, words))
+    words = {"merge": [], "locate": [], "uses": random_uses(count), "slug": random_titles(count // 4),
+             "chunks": random_uses(count) + random_reader_uses(count) + sorted({u for t in tasks for u in task_uses(t)})}
+    rep.group("random words", count + count // 4 + len(words["chunks"]), check_helpers(a.chimera, words))
     lines = sample(line_map_jobs(tasks), max(a.sample * 20, 0))
     rep.group("located lines", len(lines), check_helpers(a.chimera, {"merge": [], "uses": [], "slug": [], "locate": lines}))
 

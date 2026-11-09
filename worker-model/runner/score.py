@@ -12,10 +12,10 @@ Per sample (score_step):
   stopping at a length limit).
 - blender: the step's script (runner/blender_run.script_for_step: joined with its dependencies when it can be)
   through Chimera's check in 5.2.2 and 5.0.1 (outcome, strict, the line and error), the probes run directly and out
-  of band (the scene assertions, strict_full over the whole output, stand-in, ctx["objects"] keys, names), the
-  counted strict per version (blender_run.counted_strict: the check's strict and strict_full), API errors from
-  tools/rna_lint.py on the reply's own script, and the provides probe (names the handoff provides that the scene or
-  ctx["objects"] has).
+  of band (the scene assertions, strict_full over the whole output, stand-in, ctx["objects"] and ctx["values"]
+  keys, names), the counted strict per version (blender_run.counted_strict: the check's strict and strict_full), API
+  errors from tools/rna_lint.py on the reply's own script, and the provides probe (names the handoff provides that
+  the scene, ctx["objects"] or ctx["values"] has).
 - expect: the eval's word and pattern checks (needles, must_mention, must_match, must_not_match, assumed_mentions,
   uses_mentions; each word group passes when any of its words is there, case-insensitive).
 - repair (W3): fixed in the crash's version, fixed in every version it crashed in (a reply with no script, or a
@@ -41,7 +41,7 @@ from runner.common import RUNNER_CUT, fmt_pct, md_table, median, pct
 
 import evalset  # noqa: E402
 from contract.goport import estimate_tokens  # noqa: E402
-from contract.validate import MAX_PIECE_TOKENS, validate_piece  # noqa: E402
+from contract.validate import CTX_CHANNELS, MAX_PIECE_TOKENS, validate_piece  # noqa: E402
 
 VERSIONS = ("5.2.2", "5.0.1")
 _QUOTED = re.compile(r"""\[\s*['"]([\w.-]+)['"]\s*\]|\b(chimera_\w+)""")
@@ -71,23 +71,33 @@ def expect_checks(reply, piece, expect):
     return out
 
 
+# ctx's own keys, never a name a step provides: the contract's channels (CTX_CHANNELS: "objects", and "values" since
+# the Nov 4 decision) and what every ctx holds. Before Nov 4 "values" wasn't here, so `ctx["values"]["sofa_width"]`
+# gave "values" as a provided name that no scene or ctx["objects"] has, and every values step failed the provides
+# probe (and datagen/blender_gate's "every provided name" check, which imports this). No stored provides line quotes
+# ["values"] (results/runs*, eval/, data/gen/smoke*), so no stored verdict moves.
+CTX_OWN = tuple(CTX_CHANNELS) + ("scene", "collection")
+
+
 def provided_names(provides):
-    """Names a handoff's provides line gives: ctx["objects"]["key"] keys and chimera_ names."""
+    """Names a handoff's provides line gives: ctx["objects"]["key"] and ctx["values"]["key"] keys and chimera_ names
+    (CTX_OWN left out)."""
     out = []
     for m in _QUOTED.finditer(provides or ""):
         n = m.group(1) or m.group(2)
-        if n and n not in ("objects", "scene", "collection") and n not in out:
+        if n and n not in CTX_OWN and n not in out:
             out.append(n)
     return out
 
 
 def provides_probe(handoff, probe):
-    """{named, missing}: provided names that neither ctx["objects"] nor the scene's names have (probe: one version's
-    record from the direct run, with the tools probe's ctx_keys and names). None when that probe didn't run."""
+    """{named, missing}: provided names that neither ctx["objects"], ctx["values"] nor the scene's names have (probe:
+    one version's record from the direct run, with the tools probe's ctx_keys, ctx_values and names; a record from
+    before Nov 4 has no ctx_values). None when that probe didn't run."""
     if not handoff or probe.get("names") is None:
         return None
     named = provided_names(handoff.provides)
-    have = set(probe.get("ctx_keys") or []) | set(probe.get("names") or [])
+    have = set(probe.get("ctx_keys") or []) | set(probe.get("ctx_values") or []) | set(probe.get("names") or [])
     return {"named": named, "missing": [n for n in named if n not in have]}
 
 
@@ -177,7 +187,7 @@ def run_blender(case, reply, blender, piece, reuse=None):
     out["probe"] = {}
     for v, r in probe.items():
         p = {k: r.get(k) for k in ("exit", "strict_full", "bad_lines", "blender", "version_ok", "stand_in", "exception",
-                                   "stopped_at_render", "seconds", "ctx_keys", "names")}
+                                   "stopped_at_render", "seconds", "ctx_keys", "ctx_values", "names")}
         if asserts:
             p["assert_fails"] = evalset.check_assertions(r["probe"], asserts) if r.get("probe") else ["no probe output"]
         p["dupes"] = (r.get("probe") or {}).get("duplicates")

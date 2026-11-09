@@ -1,9 +1,10 @@
 """The piece validator on hand-made pieces (tests/contract_fixtures.py: test fixtures only, never training data)."""
+import ast
 import unittest
 
 from tests import _paths  # noqa: F401
 from tests import contract_fixtures as F
-from contract.validate import parse_handoff, strip_handoff, validate_piece
+from contract.validate import CTX_CHANNELS, ctx_keys, parse_handoff, strip_handoff, validate_piece
 
 HANDOFF = "```handoff\nprovides: x\nuses: none\nassumed: none\n```\n"
 
@@ -350,6 +351,77 @@ class BlenderPieceTests(unittest.TestCase):
         self.assertNotIn("too_long", codes(blender(GOOD_S2 + "\n# " + "x" * 11000, max_tokens=None)))
         self.assertIn("harmony_leftover", codes(validate_piece("<|channel|>final<|message|>" + F.S2, "blender", sid="s2")))
         self.assertIn("empty", codes(validate_piece("  \n", "blender", sid="s2")))
+
+
+def values_code(body):
+    """A blender piece for s2 (a test fixture, never training data) whose build function is `body`."""
+    return (F.MARK + '\nimport bpy\n\nSETTINGS_s2 = {"sofa_width": 2.2, "sofa_depth": 0.9}\n\n\ndef build_s2(ctx):\n'
+            + body + '\n\n\nif __name__ == "__main__":\n    build_s2({"scene": bpy.context.scene, "collection": '
+            'bpy.context.scene.collection, "objects": {}, "values": {}})')
+
+
+def provides_missing(p):
+    return [(i.level, i.message, i.line) for i in p.issues if i.code == "provides_missing"]
+
+
+class CtxValuesTests(unittest.TestCase):
+    """ctx["values"] (contract question 1, decided Nov 4): the plain values a step hands on, beside ctx["objects"]."""
+
+    def test_ctx_keys(self):
+        cases = [  # code, channel, written, read, opaque: Go's TestCtxKeys cases, so both sides pin the same
+            ('ctx["values"]["w"] = 1', "values", ["w"], [], False),
+            ('ctx["values"]["w"] = 1', "objects", [], [], False),
+            ('x = ctx["values"]["w"] + ctx["values"].get("d", 0)', "values", [], ["w", "d"], False),
+            ('ctx["values"].setdefault("w", 1)', "values", ["w"], [], False),
+            ('ctx["values"].setdefault(k, 1)', "values", [], [], True),
+            ('ctx["values"][k] = 1', "values", [], [], True),
+            ('ctx["values"][k] += 1', "values", [], [], True),
+            ('ctx["values"].update(SETTINGS_s1)', "values", [], [], True),
+            ('ctx["values"].update(w=1)', "values", [], [], True),
+            ('ctx["values"] = dict(SETTINGS_s1)', "values", [], [], True),
+            ('ctx["values"] |= SETTINGS_s1', "values", [], [], True),
+            ('ctx["values"] = {}', "objects", [], [], False),
+            ('ctx["objects"].update(more)', "objects", [], [], True),
+            ('v = ctx["values"]\nv["w"] = 1', "values", [], [], False),
+            ('ctx.get("values", {})["w"] = 1', "values", [], [], False),
+            ('ctx["values"][0] = 1', "values", [], [], True),
+            ('ctx["objects"]["a"] = ctx["values"]["w"]\nctx["objects"]["a"] = 2', "objects", ["a"], [], False),
+        ]
+        for code, channel, written, read, opaque in cases:
+            with self.subTest(code=code, channel=channel):
+                self.assertEqual(ctx_keys(ast.parse(code), channel), (written, read, opaque))
+        self.assertEqual(CTX_CHANNELS, ("objects", "values"))
+
+    def test_the_values_pair_is_well_formed(self):
+        for sid, text, deps in (("s1", F.VALUES_S1, []), ("s2", F.VALUES_S2, ["s1"])):
+            with self.subTest(sid=sid):
+                p = validate_piece(text, "blender", sid=sid, deps=deps)
+                self.assertTrue(p.ok and p.contract_ok and p.form_ok, p.reasons())
+                self.assertEqual(codes(p), [])
+
+    def test_provides_missing_for_values(self):
+        write = '    ctx["values"]["sofa_width"] = SETTINGS_s2["sofa_width"]'
+        p = blender(values_code(write))
+        self.assertEqual(provides_missing(p),
+                         [("warn", "registers ctx[\"values\"] key(s) sofa_width that provides doesn't list", 0)])
+        self.assertTrue(p.ok and p.contract_ok, p.reasons())
+        listed = HANDOFF.replace("provides: x", 'provides: ctx["values"]["sofa_width"]')
+        self.assertEqual(provides_missing(blender(values_code(write), handoff=listed)), [])
+        self.assertEqual(provides_missing(blender(values_code("    ctx[\"values\"].update(SETTINGS_s2)"))), [])
+        lone = validate_piece("```python\n" + values_code(write) + "\n```\n", "blender", sid="s2", lone=True)
+        self.assertEqual(provides_missing(lone), [])  # no handoff, nothing to list it in
+
+    def test_both_channels_warn_objects_first(self):
+        body = ('    ctx["values"]["sofa_width"] = SETTINGS_s2["sofa_width"]\n'
+                '    ctx["values"].setdefault("sofa_depth", SETTINGS_s2["sofa_depth"])\n'
+                '    ctx["objects"]["sofa"] = None')
+        self.assertEqual(provides_missing(blender(values_code(body))), [
+            ("warn", "registers ctx[\"objects\"] key(s) sofa that provides doesn't list", 0),
+            ("warn", "registers ctx[\"values\"] key(s) sofa_width, sofa_depth that provides doesn't list", 0)])
+        half = HANDOFF.replace("provides: x", 'provides: chimera_sofa as ctx["objects"]["sofa"]')
+        self.assertEqual(provides_missing(blender(values_code(body), handoff=half)),
+                         [("warn", "registers ctx[\"values\"] key(s) sofa_width, sofa_depth that provides doesn't list",
+                           0)])
 
 
 class ScriptPieceTests(unittest.TestCase):

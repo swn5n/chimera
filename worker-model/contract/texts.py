@@ -72,16 +72,21 @@ CONTRACT_LONE_OPENING = (
 
 # ---------------------------------------------------------------- mode rules (PLAN lines 213-231, frozen)
 
-# PLAN line 216, with s2 written as {sid}.
+# PLAN line 216, with s2 written as {sid}. The guard's "values": {} and the ctx["values"] sentence are the user's
+# Nov 4 answer to contract question 1 (how a values-only step hands values on); before it, workers improvised
+# ctx["settings"] (36 stored pieces) and ctx["variables"] (31) that no reader was told about.
 MODE_BLENDER = (
     "Write one python code block for Blender 5.0 or newer, run headless with blender -b --python. At the top level "
     "put only imports, one dict SETTINGS_{sid} = {...} with the values a person might want to change, and def "
     "build_{sid}(ctx): holding all your step's work (helpers go inside it or are named _{sid}_…). End with if "
     "__name__ == \"__main__\": build_{sid}({\"scene\": bpy.context.scene, \"collection\": "
-    "bpy.context.scene.collection, \"objects\": {}}). Chimera calls every step's build_ function in plan order in "
-    "one script with one shared ctx: ctx[\"scene\"]; ctx[\"collection\"], the project's collection, where you link "
-    "everything you create; ctx[\"objects\"], where you register what other steps use under short keys "
-    "(ctx[\"objects\"][\"table\"] = obj) and find what your dependencies list under provides. If one is missing "
+    "bpy.context.scene.collection, \"objects\": {}, \"values\": {}}). Chimera calls every step's build_ function "
+    "in plan order in one script with one shared ctx: ctx[\"scene\"]; ctx[\"collection\"], the project's "
+    "collection, where you link everything you create; ctx[\"objects\"], where you register what other steps use "
+    "under short keys (ctx[\"objects\"][\"table\"] = obj) and find what your dependencies list under provides. "
+    "ctx[\"values\"] is the same for plain values other steps use, such as sizes, colours and counts; hand on the "
+    "ones a person might change from your SETTINGS_{sid}, so they stay editable there "
+    "(ctx[\"values\"][\"table_height\"] = SETTINGS_{sid}[\"table_height\"]). If one is missing "
     "because your piece runs alone, make a simple stand-in and print(\"chimera: stand-in\", key). Name new "
     "objects, materials and collections chimera_…. Prefer bpy.data over bpy.ops. Don't open, load or save .blend "
     "files, render or quit: if your step says to, put the path or render settings in SETTINGS_{sid}[\"output\"] "

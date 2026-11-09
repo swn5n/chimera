@@ -33,8 +33,8 @@ from . import planinfo
 from .goport import code_blocks, go_trim_space, python_lang, truncate
 from .linemap import LineMap
 from .today import norm_output
-from .validate import (Issue, Piece, assigned_names, ctx_keys, def_name, file_line, is_docstring, is_main_guard,
-                       top_level_names, validate_piece)
+from .validate import (CTX_CHANNELS, Issue, Piece, assigned_names, ctx_keys, def_name, file_line, is_docstring,
+                       is_main_guard, top_level_names, validate_piece)
 from . import texts as T
 
 STEP_HEADER = "# --- {sid}: {title} ---"  # marks each step's part of a joined script (round 2 finds it by title)
@@ -253,7 +253,11 @@ def alone_script(piece: Piece, keep_ctx=False, ctx_name="ctx", also=()):
     build_sN(ctx). Module-level ctx lets tools/scene_probe.py see what the piece registered. keep_ctx: the script
     follows its dependencies' script, so a module-level dict named ctx_name already there that looks like a ctx
     (an "objects" dict and a "collection") is passed on instead, with what they registered (join_script's guard
-    leaves one named ctx). also: more build functions to call after it, in order."""
+    leaves one named ctx), and one more tail line gives it ctx["values"] if it has none: a dependency's script
+    from before Nov 4 (the eval runner's after_deps can put one first) built ctx without it, and the reader then
+    died on KeyError 'values' instead of making its stand-ins. The condition is unchanged, since asking for
+    "values" there would throw away what the dependencies registered in ctx["objects"]; the piece's own lines keep
+    their numbers either way. also: more build functions to call after it, in order."""
     lines = source_lines(piece.code)
     for node, a, b in segments(piece.code, piece.tree):
         if is_main_guard(node):
@@ -266,11 +270,12 @@ def alone_script(piece: Piece, keep_ctx=False, ctx_name="ctx", also=()):
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             imports.add(node, piece.sid, node.lineno)
     tail = [] if ("import", "bpy", None) in imports.origin else ["import bpy"]
-    fresh = '{"scene": bpy.context.scene, "collection": bpy.context.scene.collection, "objects": {}}'
+    fresh = '{"scene": bpy.context.scene, "collection": bpy.context.scene.collection, "objects": {}, "values": {}}'
     if keep_ctx:
         c = ctx_name
         tail.append(f'ctx = {c} if isinstance(globals().get("{c}"), dict) and isinstance({c}.get("objects"), dict) '
                     f'and "collection" in {c} else {fresh}')
+        tail.append('ctx.setdefault("values", {})')  # a ctx from before ctx["values"]
     else:
         tail.append("ctx = " + fresh)
     tail += ["build_%s(ctx)" % sid for sid in [piece.sid] + list(also)]
@@ -435,7 +440,7 @@ def join_script(plan, pieces, mode):
         main_lines = ["    scene = bpy.context.scene",
                       "    collection = bpy.data.collections.new(\"chimera_%s\")" % slug(plan["title"]),
                       "    scene.collection.children.link(collection)",
-                      "    ctx = {\"scene\": scene, \"collection\": collection, \"objects\": {}}"]
+                      "    ctx = {\"scene\": scene, \"collection\": collection, \"objects\": {}, \"values\": {}}"]
         main_lines += ["    build_%s(ctx)" % sid for sid in order]
         if outputs:
             main_lines.append("    _chimera_output([%s])" % ", ".join("SETTINGS_" + sid for sid in outputs))
@@ -493,19 +498,85 @@ def _duplicate_names(pieces):
     return seams
 
 
+def _binds(node, channel):
+    """Whether node is ctx[channel], ctx.get(channel, ...) or ctx.setdefault(channel, ...): the dict itself."""
+    if isinstance(node, ast.Subscript):
+        return (isinstance(node.value, ast.Name) and node.value.id == "ctx" and isinstance(node.slice, ast.Constant)
+                and node.slice.value == channel)
+    return (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+            and node.func.attr in ("get", "setdefault") and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "ctx" and bool(node.args) and isinstance(node.args[0], ast.Constant)
+            and node.args[0].value == channel)
+
+
+def _bound_writes(tree, channel):
+    """(written, opaque) of the writes into ctx[channel] that ctx_keys doesn't follow: through a name every plain
+    binding of which (name = ..., name: T = ...) is the dict itself (_binds: `vals = ctx.setdefault("values", {})`,
+    `objs = ctx["objects"]`), or straight into ctx.get(channel)[k] or ctx.setdefault(channel, {})[k]. A literal key
+    stored or setdefault() through one is written; a computed key, update() or an augmented assignment to the name
+    (|=) is opaque. Reads through one stay unrecorded, as before, so this only takes seams away. Why: a values
+    step that wrote `v = ctx["values"]; v["sofa_width"] = ...` gave each of its readers a false ctx_key_missing in
+    the real gate (5.2.2 and 5.0.1), which fails them (blender_gate.SEAMS_FAIL) though the joined script runs, and
+    the told retry heard that no earlier step registers the key; 181 of the 343 distinct stored data-generation
+    pieces that write ctx["objects"] do it only through a bound name, and 33 of the 72 with an improvised values
+    channel. On the stored joins it changes no seam: 0 of 111 as they ran (bw-10's ROCK_COUNT seam stays) and 0 of
+    412 with a step failed in turn."""
+    seen = {}
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Assign) and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name):
+            seen.setdefault(n.targets[0].id, []).append(n.value)
+        elif isinstance(n, ast.AnnAssign) and isinstance(n.target, ast.Name) and n.value is not None:
+            seen.setdefault(n.target.id, []).append(n.value)
+    names = {k for k, values in seen.items() if all(_binds(v, channel) for v in values)}
+
+    def through(n):
+        return isinstance(n, ast.Name) and n.id in names or isinstance(n, ast.Call) and _binds(n, channel)
+
+    def literal(n):
+        return isinstance(n, ast.Constant) and isinstance(n.value, str)
+
+    written, opaque = [], False
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Subscript) and isinstance(n.ctx, ast.Store) and through(n.value):
+            if literal(n.slice):
+                written.append(n.slice.value)
+            else:
+                opaque = True
+        elif isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and through(n.func.value):
+            if n.func.attr == "update" or n.func.attr == "setdefault" and n.args and not literal(n.args[0]):
+                opaque = True
+            elif n.func.attr == "setdefault" and n.args:
+                written.append(n.args[0].value)
+        elif isinstance(n, ast.AugAssign) and isinstance(n.target, ast.Name) and n.target.id in names:
+            opaque = True
+    return list(dict.fromkeys(written)), opaque
+
+
 def _ctx_key_seams(plan, pieces, failed):
-    """A ctx["objects"] key a step reads that no earlier step writes (in the joined run it would make a
-    stand-in, which the plan-level check counts as a failure)."""
-    seams, written = [], {}
-    for p in pieces:
-        w, r = ctx_keys(p.tree)
-        for k in r:
-            if k not in written and k not in w:
-                why = " (the step that should have made it failed)" if failed else ""
-                seams.append(_seam("ctx_key_missing", "%s reads ctx[\"objects\"][%r], which no earlier step registers%s"
-                                   % (p.sid, k, why), p.sid))
-        for k in w:
-            written.setdefault(k, p.sid)
+    """A ctx["objects"] or ctx["values"] key a step reads that no earlier step writes (in the joined run it would
+    make a stand-in, which the plan-level check counts as a failure), every objects seam in plan order before the
+    values ones. A channel isn't judged from the first step that writes it in a way whose keys can't be read
+    (ctx_keys' opaque: the whole dict, update(), a computed key) on, that step's own reads included: a false seam
+    fails a good example at the gate (SEAMS_FAIL), while a value really missing still shows in the joined run.
+    On the joins as they ran that changes nothing (0 of 111; bw-10's ROCK_COUNT seam stays). With a step failed in
+    turn, 7 of check_join_parity's 463 task joins lose a seam for a key the failed step should have made, after an
+    earlier ctx["objects"] = {} or a computed key. Writes through a name bound to the channel count too
+    (_bound_writes), here only: provides_missing still reads ctx_keys alone."""
+    seams = []
+    for channel in CTX_CHANNELS:
+        written, opaque = {}, False  # opaque: an earlier step wrote keys that can't be read
+        for p in pieces:
+            w, r, o = ctx_keys(p.tree, channel)
+            bw, bo = _bound_writes(p.tree, channel)
+            w += [k for k in bw if k not in w]
+            opaque = opaque or o or bo  # this step's own such write counts for its own reads too
+            for k in r:
+                if not opaque and k not in written and k not in w:
+                    why = " (the step that should have made it failed)" if failed else ""
+                    seams.append(_seam("ctx_key_missing", "%s reads ctx[\"%s\"][%r], which no earlier step registers%s"
+                                       % (p.sid, channel, k, why), p.sid))
+            for k in w:
+                written.setdefault(k, p.sid)
     return seams
 
 
@@ -516,8 +587,11 @@ _KEY_IN = re.compile(r"\[\s*['\"]([^'\"]+)['\"]\s*\]")
 
 
 def _code_like(tok):
-    """A bare word that looks like a name in code: snake_case, CamelCase inside, a dotted name, or a path."""
-    if not tok or tok[0].isdigit():
+    """A bare word that looks like a name in code: snake_case, CamelCase inside, a dotted name, or a path. A word
+    starting with a digit isn't one; isdecimal, not isdigit, since Go's unicode.IsDigit is the decimal digits and
+    isdigit also counts 128 others such as superscripts (the Nov 4 parity run's reseeded uses lines reached one:
+    ²x_y10.123/abcStore.alla/b.py). No stored reply, task, eval file or generated example has a word starting so."""
+    if not tok or tok[0].isdecimal():
         return False
     if "/" in tok or re.search(r"\.(py|js|ts|json|blend|png|css|html)$", tok):
         return True
@@ -547,41 +621,493 @@ def uses_names(chunk):
     return list(dict.fromkeys(out))
 
 
-def _uses_chunks(uses):
-    """[(steps, text)]: a uses line split at each step it names; text before the first goes with the first."""
-    refs = list(re.finditer(r"\bs[1-9]\d?\b", uses))
-    if not refs:
-        return []
-    out = []
-    for k, m in enumerate(refs):
-        end = refs[k + 1].start() if k + 1 < len(refs) else len(uses)
-        start = 0 if k == 0 else m.start()
-        out.append(([m.group(0)], uses[start:end]))
+_USES_REF = re.compile(r"\bs[1-9]\d?\b")  # a step id (Go: stepRefRe through pyMatches)
+_USES_OPENERS, _USES_CLOSERS, _USES_DASHES, _USES_QUOTES = "([{", ")]}", "-–—", "\"'`"
+_USES_CONNECT = re.compile(r"(?:\s|[,/&+]|and|or)*|[-–—]")  # fullmatch: the text between two refs of a run
+_USES_PREFIX = re.compile(r"[^\w]*(?:(?:[Ff]rom|[Ss]teps?)[^\w]+)?")  # fullmatch: before a prefix item's first run
+_USES_OPEN = re.compile(r"\s*[)\]}]*\s*(?::|：|->|=>|→|[-–—]\s)")  # match: after an open run
+_USES_BARE = re.compile(r"(?:\s|[,/&+.\-–—]|and|or)*")  # fullmatch: a bare item's depth-0 text
+_USES_ENDS = re.compile(r"[\s.]*")  # fullmatch: after the ref an item ends with
+_USES_RANGE_MAX = 9
+_USES_POSSESSIVES = ("'s", "’s")  # rule 5b
+_USES_BREAK_WORDS = ("plus",)  # rule 6b
+_USES_SKIP_WORDS = _USES_BREAK_WORDS + ("the", "a", "an")  # rule 6b: passed on the way to the name after a break
+_USES_CUE = ("with",)  # rule 7: the word after a suffix run that lets a break cut
+_USES_CUE_OWNERS = ("its", "their")  # rule 7: the word after the cue
+_SETTINGS_NAME = re.compile(r"SETTINGS_(s[1-9][0-9]?)")  # uses_seams: fullmatch on a name (Go: settingsNameRe, ^...$)
+# _settings_keys: SETTINGS_sN and its subscripts (Go: settingsSubRe, notWord + `(SETTINGS_s...)` through pyMatches)
+_SETTINGS_SUB = re.compile(r"(?<![\w])SETTINGS_(s[1-9][0-9]?)((?:\s*\[\s*['\"][^'\"]+['\"]\s*\])+)")
+
+
+def _uses_w(ch):
+    """re's \\w for one character (Go: isPyWord, r == '_' || unicode.IsLetter(r) || unicode.IsNumber(r))."""
+    return ch == "_" or ch.isalnum()
+
+
+def _uses_scan(uses):
+    kind, depth, d = [], [], 0
+    for ch in uses:
+        if ch in _USES_OPENERS:
+            d += 1
+            kind.append("o")
+        elif ch in _USES_CLOSERS and d > 0:
+            d -= 1
+            kind.append("c")
+        else:
+            kind.append("x")
+        depth.append(d)
+    return kind, depth
+
+
+class _UsesGroup:
+    __slots__ = ("steps",)
+
+    def __init__(self, steps):
+        self.steps = steps
+
+
+def _uses_runs(uses, refs):
+    """[[steps, start, end]] from refs [(start, end, sid)] in order (rule 4)."""
+    runs = []
+    for s, e, sid in refs:
+        if runs:
+            last = runs[-1]
+            gap = uses[last[2]:s]
+            if _USES_CONNECT.fullmatch(gap) or last[0] == [sid]:
+                if len(gap) == 1 and gap in _USES_DASHES:
+                    a, b = int(last[0][-1][1:]), int(sid[1:])
+                    if a < b <= a + _USES_RANGE_MAX:
+                        for n in range(a + 1, b):
+                            if "s%d" % n not in last[0]:
+                                last[0].append("s%d" % n)
+                if sid not in last[0]:
+                    last[0].append(sid)
+                last[2] = e
+                continue
+        runs.append([[sid], s, e])
+    return runs
+
+
+def _uses_bracket_end(kind, depth, o, b, level):
+    """Just after the closer of the bracket opened at o (the first closer after o of depth level), else b."""
+    for c in range(o + 1, b):
+        if kind[c] == "c" and depth[c] == level:
+            return c + 1
+    return b
+
+
+def _uses_marks(uses, kind, depth, a, b, level):
+    """Rule 6: the marks' starts in [a, b)."""
+    out, n = [], len(uses)
+    for i in range(a, b):
+        if kind[i] != "x" or depth[i] > level:
+            continue
+        ch = uses[i]
+        if (ch == "a" and i + 3 <= b and uses.startswith("and", i) and (i == 0 or not _uses_w(uses[i - 1]))
+                and (i + 3 == n or not _uses_w(uses[i + 3]))):
+            out.append(i)
+        elif ch in _USES_DASHES and 0 < i < n - 1 and uses[i - 1].isspace() and uses[i + 1].isspace():
+            out.append(i)
     return out
 
 
+def _uses_word_at(uses, i, b, words):
+    """The word of words (ASCII, lower case) at i, in any ASCII case, ending by b, with no \\w character just before
+    or just after it; else None."""
+    for w in words:
+        s = uses[i:i + len(w)]
+        if (i + len(w) <= b and s.isascii() and s.lower() == w and (i == 0 or not _uses_w(uses[i - 1]))
+                and (i + len(w) == len(uses) or not _uses_w(uses[i + len(w)]))):
+            return w
+    return None
+
+
+def _uses_name_word(uses, j, b):
+    """Rules 5b and 6b: the word at j (the characters up to the next white space, or b) holds a name."""
+    k = j
+    while k < b and not uses[k].isspace():
+        k += 1
+    return k > j and bool(uses_names(uses[j:k]))
+
+
+def _uses_breaks(uses, kind, depth, a, b, level):
+    """Rule 6b: the breaks' starts in [a, b)."""
+    out, memo = [], {}
+
+    def named_from(j):  # past white space, break words and articles, the next word holds a name
+        passed = []
+        while True:
+            while j < b and uses[j].isspace():
+                j += 1
+            if j in memo:
+                r = memo[j]
+                break
+            w = _uses_word_at(uses, j, b, _USES_SKIP_WORDS)
+            if w is None:
+                r = memo[j] = _uses_name_word(uses, j, b)
+                break
+            passed.append(j)
+            j += len(w)
+        for x in passed:
+            memo[x] = r
+        return r
+
+    for i in range(a, b):
+        if kind[i] != "x" or depth[i] > level:
+            continue
+        w = _uses_word_at(uses, i, b, _USES_BREAK_WORDS)
+        if w is not None and named_from(i + len(w)):
+            out.append(i)
+    return out
+
+
+def _uses_cued(uses, lo, hi):
+    """Rule 7: the first word after a suffix run's end lo (past white space and closers, before hi) is "with", and the
+    word after it (past white space) "its" or "their"."""
+    j = lo
+    while j < hi and (uses[j].isspace() or uses[j] in _USES_CLOSERS):
+        j += 1
+    w = _uses_word_at(uses, j, hi, _USES_CUE)
+    if w is None:
+        return False
+    j += len(w)
+    while j < hi and uses[j].isspace():
+        j += 1
+    return _uses_word_at(uses, j, hi, _USES_CUE_OWNERS) is not None
+
+
+def _uses_pair(uses, a, b, s, e):
+    """Rule 5b for a run [s, e): a possessive right after it, or white space and a word with a name, not after
+    "from"."""
+    for p in _USES_POSSESSIVES:
+        if uses.startswith(p, e) and e + len(p) <= b and (e + len(p) == len(uses) or not _uses_w(uses[e + len(p)])):
+            return True
+    j = e
+    while j < b and uses[j].isspace():
+        j += 1
+    if j == e or j == b or not _uses_name_word(uses, j, b):
+        return False
+    k = s
+    while k > a and uses[k - 1].isspace():
+        k -= 1
+    w = k
+    while w > a and _uses_w(uses[w - 1]):
+        w -= 1
+    before = uses[w:k] if k < s else ""
+    return not (before.isascii() and before.lower() == "from")
+
+
+def _uses_quiet(uses, e, s):
+    """Rule 5b: between a run's end e and the next run's start s, past a possessive right after the run, white space
+    and the word after it (the characters up to the next white space), uses_names finds no name."""
+    j = e
+    for p in _USES_POSSESSIVES:
+        if uses.startswith(p, j) and j + len(p) <= s:
+            j += len(p)
+            break
+    while j < s and uses[j].isspace():
+        j += 1
+    while j < s and not uses[j].isspace():
+        j += 1
+    return not uses_names(uses[j:s])
+
+
+class _UsesItem:
+    __slots__ = ("start", "end", "semi", "owner", "has_ref", "prefix", "pair", "last_open", "ends_with_id", "bare",
+                 "first", "last")
+
+    def __init__(self, start, end, semi):
+        self.start, self.end, self.semi = start, end, semi
+        self.owner = None  # a _UsesGroup (or None) per character of the item
+        self.has_ref = self.prefix = self.pair = self.last_open = self.ends_with_id = self.bare = False
+        self.first = self.last = None  # its first and last run's groups
+
+
+def _uses_read(uses, it, refs, kind, depth):
+    a, b = it.start, it.end
+    it.has_ref = True
+    it.ends_with_id = bool(_USES_ENDS.fullmatch(uses[refs[-1][1]:b]))
+    rest, k = [], 0
+    for i in range(a, b):  # rule 9's text: kind "x" at depth 0, outside the refs
+        while k < len(refs) and refs[k][1] <= i:
+            k += 1
+        if not (k < len(refs) and refs[k][0] <= i) and kind[i] == "x" and depth[i] == 0:
+            rest.append(uses[i])
+    it.bare = bool(_USES_BARE.fullmatch("".join(rest)))
+    dmin = min(depth[s] for s, _, _ in refs)
+    runs = _uses_runs(uses, [r for r in refs if depth[r[0]] == dmin])
+    it.prefix = bool(_USES_PREFIX.fullmatch(uses[a:runs[0][1]]))
+    it.pair = (not it.prefix and len(runs) >= 2 and not uses_names(uses[a:runs[0][1]])  # rule 5b
+               and all(_uses_pair(uses, a, b, r[1], r[2]) for r in runs)
+               and all(_uses_quiet(uses, runs[k][2], runs[k + 1][1]) for k in range(len(runs) - 1)))
+    opened = [bool(_USES_OPEN.match(uses, r[2], b)) for r in runs]
+    marks = _uses_marks(uses, kind, depth, a, b, dmin)
+    breaks = _uses_breaks(uses, kind, depth, a, b, dmin)
+    groups = [_UsesGroup(r[0]) for r in runs]
+    cuts = []
+    for k in range(len(runs) - 1):  # rule 7
+        lo, hi = runs[k][2], runs[k + 1][1]
+        ms = [m for m in marks if lo <= m < hi]
+        bs = [x for x in breaks if lo <= x < hi]
+        if it.prefix or it.pair or opened[k]:
+            cuts.append(ms[-1] if ms else hi)
+        elif ms:
+            cuts.append(ms[0])
+        elif bs and _uses_cued(uses, lo, hi):
+            cuts.append(bs[0])
+        else:
+            j = lo
+            while j < hi and kind[j] == "x" and uses[j].isspace():
+                j += 1
+            if j < hi and kind[j] == "o" and depth[j] == dmin + 1:
+                cuts.append(_uses_bracket_end(kind, depth, j, b, dmin))
+            else:
+                cuts.append(lo)
+    owner = [None] * (b - a)
+    for g, s, e in zip(groups, [a] + cuts, cuts + [b]):
+        for i in range(s, e):
+            owner[i - a] = g
+    deep = [r for r in refs if depth[r[0]] > dmin]
+    o = a
+    while deep and o < b:  # rule 8
+        if kind[o] == "o" and depth[o] == dmin + 1:
+            e = _uses_bracket_end(kind, depth, o, b, dmin)
+            held = [r for r in deep if o < r[0] < e]
+            if held:
+                steps = []
+                for r in _uses_runs(uses, held):
+                    steps += [x for x in r[0] if x not in steps]
+                g = _UsesGroup(steps)
+                for i in range(o, e):
+                    owner[i - a] = g
+            o = e
+        else:
+            o += 1
+    it.owner = owner
+    it.first, it.last, it.last_open = groups[0], groups[-1], opened[-1]
+
+
+def _uses_chunks(uses):
+    r"""[(steps, text)] in the line's order; [] when the line names no step. steps is a list of step ids (several: a
+    group), text what uses_names reads. Since the user's answer to contract question 4 (Nov 5) a uses line is a list of
+    items, each given to the step id in it, or after it ("X from s1", "X (s1)"), or to an "sN:" lead before it; until
+    then the line was cut at each id, and the text before an id's successor was that id's, so "a from s1, b from s2"
+    read b as s1's. A second round the same day (round 8, the user's yes) fixed the two forms the first read worse
+    than the reader before it: two ids in one item after a lead word, read as "<id>'s name" or "<id> name" pairs
+    ("Uses s1's a with s2's b", rule 5b), and a list broken by plus after "with its" ("a from s1 with its b plus c from
+    s2", rules 6b and 7). Round 8's other changes were taken out the same day, and these two narrowed (the items
+    around a pair item, a pair with a name before the next id, also and then, and a bare "with" read as round 7's
+    reader read them), since the wider forms read lines worse than it (worker-model/datagen/DESIGN.md).
+    Go's usesChunks (app/hydra_assemble.go) gives the same chunks on every line (check_join_parity). Positions are
+    code points (Go: byte offsets of whole runes); every character the rules compare is one code point, and every one
+    rules 5b, 6b and 7's cue compare is ASCII but white space (str.isspace), \w (_uses_w) and the ’ of ’s, so their
+    words are matched in ASCII case only.
+
+    1. Depth: depth[i] is the bracket depth after character i; ( [ { add one, ) ] } take one away when one is open.
+       kind[i] is "o" an opener, "c" a closer that closed one, "x" anything else. Quotes aren't tracked.
+    2. Items: the line is cut at each "," and ";" of kind "x" at depth 0 (the cut characters are in no item); a piece
+       that is all white space is no item. Each ";" starts a new ;-group.
+    3. Refs: \bs[1-9]\d?\b over the whole line (Go: pyMatches(stepRefRe)); an item's refs are those inside it. dmin is
+       the least depth among them: refs at dmin are shallow, the rest deep.
+    4. Runs: a shallow ref joins the run before it when the text between fully matches _USES_CONNECT (white space,
+       , / & + and or; or exactly one dash), or when that run is this same single step. One dash from sA to sB with
+       A < B <= A + _USES_RANGE_MAX adds sA+1 .. sB-1 too ("s2-s6"). A run keeps each step once, in written order.
+    5. Kinds: an item is a prefix item when the text before its first run fully matches _USES_PREFIX ("s1: x", "from
+       s1 - x", "**s1**: x"); a run is open when _USES_OPEN matches after it (":", an arrow, a spaced dash). Every run
+       of a prefix item or of a pair item (5b), and an open run, is forward; the others are suffix runs.
+    5b. Pairs: an item that isn't a prefix item, has two or more runs and no name in the text before its first run
+       (uses_names finds none there) is a pair item when every run is followed either by a possessive ('s or ’s
+       right after the run, inside the item, with no \w character after it) or by white space and then a word (the
+       characters up to the next white space, inside the item) that holds a name (uses_names finds one in it), and,
+       for the second form, the word just before the run (its \w characters, past white space only, inside the item)
+       isn't "from" in any ASCII case; and when, between each run and the next, past a possessive right after the run,
+       white space and the word after it (the characters up to the next white space), uses_names finds no name ("Uses
+       s1's a with s2's b", "the s1 a with the s2 b", "Combines s1 a & s2 b"; not "chair from s2 table_obj from s1
+       rug_obj", not "Extends s1's room with lamp_obj from s2's output", and not "Uses s1 -> a s2 -> b", whose runs
+       are open). A pair item is no prefix item for rule 10: the items around it read as they would without 5b.
+    6. Marks: an "and" with no \w character beside it, and a dash with white space on both sides, of kind "x" at
+       depth dmin or less.
+    6b. Breaks: of kind "x" at depth dmin or less inside the item, the word plus (ASCII letters in any case, with no \w
+       character just before or just after it), when the first word after it holds a name: past white space and any
+       plus and the words the, a, an (the same word test), the characters up to the next white space, inside the
+       item, in which uses_names finds a name ("plus slat_objs", "plus the slat_objs"; not "plus its seat_rail" or
+       "plus, from s2"; also and then are no breaks).
+    7. Runs' text: the first run's starts at the item's start, the last's ends at its end. Between run k and k+1 the
+       cut is, for a forward run k, the last mark between them, else run k+1's start; for a suffix run k, the first
+       mark between them, else, when the first word after run k (past white space and closers ) ] }) is "with" and
+       the word after it (past white space) "its" or "their", both in any ASCII case, the first break between them ("a
+       from s1 with its b plus c from s2"; not "Joins a from s1 with b plus c from s2"), else the end of a bracket
+       right after run k ("a from s1 (for the camera) b from s2"), else run k's end.
+    8. Deep brackets: a bracket whose opener has depth dmin + 1 and that holds a deep ref goes whole to its refs'
+       steps, as one group ("base_plate from s1 (s2 failed, so bolt_holes is a stand-in)").
+    9. Bare items: an item with a ref whose depth-0 text outside its refs fully matches _USES_BARE ("s2, s3
+       (merged)") shares the last group of the item just before it, when that one is in the same ;-group and ends with
+       an id (_USES_ENDS after its last ref); its steps are added to that group. In line order.
+    10. Items with no ref, within their ;-group: the nearest earlier item with a ref, if it is a prefix item or its
+       last run is open, gives its last group; else the nearest later item with a ref, unless it is a prefix item,
+       gives its first group ("sofa, table from s2"); else the item is no step's ("scene_root; s1: x").
+    11. Chunks: each item's characters are cut where their group changes and just before each ref (before its
+       opening quote when the same quote stands right before and after it, '{"s1": ...}', and that quote takes the
+       ref's group), but not after "/" or "." (src/s2/legs.py, x.s2). Characters with no group, and empty texts, give
+       no chunk.
+    """
+    uses = uses or ""
+    refs = [(m.start(), m.end(), m.group(0)) for m in _USES_REF.finditer(uses)]
+    if not refs:
+        return []
+    kind, depth = _uses_scan(uses)
+    items, start, semi = [], 0, 0
+    for i in [i for i, ch in enumerate(uses) if ch in ",;" and kind[i] == "x" and depth[i] == 0] + [len(uses)]:
+        if uses[start:i].strip():
+            it = _UsesItem(start, i, semi)
+            mine = [r for r in refs if start <= r[0] and r[1] <= i]
+            if mine:
+                _uses_read(uses, it, mine, kind, depth)
+            items.append(it)
+        if i < len(uses) and uses[i] == ";":
+            semi += 1
+        start = i + 1
+    for k in range(1, len(items)):  # rule 9
+        it, prev = items[k], items[k - 1]
+        if it.has_ref and it.bare and prev.has_ref and prev.ends_with_id and prev.semi == it.semi:
+            shared = prev.last
+            for g in it.owner:
+                if g is not shared:
+                    shared.steps += [x for x in g.steps if x not in shared.steps]
+            it.owner = [shared] * len(it.owner)
+            it.first = it.last = shared
+    for k, it in enumerate(items):  # rule 10
+        if it.has_ref:
+            continue
+        before = next((items[j] for j in range(k - 1, -1, -1) if items[j].has_ref and items[j].semi == it.semi), None)
+        after = next((items[j] for j in range(k + 1, len(items)) if items[j].has_ref and items[j].semi == it.semi), None)
+        g = None
+        if before is not None and (before.prefix or before.last_open):
+            g = before.last
+        elif after is not None and not after.prefix:
+            g = after.first
+        if g is not None:
+            it.owner = [g] * (it.end - it.start)
+    cut_at = set()  # rule 11
+    for s, e, _ in refs:
+        if s > 0 and uses[s - 1] in "/.":
+            continue
+        if s > 0 and e < len(uses) and uses[s - 1] == uses[e] and uses[e] in _USES_QUOTES:
+            cut_at.add(s - 1)
+            it = next(x for x in items if x.start <= s < x.end)  # the opening quote goes with its ref
+            if it.owner is not None and it.start <= s - 1:
+                it.owner[s - 1 - it.start] = it.owner[s - it.start]
+        else:
+            cut_at.add(s)
+    out = []
+    for it in items:
+        if it.owner is None:
+            continue
+        cur, s = None, it.start
+        for i in range(it.start, it.end + 1):
+            g = it.owner[i - it.start] if i < it.end else None
+            if i < it.end and g is cur and i not in cut_at:
+                continue
+            if cur is not None and i > s:
+                out.append((list(cur.steps), uses[s:i]))
+            cur, s = g, i
+    return out
+
+
+def _uses_hay(d):
+    return ((d.handoff.provides if d.handoff else "") + "\n" + (d.code or "") + "\n" +
+            "\n".join(f.path + "\n" + f.body for f in d.files) + "\n" + (d.section or d.body or ""))
+
+
+def _uses_found(name, hay):
+    if "/" in name or re.search(r"\.\w{1,5}$", name) and not re.fullmatch(r"[A-Za-z_][\w.]*", name):
+        return name in hay  # a path
+    return all(re.search(r"\b%s\b" % re.escape(x), hay) for x in name.split("."))  # a name, or a dotted one
+
+
+def _settings_keys(text, chunks=None):
+    """Round 8's keys: {key: sN} for each key a uses line has only in subscripts of SETTINGS_sN, all of one step:
+    SETTINGS_s1["width"], SETTINGS_s1['colors']['shade']. A key that uses_names also finds elsewhere in the line, or
+    that sits in chains of two steps, stays with its chunk ("width_m from s2 (overrides SETTINGS_s1["width_m"])" keeps
+    width_m with s2). Elsewhere is read twice, with every such subscript chain blanked out (one space each): on the
+    whole line, which also holds the text no chunk reaches, and on each of the line's chunks (_uses_chunks(text),
+    which uses_seams passes in; None reads them here), the pieces the seams read. A quote span on the whole line can
+    hide a plain use its chunk shows: in "Uses s2's seat_h; SETTINGS_s1['seat_h'] is s1's default" the blanked line
+    gives one quoted name, "s seat_h;   is s1", and the chunk "s2's seat_h" gives seat_h, so seat_h stays with s2
+    (Nov 5, round 8's re-check; before it the key went to s1, whose dict held it, and s2 went unchecked). A quote span
+    inside one chunk still hides it ("s2's seat_h (a 'seat' height) and SETTINGS_s1['seat_h']": seat_h to s1)."""
+    steps_of = {}
+    for m in _SETTINGS_SUB.finditer(text):
+        for k in _KEY_IN.findall(m.group(2)):
+            steps_of.setdefault(k, set()).add(m.group(1))
+    if not steps_of:
+        return {}
+    rest = set(uses_names(_SETTINGS_SUB.sub(" ", text)))
+    for _, chunk in _uses_chunks(text) if chunks is None else chunks:
+        rest.update(uses_names(_SETTINGS_SUB.sub(" ", chunk)))
+    return {k: next(iter(v)) for k, v in steps_of.items() if len(v) == 1 and k not in rest}
+
+
 def uses_seams(pieces_by_sid, failed):
-    """Every "uses" should match a "provides" (heuristic: each code-like name a uses line gives for a step
-    must appear in that step's provides line or its piece)."""
+    """Every "uses" should match a "provides" (heuristic: each code-like name a uses line gives for a step must appear
+    in that step's provides line or its piece). The steps are _uses_chunks': each item goes to the step id in it or
+    after it, or to an "sN:" lead before it. A group ("from s1 and s2", "s2-s4") is skipped when one of its steps
+    failed or isn't in the join (it may have made the name), else a name none of them holds is a seam, written with
+    the group as s1/s2; one per piece, steps and name. One step's message is the same as before Nov 5. Since round 8
+    (Nov 5) a SETTINGS_sN name, and a key the line has only in subscripts of one step's SETTINGS_sN (_settings_keys),
+    is judged against sN alone, wherever it is in the line (the contract gives each step one dict SETTINGS_{sid}, so
+    the name carries its step), and skipped only when sN failed or isn't in the join: in a chunk, and, after the
+    chunks, in text that goes to no step and in a line with no step id ("SETTINGS_s1, panel_array"). So it also
+    judges a SETTINGS_sN the line says it doesn't use, in text no chunk reaches ("table_top from s1, not SETTINGS_s2",
+    "SETTINGS_s2 (unused)") and inside a chunk whose group has a failed step ("lamp_shade (not SETTINGS_s1) from s2"
+    with s2 failed), where round 7's reader judged nothing: the name gives a seam only when sN has no SETTINGS_sN dict
+    of its own (in Blender mode a contract breach), and a key of such a subscript ("table_w from s1, not
+    SETTINGS_s2['width']") whenever sN's piece lacks that key, which needs no breach. Accepted as it is (Nov 5, the
+    main session's decision): it follows the approved "wherever it is in the line", no stored line has either form,
+    and the narrowings tried for the key read more hand-made lines worse than round 7's reader than they fixed."""
     seams = []
+    hays = {}
+
+    def hay(s):
+        if s not in hays:
+            hays[s] = _uses_hay(pieces_by_sid[s])
+        return hays[s]
+
     for sid, p in pieces_by_sid.items():
         if not p.handoff or not p.handoff.uses:
             continue
-        for steps, chunk in _uses_chunks(p.handoff.uses):
-            dep = steps[0]
-            if dep in failed or dep not in pieces_by_sid:
-                continue
-            d = pieces_by_sid[dep]
-            hay = ((d.handoff.provides if d.handoff else "") + "\n" + (d.code or "") + "\n" +
-                   "\n".join(f.path + "\n" + f.body for f in d.files) + "\n" + (d.section or d.body or ""))
+        seen = set()
+        chunks = _uses_chunks(p.handoff.uses)
+        keys = _settings_keys(p.handoff.uses, chunks)
+        for steps, chunk in chunks:
+            skip = any(s in failed or s not in pieces_by_sid for s in steps)
             for name in uses_names(chunk):
-                if "/" in name or re.search(r"\.\w{1,5}$", name) and not re.fullmatch(r"[A-Za-z_][\w.]*", name):
-                    found = name in hay  # a path
-                else:  # a name, or a dotted one (Store.all: class Store with a method all)
-                    found = all(re.search(r"\b%s\b" % re.escape(x), hay) for x in name.split("."))
-                if not found:
+                m = _SETTINGS_NAME.fullmatch(name)
+                one = m.group(1) if m else keys.get(name)
+                if one is not None:  # SETTINGS_sN and its keys are sN's, whatever chunk they are in
+                    st = [one]
+                    if one in failed or one not in pieces_by_sid:
+                        continue
+                elif skip:
+                    continue
+                else:
+                    st = steps
+                dep = "/".join(st)
+                if (dep, name) in seen:
+                    continue
+                seen.add((dep, name))
+                if not any(_uses_found(name, hay(s)) for s in st):
                     seams.append(_seam("uses_unmatched", "%s uses %r from %s, which %s doesn't provide"
                                        % (sid, name, dep, dep), sid))
+        for name in uses_names(p.handoff.uses):  # text no chunk reaches, and a line with no step id
+            m = _SETTINGS_NAME.fullmatch(name)
+            one = m.group(1) if m else keys.get(name)
+            if one is None or one in failed or one not in pieces_by_sid or (one, name) in seen:
+                continue
+            seen.add((one, name))
+            if not _uses_found(name, hay(one)):
+                seams.append(_seam("uses_unmatched", "%s uses %r from %s, which %s doesn't provide"
+                                   % (sid, name, one, one), sid))
     return seams
 
 

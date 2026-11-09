@@ -152,6 +152,76 @@ func TestBlenderTopLevelRules(t *testing.T) {
 	if p := blenderPiece(fixtureS2 + "\ndef broken(:\n    pass"); !p.contractOK() {
 		t.Error("a syntax error alone keeps the contract's shape")
 	}
+
+	// provides_missing for each channel, objects first, the objects words as before.
+	provides := func(code, list string) []string {
+		p := validatePiece("```python\n"+code+"\n```\n\n"+strings.Replace(fixtureHandoff, "provides: thing", "provides: "+list, 1), pieceAsk{Mode: modeBlender, Sid: "s2", MaxTokens: maxPieceTokens})
+		var out []string
+		for _, i := range p.Issues {
+			if i.Code == "provides_missing" {
+				out = append(out, i.Level+": "+i.Message)
+			}
+		}
+		return out
+	}
+	value := strings.Replace(fixtureS2, `    ctx["objects"]["thing"] = None`, `    ctx["values"]["sofa_width"] = SETTINGS_s2["size"]`, 1)
+	if got := provides(value, "chimera_sofa"); !slices.Equal(got, []string{`warn: registers ctx["values"] key(s) sofa_width that provides doesn't list`}) {
+		t.Errorf("a value not provided: %q", got)
+	}
+	if got := provides(value, `chimera_sofa, sofa_width as ctx["values"]["sofa_width"]`); len(got) != 0 {
+		t.Errorf("a value provided: %q", got)
+	}
+	both := strings.Replace(fixtureS2, `    ctx["objects"]["thing"] = None`, "    ctx[\"values\"][\"sofa_width\"] = 2\n    ctx[\"objects\"][\"couch\"] = None\n    ctx[\"values\"].setdefault(\"sofa_depth\", 1)", 1)
+	if got := provides(both, "chimera_sofa"); !slices.Equal(got, []string{`warn: registers ctx["objects"] key(s) couch that provides doesn't list`, `warn: registers ctx["values"] key(s) sofa_width, sofa_depth that provides doesn't list`}) {
+		t.Errorf("both channels: %q", got)
+	}
+	if got := provides(strings.Replace(fixtureS2, `"thing"`, `"other"`, 1), "thing"); !slices.Equal(got, []string{`warn: registers ctx["objects"] key(s) other that provides doesn't list`}) {
+		t.Errorf("the objects words: %q", got)
+	}
+	if got := provides(strings.Replace(fixtureS2, `    ctx["objects"]["thing"] = None`, "    ctx[\"values\"].update(SETTINGS_s2)\n    ctx[\"objects\"][\"thing\"] = None", 1), "thing"); len(got) != 0 {
+		t.Errorf("keys that can't be read aren't asked for: %q", got)
+	}
+	// A write through a bound name counts for the seams only (ctxBoundWrites): asking
+	// provides for it would drop alias writers' unlisted keys as new warnings.
+	if got := provides(strings.Replace(fixtureS2, `    ctx["objects"]["thing"] = None`, "    v = ctx[\"values\"]\n    v[\"sofa_width\"] = 2\n    ctx[\"objects\"][\"thing\"] = None", 1), "thing"); len(got) != 0 {
+		t.Errorf("an alias write isn't asked for: %q", got)
+	}
+}
+
+// ctxKeys reads one channel at a time, and says when a piece writes it in a way whose
+// keys can't be read.
+func TestCtxKeys(t *testing.T) {
+	for _, c := range []struct {
+		code, channel string
+		written, read []string
+		opaque        bool
+	}{
+		{`ctx["values"]["w"] = 1`, "values", []string{"w"}, nil, false},
+		{`ctx["values"]["w"] = 1`, "objects", nil, nil, false},
+		{`x = ctx["values"]["w"] + ctx["values"].get("d", 0)`, "values", nil, []string{"w", "d"}, false},
+		{`ctx["values"].setdefault("w", 1)`, "values", []string{"w"}, nil, false},
+		{`ctx["values"].setdefault(k, 1)`, "values", nil, nil, true},
+		{`ctx["values"][k] = 1`, "values", nil, nil, true},
+		{`ctx["values"][k] += 1`, "values", nil, nil, true},
+		{`ctx["values"].update(SETTINGS_s1)`, "values", nil, nil, true},
+		{`ctx["values"].update(w=1)`, "values", nil, nil, true},
+		{`ctx["values"] = dict(SETTINGS_s1)`, "values", nil, nil, true},
+		{`ctx["values"] |= SETTINGS_s1`, "values", nil, nil, true},
+		{`ctx["values"] = {}`, "objects", nil, nil, false},
+		{`ctx["objects"].update(more)`, "objects", nil, nil, true},
+		{`v = ctx["values"]` + "\n" + `v["w"] = 1`, "values", nil, nil, false},
+		{`ctx.get("values", {})["w"] = 1`, "values", nil, nil, false},
+		{`ctx["values"][0] = 1`, "values", nil, nil, true},
+	} {
+		tree, err := pyParse(c.code + "\n")
+		if err != nil {
+			t.Fatalf("%q: %s", c.code, err.msg)
+		}
+		w, r, opaque := ctxKeys(tree, c.channel)
+		if !slices.Equal(w, c.written) || !slices.Equal(r, c.read) || opaque != c.opaque {
+			t.Errorf("%q in %s: wrote %q, read %q, opaque %v", c.code, c.channel, w, r, opaque)
+		}
+	}
 }
 
 func TestScriptTopLevelRules(t *testing.T) {

@@ -350,6 +350,38 @@ class ScoreHelperTests(unittest.TestCase):
         self.assertEqual(score.lines_changed("a\nb\nc", "a\nc"), 1)
         self.assertEqual(score.lines_changed("a\nb", "a\nb"), 0)
 
+    def test_values_keys_are_provided_names(self):
+        # ctx["values"] (contract question 1, decided Nov 4): its keys are names a step provides, the channel's own
+        # name isn't (before, "values" counted as one, which no scene or ctx["objects"] has: always missing)
+        self.assertEqual(score.provided_names('chimera_sofa as ctx["objects"]["sofa"]; ctx["values"]["sofa_width"]'),
+                         ["chimera_sofa", "sofa", "sofa_width"])
+        self.assertEqual(score.provided_names('ctx["scene"], ctx["collection"], ctx["values"], ctx["objects"]'), [])
+        h = types.SimpleNamespace(provides='chimera_sofa as ctx["objects"]["sofa"]; ctx["values"]["sofa_width"]')
+        self.assertEqual(score.provides_probe(h, {"names": ["chimera_sofa"], "ctx_keys": ["sofa"],
+                                                  "ctx_values": ["sofa_width"]})["missing"], [])
+        # a record from before Nov 4 has no ctx_values: the value key is missing, the rest is read as before
+        self.assertEqual(score.provides_probe(h, {"names": ["chimera_sofa"], "ctx_keys": ["sofa"]})["missing"],
+                         ["sofa_width"])
+        from contract.validate import validate_piece
+        s1 = validate_piece(F.VALUES_S1, "blender", sid="s1")
+        self.assertEqual(score.provided_names(s1.handoff.provides), ["sofa_width", "sofa_depth"])
+        self.assertEqual(score.provides_probe(s1.handoff, {"names": [], "ctx_keys": [],
+                                                           "ctx_values": ["sofa_depth", "sofa_width"]}),
+                         {"named": ["sofa_width", "sofa_depth"], "missing": []})
+
+    def test_run_blender_keeps_the_values_keys(self):
+        from contract.validate import validate_piece
+        from tests.runner_fakes import FakeBlender
+        case = types.SimpleNamespace(plan=F.VALUES_PLAN, index=0, outputs={}, goal="", expect={})
+        piece = validate_piece(F.VALUES_S1, "blender", sid="s1")
+        out = score.run_blender(case, F.VALUES_S1, FakeBlender(ctx_values=["sofa_depth", "sofa_width"]), piece)
+        self.assertEqual({v: p["ctx_values"] for v, p in out["probe"].items()},
+                         {v: ["sofa_depth", "sofa_width"] for v in score.VERSIONS})
+        self.assertEqual(out["provides"], {"named": ["sofa_width", "sofa_depth"], "missing": []})
+        out = score.run_blender(case, F.VALUES_S1, FakeBlender(), piece)  # no values dict in the ctx
+        self.assertEqual({p["ctx_values"] for p in out["probe"].values()}, {None})
+        self.assertEqual(out["provides"]["missing"], ["sofa_width", "sofa_depth"])
+
 
 def _rec(mode="blender", run="joined", check=None, probe=None, runaway=False, part="w2", **blender):
     """A raw.jsonl record as step_eval writes it, built by hand (TEST FIXTURE)."""
@@ -549,6 +581,27 @@ class RealBlenderTests(unittest.TestCase):
             self.assertTrue(r["strict_full"], (v, r["output_tail"]))
             self.assertFalse(r["stand_in"], r["output_tail"])
             self.assertEqual(sorted(r["ctx_keys"]), ["lamp", "table"])
+
+    def test_the_values_pair_probes_its_values(self):
+        # ctx["values"] (Nov 4): the direct run reads its keys (ctx_values), and the provides probe finds them
+        from contract.validate import validate_piece
+        kind, script, _ = br.script_for_step(F.VALUES_PLAN, 1, {"s1": F.VALUES_S1}, F.VALUES_S2)
+        self.assertEqual(kind, "joined")
+        for v, r in self.b.probe(script).items():
+            self.assertTrue(r["strict_full"], (v, r["output_tail"]))
+            self.assertFalse(r["stand_in"], r["output_tail"])  # s2 found s1's sizes
+            self.assertEqual((r["ctx_keys"], r["ctx_values"]), (["sofa"], ["sofa_depth", "sofa_width"]))
+            self.assertIn("chimera_sofa", r["names"])
+        s1 = validate_piece(F.VALUES_S1, "blender", sid="s1")
+        kind, script, _ = br.script_for_step(F.VALUES_PLAN, 0, {}, F.VALUES_S1)
+        for v, r in self.b.probe(script).items():
+            self.assertEqual((r["ctx_keys"], r["ctx_values"]), ([], ["sofa_depth", "sofa_width"]))
+            self.assertEqual(score.provides_probe(s1.handoff, r), {"named": ["sofa_width", "sofa_depth"], "missing": []})
+        kind, script, _ = br.script_for_step(F.VALUES_PLAN, 1, {"s1": None}, F.VALUES_S2)  # s1 failed: stand-ins
+        for v, r in self.b.probe(script).items():
+            self.assertTrue(r["strict_full"], (v, r["output_tail"]))
+            self.assertTrue(r["stand_in"], r["output_tail"])
+            self.assertEqual((r["ctx_keys"], r["ctx_values"]), (["sofa"], []))
 
     def test_error_lines_stay_visible(self):
         # An "Error:" line followed by about 500 characters of output, in a scene whose tools-probe line is about

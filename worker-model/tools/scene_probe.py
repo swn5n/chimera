@@ -7,13 +7,18 @@
 At the end of the script, the epilogue prints one line, "chimera-probe: {json}", listing every object
 (name, type, data name, whether it's in the scene), material and collection, the scene's world and
 render engine, and the keys of ctx["objects"] if the script left a dict named ctx (or another global
-dict with "scene" and "objects") at the top level. It only reads and prints, so it runs as it is in
-Chimera's check sandbox. `parse` reads the line back from a run's output.
+dict with "scene" and "objects") at the top level, and the keys of ctx["values"] when that ctx has a
+values dict (contract question 1, decided Nov 4: the channel for plain values other steps use). Keys
+only, never the values: the provides check needs no more, and numbers would eat the budget. A ctx with
+no values dict (one from a guard written before Nov 4) prints exactly what it printed before. It only
+reads and prints, so it runs as it is in Chimera's check sandbox. `parse` reads the line back from a
+run's output.
 
 The line is kept under BUDGET characters, because `chimera --check-result` prints only the last
 1,500 characters of a run's output: when the scene is bigger, lists are cut (chimera_ names and
-ctx-registered objects kept first) and "cut" says how many of each were left out. The probe never
-runs when the script stops before its end: an error, a quit, or a render (the check stops there).
+ctx-registered objects kept first; ctx["values"] keys are cut like the rest, as "values") and "cut"
+says how many of each were left out. The probe never runs when the script stops before its end: an
+error, a quit, or a render (the check stops there).
 """
 from __future__ import annotations
 
@@ -61,6 +66,8 @@ def _chimera_probe(_g, _budget=%(budget)d):
             col = ctx.get("collection")
             out["ctx"] = {"name": ctx_name, "keys": sorted(cut(str(k)) for k in reg),
                           "collection": cut(getattr(col, "name", None)) if col is not None else None}
+            if isinstance(ctx.get("values"), dict):  # keys only: no numbers on the line
+                out["ctx"]["values"] = sorted(cut(str(k)) for k in ctx["values"])
             keep = set(getattr(v, "name", None) for v in reg.values())
         # Over budget: cut the longest list from its end; chimera_ names and ctx-registered objects go first.
         def rank(x):
@@ -69,6 +76,8 @@ def _chimera_probe(_g, _budget=%(budget)d):
         lists = [("objects", out), ("materials", out), ("collections", out)]
         if "ctx" in out:
             lists.append(("keys", out["ctx"]))
+            if "values" in out["ctx"]:
+                lists.append(("values", out["ctx"]))
         total = {name: len(owner[name]) for name, owner in lists}
         for name, owner in lists:
             owner[name] = sorted(owner[name], key=rank)[:200]
@@ -144,6 +153,8 @@ def summary(p) -> str:
              f"materials: {', '.join(p.get('materials') or []) or 'none'}"]
     if p.get("ctx"):
         parts.append(f"ctx[\"objects\"] keys: {', '.join(p['ctx']['keys']) or 'none'}")
+        if "values" in p["ctx"]:
+            parts.append(f"ctx[\"values\"] keys: {', '.join(p['ctx']['values']) or 'none'}")
     if p.get("cut"):
         parts.append("cut: " + ", ".join(f"{v} {k}" for k, v in p["cut"].items()))
     if p.get("dupes"):

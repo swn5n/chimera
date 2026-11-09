@@ -368,9 +368,17 @@ const namesMarker = "chimera-check: names "
 // uses before the script runs, and says nothing unless it can show this object is
 // the one that failed. It's for honest mistakes: a script aimed at it could still
 // slip past, as it could by other means, and the sandbox is what holds it in.
+// A Blender collection's keys() also lists what Blender keeps unavailable (the
+// shaders' Weight), which c[name] can't find in Blender 5: going by keys() alone, a
+// crash on inputs["Weight"] got no names and every other socket crash was offered
+// Weight. So on Blender's own collections a key is missing, and a name is real,
+// only if `in` finds it; anything else is read as before. The class is looked up
+// so that a bpy without it (hydra_test.py's stand-in Blender) gets an empty tuple,
+// which isinstance never matches, instead of the prelude stopping the run.
 const blenderCrashNames = `import ast, builtins, difflib, gc, json, re, warnings, weakref
 globals().update({k: v for k, v in vars(builtins).items() if not k.startswith("__")})
 _chimera_err = sys.__stderr__
+_chimera_coll = getattr(getattr(bpy, "types", None), "bpy_prop_collection", ())
 def _chimera_names(t, e, tb):
     def ours(o):
         if type(o) in weakref.ProxyTypes or any(c.__module__ == "__main__" for c in type(o).__mro__):
@@ -471,8 +479,16 @@ def _chimera_names(t, e, tb):
             if key and not names and isinstance(n, ast.Subscript):
                 try:
                     c = value(n.value)
-                    if value(n.slice) == key.group(1) and key.group(1) not in c.keys():
-                        kind, wrong, of, names = "key", key.group(1), ast.unparse(n.value), list(c.keys())
+                    if value(n.slice) == key.group(1):
+                        if isinstance(c, _chimera_coll):
+                            ks = list(dict.fromkeys(c.keys()))
+                            ks = [k for k in ks if k in c] if len(ks) <= 1000 else ks
+                            miss = key.group(1) not in c
+                        else:
+                            miss = key.group(1) not in c.keys()
+                            ks = list(c.keys()) if miss else []
+                        if miss:
+                            kind, wrong, of, names = "key", key.group(1), ast.unparse(n.value), ks
                 except Exception:
                     pass
     elif issubclass(t, TypeError):

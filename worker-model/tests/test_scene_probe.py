@@ -1,13 +1,27 @@
-"""The scene probe's epilogue, run against a fake bpy, and its parser."""
+"""The scene probe's epilogue, run against a fake bpy, and its parser. One class runs real Blender (sandboxed, through
+datagen/pysandbox.run_tool) and skips without Blender 5.2.2 and 5.0.1."""
 import contextlib
 import io
 import json
+import os
 import sys
 import types
 import unittest
 
 from tests import _paths  # noqa: F401
+from tests import contract_fixtures as F
+from contract.join import alone_script, join
+from contract.validate import validate_piece
+from datagen import pysandbox
+from tools import blenders
 from tools import scene_probe as sp
+
+# The line the epilogue printed before Nov 4 for test_lists_the_scene_and_ctx's scene, whose ctx has no "values"
+# dict: a ctx made by an old guard must still print exactly this (measured with the old epilogue).
+OLD_LINE = ('chimera-probe: {"v":1,"blender":"5.2.2","scene":"Scene","engine":"BLENDER_EEVEE","world":"World",'
+            '"objects":[["chimera_table","MESH","chimera_table_mesh",1],["chimera_loose","EMPTY",null,0],'
+            '["Camera","CAMERA","Camera",1]],"materials":["Material"],"collections":["Collection"],'
+            '"ctx":{"name":"ctx","keys":["table"],"collection":"chimera_project"}}')
 
 
 class Named:
@@ -70,6 +84,53 @@ class ProbeTests(unittest.TestCase):
         self.assertEqual(p["ctx"], {"name": "ctx", "keys": ["table"], "collection": "chimera_project"})
         self.assertNotIn("cut", p)
 
+    def test_a_ctx_with_no_values_prints_what_it_printed_before(self):
+        bpy, scene = fake_bpy([("chimera_table", "MESH", "chimera_table_mesh"), ("Camera", "CAMERA", "Camera"),
+                               ("chimera_loose", "EMPTY", None)], in_scene={"chimera_table", "Camera"})
+        reg = {"table": bpy.data.objects[0]}
+        for what, extra in (("no values", {}), ("values None", {"values": None}), ("values a list", {"values": ["a"]})):
+            with self.subTest(what):
+                ctx = dict({"scene": scene, "collection": Named("chimera_project"), "objects": reg}, **extra)
+                out, _ = run_probe(bpy, {"ctx": ctx})
+                self.assertEqual([l for l in out.splitlines() if l.startswith(sp.PREFIX)], [OLD_LINE])
+                self.assertNotIn("values", sp.parse(out)["ctx"])
+                self.assertNotIn('ctx["values"]', sp.summary(sp.parse(out)))
+
+    def test_lists_ctx_values_keys(self):
+        # ctx["values"] (contract question 1, decided Nov 4): its keys, never its numbers
+        bpy, scene = fake_bpy([("chimera_sofa", "MESH", "chimera_sofa")])
+        ctx = {"scene": scene, "collection": Named("Collection"), "objects": {"sofa": bpy.data.objects[0]},
+               "values": {"sofa_width": 2.2}}
+        out, _ = run_probe(bpy, {"ctx": ctx})
+        p = sp.parse(out)
+        self.assertEqual(p["ctx"]["values"], ["sofa_width"])
+        self.assertEqual(p["ctx"]["keys"], ["sofa"])
+        self.assertIn('ctx["values"] keys: sofa_width', sp.summary(p))
+        self.assertIn('ctx["objects"] keys: sofa; ctx["values"] keys: sofa_width', sp.summary(p))
+        ctx["values"] = {"sofa_depth": 0.9173, 7: "x", "b" * 80: 1}  # sorted, as text, long keys cut like names
+        out = run_probe(bpy, {"ctx": ctx})[0]
+        self.assertEqual(sp.parse(out)["ctx"]["values"], ["7", "b" * 61 + "...", "sofa_depth"])
+        self.assertNotIn("0.9173", out)
+        ctx["values"] = {}
+        p = sp.parse(run_probe(bpy, {"ctx": ctx})[0])
+        self.assertEqual(p["ctx"]["values"], [])
+        self.assertIn('ctx["values"] keys: none', sp.summary(p))
+        # a ctx found by its shape gets its values listed too
+        out, _ = run_probe(bpy, {"state": {"scene": scene, "objects": {}, "values": {"seat_height": 0.45}}})
+        self.assertEqual(sp.parse(out)["ctx"]["values"], ["seat_height"])
+
+    def test_many_values_are_cut_to_the_budget(self):
+        bpy, scene = fake_bpy([("chimera_sofa", "MESH", "chimera_sofa")])
+        vals = {"value_number_%03d" % i: i for i in range(400)}
+        out, _ = run_probe(bpy, {"ctx": {"scene": scene, "objects": {}, "values": vals}})
+        line = [l for l in out.splitlines() if l.startswith(sp.PREFIX)][0]
+        self.assertLessEqual(len(line), sp.BUDGET)
+        p = sp.parse(out)
+        self.assertEqual(p["cut"]["values"], 400 - len(p["ctx"]["values"]))
+        self.assertGreater(p["cut"]["values"], 0)
+        self.assertEqual([o["name"] for o in p["objects"]], ["chimera_sofa"])  # the short lists are left alone
+        self.assertIn("cut: %d values" % p["cut"]["values"], sp.summary(p))
+
     def test_finds_a_ctx_by_shape(self):
         bpy, scene = fake_bpy([("Cube", "MESH", "Cube")])
         out, _ = run_probe(bpy, {"state": {"scene": scene, "objects": {"cube": bpy.data.objects[0]}}})
@@ -126,6 +187,43 @@ class ProbeTests(unittest.TestCase):
         self.assertIn("chimera_a (mesh) not in scene", s)
         self.assertIn('ctx["objects"] keys: a', s)
         self.assertIn("no probe", sp.summary(None))
+
+
+HAVE_BLENDER = all(not blenders.check_path(p) for p in blenders.VERSIONS.values())
+
+
+@unittest.skipUnless(HAVE_BLENDER and pysandbox.can_sandbox(), "needs Blender 5.2.2, 5.0.1 and sandbox-exec")
+class RealBlenderTests(unittest.TestCase):
+    """About 10 s: tests/contract_fixtures.py's values pair (s1 hands the sofa's sizes on through ctx["values"], s2
+    builds with them) with the epilogue appended, in real Blender, sandboxed as the data generator runs a tool."""
+
+    def probe(self, script, binary):
+        r = pysandbox.run_tool({"script.py": sp.append(script)}, binary,
+                               ["-b", "--factory-startup", "--python-exit-code", "1", "--python", "script.py"],
+                               timeout=180, work=os.environ.get("WM_SCRATCH"))
+        self.assertEqual(r["exit"], 0, r["output"][-1500:])
+        self.assertTrue(r["sandboxed"])
+        return sp.parse(r["output"]), r["output"]
+
+    def test_the_values_pair_lists_its_values_keys(self):
+        j = join(F.VALUES_PLAN, F.VALUES_OUTPUTS)
+        self.assertFalse(j.fallback, j.reasons)
+        s2 = validate_piece(F.VALUES_S2, "blender", sid="s2")
+        alone = alone_script(s2)  # s2 with no s1: an empty ctx["values"], so both stand-ins
+        for v, binary in blenders.VERSIONS.items():
+            with self.subTest(v):
+                p, out = self.probe(j.script, binary)
+                self.assertEqual(p["blender"], v)
+                self.assertEqual(p["ctx"]["values"], ["sofa_depth", "sofa_width"])
+                self.assertEqual(p["ctx"]["keys"], ["sofa"])
+                self.assertIn("sofa: 2.2 x 0.9", out)
+                self.assertNotIn("chimera: stand-in", out)
+                self.assertIn('ctx["values"] keys: sofa_depth, sofa_width', sp.summary(p))
+                p, out = self.probe(alone, binary)
+                self.assertEqual(p["ctx"]["values"], [])
+                self.assertEqual(p["ctx"]["keys"], ["sofa"])
+                self.assertIn("chimera: stand-in sofa_width", out)
+                self.assertIn("sofa: 2.0 x 0.8", out)
 
 
 if __name__ == "__main__":

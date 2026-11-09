@@ -22,7 +22,9 @@ const (
 )
 
 // blenderNamesExpr prints what Blender itself says. Anything an older Blender
-// doesn't have is left out. An enum's real choices can depend on the rest of the
+// doesn't have is left out. A socket Blender keeps unavailable (the shaders' Weight,
+// or Noise's W until noise_dimensions is 1D or 4D) is left out: in Blender 5
+// inputs[name] can't find it. An enum's real choices can depend on the rest of the
 // scene, so it asks by setting a wrong one and reading the refusal.
 const blenderNamesExpr = `import bpy, bmesh, re
 out = []
@@ -33,7 +35,7 @@ def line(label, names):
 tree = bpy.data.node_groups.new("names", "ShaderNodeTree")
 for ident in ("ShaderNodeBsdfPrincipled", "ShaderNodeEmission", "ShaderNodeBsdfGlass", "ShaderNodeTexNoise", "ShaderNodeTexVoronoi", "ShaderNodeTexBrick", "ShaderNodeTexWave", "ShaderNodeBump", "ShaderNodeMapping", "ShaderNodeMix", "ShaderNodeMapRange"):
     try:
-        line(ident + " inputs", list(dict.fromkeys(i.name for i in tree.nodes.new(ident).inputs)))
+        line(ident + " inputs", list(dict.fromkeys(i.name for i in tree.nodes.new(ident).inputs if i.enabled)))
     except RuntimeError:
         pass
 def choices(owner, prop):
@@ -98,9 +100,15 @@ func (a *App) blenderNames(ctx context.Context) string {
 	return a.names
 }
 
+// namesApply says whether a step of this kind gets the sheet: a Blender step, or any
+// step of a task that says Blender or bpy.
+func namesApply(kind string, plan hydraPlan, goal string) bool {
+	return kind == "blender" || blenderTaskRe.MatchString(goal+"\n"+plan.Title+"\n"+plan.Summary)
+}
+
 // namesBlock adds the sheet to a Blender task's system prompt.
 func (a *App) namesBlock(ctx context.Context, kind string, plan hydraPlan, goal string) string {
-	if kind != "blender" && !blenderTaskRe.MatchString(goal+"\n"+plan.Title+"\n"+plan.Summary) {
+	if !namesApply(kind, plan, goal) {
 		return ""
 	}
 	sheet := a.blenderNames(ctx)

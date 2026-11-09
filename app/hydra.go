@@ -551,13 +551,7 @@ func (t *TaskManager) onePass(ctx context.Context, run *taskRun, req taskReq, ro
 	// 1. Plan on Hydra 1.0, or the biggest model available. On a later round,
 	// build on the previous attempt and the review's critique instead of
 	// starting over.
-	refs := a.librarySearch(req.Goal, 3)
-	var useful []LibEntry
-	for _, e := range refs {
-		if e.Score >= 0.3 {
-			useful = append(useful, e)
-		}
-	}
+	useful := usefulRefs(a.librarySearch(req.Goal, 3))
 	if round == 1 {
 		run.mu.Lock()
 		for _, e := range useful {
@@ -565,17 +559,7 @@ func (t *TaskManager) onePass(ctx context.Context, run *taskRun, req taskReq, ro
 		}
 		run.mu.Unlock()
 	}
-	userMsg := contextBlock(req.history) + req.Goal
-	if prior != "" {
-		userMsg += "\n\n---\nThe previous attempt produced this result:\n" + truncate(prior, 12000) +
-			"\n\nWhat still needs work:\n" + critique +
-			"\n\nPlan the steps to improve it into a result that fully meets the task. Reuse what already works; only redo what needs it."
-	}
-	userMsg += refsBlock(useful)
-	planMsgs := []ChatMessage{{Role: "system", Content: hydraPlannerPrompt}, {Role: "user", Content: userMsg}}
-	planReq := submitReq{Private: req.Private, Messages: planMsgs, Prefer: "largest", TaskWork: true,
-		Format: json.RawMessage(`"json"`), NeedCtx: historyTokens(planMsgs) + 2048, Purpose: "Hydra: planning (round " + itoaSmall(round) + ")"}
-	planReq.PreferModel = helperFor(planReq.NeedCtx) // Hydra 1.0 when it's around and the plan fits it
+	planReq := planRequest(req, round, prior, critique, useful)
 	plan, planEv, ok := t.askPlanner(ctx, run, planReq)
 	if !ok && planEv.Type != "cancelled" && ctx.Err() == nil && planReq.PreferModel != "" && isHelperModel(planEv.Model) {
 		// Second chance: the helper's plan couldn't be read (or its step failed),
@@ -797,6 +781,45 @@ func pieceCap(sizes []int, limit int) int {
 	return limit
 }
 
+// usefulRefs is the library entries good enough to show the planner.
+func usefulRefs(refs []LibEntry) []LibEntry {
+	var useful []LibEntry
+	for _, e := range refs {
+		if e.Score >= 0.3 {
+			useful = append(useful, e)
+		}
+	}
+	return useful
+}
+
+// planRequest is the step that plans a round: the task, after the chat before it;
+// on a later round, the previous result (prior) and what still needs work, so the
+// plan builds on it instead of starting over; then the useful references.
+// chimera --hydra-plan-request prints it too.
+func planRequest(req taskReq, round int, prior, critique string, useful []LibEntry) submitReq {
+	userMsg := contextBlock(req.history) + req.Goal
+	if prior != "" {
+		userMsg += "\n\n---\nThe previous attempt produced this result:\n" + truncate(prior, 12000) +
+			"\n\nWhat still needs work:\n" + critique +
+			"\n\nPlan the steps to improve it into a result that fully meets the task. Reuse what already works; only redo what needs it."
+	}
+	userMsg += refsBlock(useful)
+	planMsgs := []ChatMessage{{Role: "system", Content: hydraPlannerPrompt}, {Role: "user", Content: userMsg}}
+	planReq := submitReq{Private: req.Private, Messages: planMsgs, Prefer: "largest", TaskWork: true,
+		Format: json.RawMessage(`"json"`), NeedCtx: historyTokens(planMsgs) + 2048, Purpose: "Hydra: planning (round " + itoaSmall(round) + ")"}
+	planReq.PreferModel = helperFor(planReq.NeedCtx) // Hydra 1.0 when it's around and the plan fits it
+	return planReq
+}
+
+// readPlan reads a planner's reply: a plan with at least one step, not yet cleaned.
+func readPlan(reply string) (hydraPlan, bool) {
+	var plan hydraPlan
+	if !extractJSON(reply, &plan) || len(plan.Steps) == 0 {
+		return hydraPlan{}, false
+	}
+	return plan, true
+}
+
 // askPlanner sends one planning request and reads the plan. The returned
 // event's Model is the model that was assigned the step ("" if none was).
 func (t *TaskManager) askPlanner(ctx context.Context, run *taskRun, req submitReq) (hydraPlan, genEvent, bool) {
@@ -830,11 +853,8 @@ func (t *TaskManager) askPlanner(ctx context.Context, run *taskRun, req submitRe
 	if ev.Type != "done" {
 		return hydraPlan{}, ev, false
 	}
-	var plan hydraPlan
-	if !extractJSON(planText.String(), &plan) || len(plan.Steps) == 0 {
-		return hydraPlan{}, ev, false
-	}
-	return plan, ev, true
+	plan, ok := readPlan(planText.String())
+	return plan, ev, ok
 }
 
 type reviewVerdict struct {
@@ -912,11 +932,18 @@ func (t *TaskManager) askReviewer(ctx context.Context, run *taskRun, req submitR
 	if ev.Type != "done" {
 		return reviewVerdict{}, ev, false
 	}
+	v, ok := readReview(out.String())
+	return v, ev, ok
+}
+
+// readReview reads a reviewer's reply. A score that isn't a whole number makes it
+// unreadable, as anything else that doesn't fit reviewVerdict does.
+func readReview(reply string) (reviewVerdict, bool) {
 	var v reviewVerdict
-	if !extractJSON(out.String(), &v) {
-		return reviewVerdict{}, ev, false
+	if !extractJSON(reply, &v) {
+		return reviewVerdict{}, false
 	}
-	return v, ev, true
+	return v, true
 }
 
 func itoaSmall(n int) string { return string(rune('0' + n%10)) }

@@ -173,6 +173,86 @@ S2_BROKEN = S2.replace("    mesh.from_pydata(verts, [], faces)\n",
 
 BLENDER_OUTPUTS = {"s1": S1, "s2": S2, "s3": S3}
 
+# A values-only step and the step that uses its values (contract question 1, decided Nov 4: ctx["values"]). The
+# fixtures above keep the guard from before it: tests/test_runner_blender.py's replace() strings match them.
+VALUES_PLAN = clean_plan({
+    "title": "Sofa",
+    "kind": "blender",
+    "summary": "A box sofa whose sizes one step sets and the next step uses. " + MARK,
+    "steps": [
+        {"id": "s1", "title": "Sofa sizes", "kind": "blender",
+         "instructions": "Set the sofa's width (2.2 m) and depth (0.9 m) where a person can change them, and hand "
+                         "them on to the next step.", "depends_on": []},
+        {"id": "s2", "title": "Sofa", "kind": "blender",
+         "instructions": "Build a box sofa chimera_sofa with s1's width and depth and a 0.45 m seat. Register it as "
+                         "ctx['objects']['sofa'].", "depends_on": ["s1"]},
+    ]})
+
+VALUES_S1_CODE = MARK + '''
+import bpy
+
+SETTINGS_s1 = {"sofa_width": 2.2, "sofa_depth": 0.9}
+
+
+def build_s1(ctx):
+    ctx["values"]["sofa_width"] = SETTINGS_s1["sofa_width"]
+    ctx["values"]["sofa_depth"] = SETTINGS_s1["sofa_depth"]
+
+
+if __name__ == "__main__":
+    build_s1({"scene": bpy.context.scene, "collection": bpy.context.scene.collection, "objects": {}, "values": {}})
+'''
+
+VALUES_S1 = "The sofa's sizes, handed on to the next step.\n\n```python\n" + VALUES_S1_CODE + '''```
+
+```handoff
+provides: ctx["values"]["sofa_width"], ctx["values"]["sofa_depth"]
+uses: none
+assumed: the sizes are in metres
+```
+'''
+
+VALUES_S2_CODE = MARK + '''
+import bpy
+
+SETTINGS_s2 = {"seat_height": 0.45}
+
+
+def build_s2(ctx):
+    w = ctx["values"].get("sofa_width")
+    if w is None:
+        print("chimera: stand-in", "sofa_width")
+        w = 2.0
+    d = ctx["values"].get("sofa_depth")
+    if d is None:
+        print("chimera: stand-in", "sofa_depth")
+        d = 0.8
+    h = SETTINGS_s2["seat_height"]
+    mesh = bpy.data.meshes.new("chimera_sofa")
+    verts = [(x * w / 2, y * d / 2, z * h) for x in (-1, 1) for y in (-1, 1) for z in (0, 1)]
+    faces = [(0, 1, 3, 2), (4, 6, 7, 5), (0, 4, 5, 1), (2, 3, 7, 6), (0, 2, 6, 4), (1, 5, 7, 3)]
+    mesh.from_pydata(verts, [], faces)
+    sofa = bpy.data.objects.new("chimera_sofa", mesh)
+    ctx["collection"].objects.link(sofa)
+    ctx["objects"]["sofa"] = sofa
+    print("sofa:", w, "x", d)
+
+
+if __name__ == "__main__":
+    build_s2({"scene": bpy.context.scene, "collection": bpy.context.scene.collection, "objects": {}, "values": {}})
+'''
+
+VALUES_S2 = "```python\n" + VALUES_S2_CODE + '''```
+
+```handoff
+provides: chimera_sofa as ctx["objects"]["sofa"]
+uses: ctx["values"]["sofa_width"], ctx["values"]["sofa_depth"] from s1
+assumed: the seat is 0.45 m high
+```
+'''
+
+VALUES_OUTPUTS = {"s1": VALUES_S1, "s2": VALUES_S2}
+
 # ---------------------------------------------------------------- other modes
 
 SCRIPT_PLAN = clean_plan({

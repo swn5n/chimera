@@ -5,7 +5,7 @@ Skipped unless CHIMERA_BIN names a Chimera binary (build it with
 `cd app && PATH=/opt/homebrew/bin:$PATH go build -o <path> .`, removing the old file first) and Blender 5.2.2 is
 installed. BLENDER_522 / BLENDER_501 override the app paths; CONTRACT_SCRATCH is where the runs' folders go
 (default: the system temp folder). Each run gets its own --data-dir and a PATH shim (a bash launcher that execs
-the app: Blender crashes when started through a symlink). About 10 s in all.
+the app: Blender crashes when started through a symlink). About 20 s in all.
 """
 import json
 import os
@@ -130,6 +130,50 @@ class JoinedScriptInBlenderTests(unittest.TestCase):
         req = prompt.repair_request(F.BLENDER_PLAN, 2, outputs, s3, loc)
         self.assertIn("line %d in the imports: from mathutils import radians" % loc["piece_line"],
                       req.messages[1]["content"])
+
+
+# A module-level ctx as a dependency's script from before Nov 4 left it: no "values".
+OLDER_CTX = 'import bpy\nctx = {"scene": bpy.context.scene, "collection": bpy.context.scene.collection, "objects": {}}\n'
+
+
+@unittest.skipUnless(CHIMERA and os.access(CHIMERA, os.X_OK), "set CHIMERA_BIN to a Chimera binary")
+@unittest.skipUnless(os.path.exists(BLENDER["5.2.2"]), "Blender 5.2.2 not installed")
+class ValuesInBlenderTests(unittest.TestCase):
+    """The values pair (contract question 1, decided Nov 4): s1 hands its sizes on in ctx["values"], s2 reads them."""
+
+    run_check = JoinedScriptInBlenderTests.run_check
+
+    def test_joined_the_reader_gets_the_values(self):
+        j = join(F.VALUES_PLAN, F.VALUES_OUTPUTS)
+        self.assertFalse(j.fallback, j.reasons)
+        self.assertEqual(j.seams, [])
+        for version in [v for v in BLENDER if os.path.exists(BLENDER[v])]:
+            with self.subTest(version=version):
+                code, verdict = self.run_check(j.script, version)
+                c = verdict["check"]
+                self.assertEqual((code, c["outcome"]), (0, "passed"), c)
+                self.assertIn("sofa: 2.2 x 0.9", c["output"])  # s1's SETTINGS, through ctx["values"]
+                self.assertNotIn("chimera: stand-in", c["output"])
+                self.assertNotIn("Traceback", c["output"])
+
+    def test_alone_the_reader_makes_its_stand_ins(self):
+        p = validate_piece(F.VALUES_S2, "blender", sid="s2", deps=["s1"])
+        for how, script in (("its own main guard", p.code), ("alone_script", alone_script(p)),
+                            ("after a ctx from before values", OLDER_CTX + alone_script(p, True))):
+            with self.subTest(how):
+                code, verdict = self.run_check(script)
+                c = verdict["check"]
+                self.assertEqual((code, c["outcome"]), (0, "passed"), c)
+                self.assertIn("chimera: stand-in sofa_width", c["output"])
+                self.assertIn("chimera: stand-in sofa_depth", c["output"])
+                self.assertIn("sofa: 2.0 x 0.8", c["output"])
+                self.assertNotIn("KeyError", c["output"])
+        # without the harness's setdefault line the reader dies on the older ctx: the case that line is for (the
+        # check calls it unsure, since a fresh scene can lack what a lookup wants, but it doesn't pass)
+        old = (OLDER_CTX + alone_script(p, True)).replace('\nctx.setdefault("values", {})\n', "\n")
+        code, verdict = self.run_check(old)
+        self.assertNotEqual((code, verdict["check"]["outcome"]), (0, "passed"), verdict["check"])
+        self.assertEqual(verdict["check"]["error"], "KeyError: 'values'")
 
 
 

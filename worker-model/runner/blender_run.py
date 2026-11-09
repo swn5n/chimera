@@ -7,11 +7,11 @@ Two runs per Blender version:
 - probe: the probes, out of band, run directly: `blender -b --factory-startup` (Chimera's arguments) under
   sandbox-exec with a profile like Chimera's own (macScriptProfile, app/runner.go: no network, home folders
   unreadable, writes only to the run folder, no new processes), HOME and TMPDIR in the run folder. The script gets
-  tools/scene_probe.py's epilogue (ctx["objects"] keys, names, .001 duplicates; no length budget here) and then
-  the eval's richer probe (eval/scene_probe.py, "CHIMERA_PROBE {json}", run by exec so an error in it can't fail
-  the script) for the scene assertions. A render stops the run there, as Chimera's check does, after the eval
-  probe has run. Its whole output is kept: strict_full is the strict rule (tools/blender_check.bad_lines, the
-  check's own) over all of it, so it also sees what the check's tail no longer shows.
+  tools/scene_probe.py's epilogue (ctx["objects"] and ctx["values"] keys, names, .001 duplicates; no length budget
+  here) and then the eval's richer probe (eval/scene_probe.py, "CHIMERA_PROBE {json}", run by exec so an error in
+  it can't fail the script) for the scene assertions. A render stops the run there, as Chimera's check does, after
+  the eval probe has run. Its whole output is kept: strict_full is the strict rule (tools/blender_check.bad_lines,
+  the check's own) over all of it, so it also sees what the check's tail no longer shows.
 
 The strict verdict that counts (counted_strict) needs both: the check's strict and the direct run's strict_full,
 in the Blender version asked for.
@@ -545,8 +545,9 @@ class Blender:
 
     def probe(self, script):
         """The probes run directly, sandboxed, in every version: {version: {exit, strict_full, bad_lines, blender,
-        version_ok, probe (the eval probe's JSON), ctx_keys, names, dupes (the tools probe's), stand_in, exception,
-        stopped_at_render, seconds}}."""
+        version_ok, probe (the eval probe's JSON), ctx_keys, ctx_values, names, dupes (the tools probe's), stand_in,
+        exception, stopped_at_render, seconds}}. ctx_keys are ctx["objects"]'s keys, ctx_values ctx["values"]'s (None
+        when the ctx has no values dict: one made by a guard from before Nov 4)."""
         return {v: self._probe_one(script, binary, v) for v, binary in self.versions.items()}
 
     def _probe_one(self, script, binary, version=None):
@@ -573,7 +574,7 @@ class Blender:
                 output = (e.stdout.decode("utf-8", "replace") if isinstance(e.stdout, bytes) else (e.stdout or "")) + \
                     f"\n(timed out after {self.timeout:.0f} s)"
             probe = parse_probe(output)
-            tools = scene_probe.parse(output)  # tools/scene_probe.py: ctx["objects"] keys, names, .001 duplicates
+            tools = scene_probe.parse(output)  # tools/scene_probe.py: ctx keys, names, .001 duplicates
             # The strict rule over the whole output, the check's own rule (blender_check.bad_lines), probe lines aside
             bad = blender_check.bad_lines(own_output(output))
             # Blender's header line, else either probe's (os._exit at a render loses the header, which isn't flushed)
@@ -585,6 +586,7 @@ class Blender:
                    "sandboxed": self.sandbox, "seconds": round(time.monotonic() - t0, 2), "output_tail": output[-600:]}
             if tools is not None and "probe_failed" not in tools:
                 out["ctx_keys"] = (tools.get("ctx") or {}).get("keys")
+                out["ctx_values"] = (tools.get("ctx") or {}).get("values")
                 out["names"] = [o["name"] for o in tools.get("objects") or []] + list(tools.get("materials") or []) + \
                     list(tools.get("collections") or [])
                 out["dupes"] = tools.get("dupes") or []

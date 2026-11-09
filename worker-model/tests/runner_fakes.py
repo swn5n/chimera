@@ -17,10 +17,12 @@ from runner import mock_ollama
 class FakeBlender:
     """Answers like runner.blender_run.Blender without running anything. strict: what every check says;
     strict_full: what the direct run's whole output says (default: strict); stand_in: the direct run printed a
-    stand-in, stand_in_tail: the check's tail shows it (default: stand_in); calls records what was asked (kind, text)."""
+    stand-in, stand_in_tail: the check's tail shows it (default: stand_in); ctx_values: the tools probe's
+    ctx["values"] keys (default None, a ctx with no values dict); calls records what was asked (kind, text)."""
 
-    def __init__(self, strict=True, stand_in=False, versions=("5.2.2", "5.0.1"), strict_full=None, stand_in_tail=None):
-        self.strict, self.stand_in = strict, stand_in
+    def __init__(self, strict=True, stand_in=False, versions=("5.2.2", "5.0.1"), strict_full=None, stand_in_tail=None,
+                 ctx_values=None):
+        self.strict, self.stand_in, self.ctx_values = strict, stand_in, ctx_values
         self.strict_full = strict if strict_full is None else strict_full
         self.stand_in_tail = stand_in if stand_in_tail is None else stand_in_tail
         self.versions = {v: "/fake/" + v for v in versions}
@@ -41,7 +43,7 @@ class FakeBlender:
                     "bad_lines": [] if self.strict_full else ["Error: fake, early in the output"],
                     "blender": v, "version_ok": True, "stand_in": self.stand_in,
                     "exception": "", "stopped_at_render": False, "seconds": 0.1,
-                    "names": ["chimera_s1"], "ctx_keys": ["s1"], "dupes": [],
+                    "names": ["chimera_s1"], "ctx_keys": ["s1"], "ctx_values": self.ctx_values, "dupes": [],
                     "probe": {"objects": [], "materials": [], "scene": {}, "duplicates": []}}
                 for v in self.versions}
 

@@ -2,9 +2,12 @@
 
 Dumps Blender's own API facts as JSON for tools/rna_dump.py: every RNA class's own properties
 (type, pointer target, enum items), functions and Python attributes, the sockets of every node
-type it can make in each node tree type, the type-to-class maps for modifiers, lights, textures
-and curves, dynamic enums (render engines, view transforms), module and operator names. Facts
-only, made by Blender itself: teacher-only hints and a lint, never training text.
+type it can make in each node tree type (name, identifier, socket type, and whether a fresh node
+has it available), the settings that make an unavailable one available (reveal), the type-to-class
+maps for modifiers, lights, textures and curves, dynamic enums (render engines, view transforms),
+module and operator names. Facts only, made by Blender itself: teacher-only hints and a lint, never
+training text. About 0.2 s of Blender's time per version (0.7-0.9 s with its start, Nov 4, 5.2.2
+and 5.0.1), the reveal tries included.
 """
 import json
 import re
@@ -115,7 +118,96 @@ def classes():
 
 
 def sockets(coll):
-    return [[s.name, s.identifier, s.bl_idname] for s in coll]
+    """[name, identifier, socket type, available] per socket. available is False for a socket Blender keeps
+    unavailable on a fresh node (`enabled`, which 3.6 has too; it is the opposite of is_unavailable on every socket
+    of every node type in every tree type, 3,109 in 5.2.2 and 2,708 in 5.0.1). In 5.x inputs[name], `name in inputs`
+    and inputs.get() all skip such a socket, though keys() and an index still reach it (3.6's lookups find it): the
+    Principled BSDF's Weight is one, so a script's inputs['Weight'] raises KeyError. Nor is an identifier that differs
+    from the name a key there: inputs['A_Float'] raises KeyError on a fresh Mix, whose available A it is."""
+    return [[s.name, s.identifier, s.bl_idname, bool(s.enabled)] for s in coll]
+
+
+SIDES = ("inputs", "outputs")
+REVEAL_CAP = 4  # settings kept per name
+
+
+def settings(n):
+    """[(property, [value, ...])] reveal() tries on node n: its own properties (not bpy.types.Node's, not read-only,
+    not bl_*) that are a single-value ENUM (every item) or a non-array BOOLEAN (True and False). Ints, floats,
+    pointers and flag enums are not tried."""
+    base = set(bpy.types.Node.bl_rna.properties.keys())
+    out = []
+    for p in n.bl_rna.properties:
+        if p.identifier in base or p.is_readonly or p.identifier.startswith("bl_"):
+            continue
+        if p.type == "ENUM" and not p.is_enum_flag:
+            out.append((p.identifier, [e.identifier for e in p.enum_items]))
+        elif p.type == "BOOLEAN" and not p.is_array:
+            out.append((p.identifier, [True, False]))
+    return out
+
+
+def _hidden(n):
+    """{side: [name, ...]} of the names no available socket of n has (each name once, in socket order)."""
+    out = {}
+    for side in SIDES:
+        coll = getattr(n, side)
+        have = {s.name for s in coll if s.enabled}
+        out[side] = [x for x in dict.fromkeys(s.name for s in coll) if x not in have]
+    return out
+
+
+def reveal(tree, idname, hidden):
+    """{side: {name: [setting, ...]}} for the hidden names (unavailable on a fresh node, from _hidden) that some
+    setting makes available. A setting is "prop=VALUE" or, for a pair, "prop=VALUE&prop2=VALUE2" (set in that order),
+    each tried on a fresh node of its own in tree that is removed again, so no try leaks into the next (a property put
+    back can leave others changed); at most REVEAL_CAP per name, in the order tried. Single settings first, pairs only
+    for the names no single one reveals. A name left out is one no setting or pair makes available. Measured Nov 4:
+    of the inputs, the Weight of 22 shader nodes in 5.2.2 and in 5.0.1 (and 5.2.2 compositor's Object Info As
+    Instance, which a geometry tree has); of the outputs, 5.0.1's 25 Render Layers passes (the view layer's) and the
+    For Each Element zone's Element. Of the 87 inputs a fresh node hides in 5.2.2 (91 in 5.0.1), 64 (66) need one
+    setting, such as Noise's W (noise_dimensions 1D or 4D); Mesh Line's Resolution needs mode END_POINTS with
+    count_mode RESOLUTION (both), and 5.0.1's Compare its data_type VECTOR with mode DIRECTION (Angle) or DOT_PRODUCT
+    (C)."""
+    out = {side: {} for side in SIDES}
+    probe = tree.nodes.new(idname)
+    try:
+        props = settings(probe)
+    finally:
+        tree.nodes.remove(probe)
+
+    def shown(steps):
+        """{side: names available} on a fresh node once each (prop, value) of steps is set, None if one is refused."""
+        n = tree.nodes.new(idname)
+        try:
+            for prop, value in steps:
+                try:
+                    setattr(n, prop, value)
+                except Exception:  # noqa: BLE001  (a value this node refuses, or an enum Blender fills at run time)
+                    return None
+            return {side: {s.name for s in getattr(n, side) if s.enabled} for side in SIDES}
+        finally:
+            tree.nodes.remove(n)
+
+    def note(want, steps):
+        got = shown(steps) if any(want.values()) else None
+        for side in SIDES:
+            for name in want[side] & (got or {}).get(side, set()):
+                keep = out[side].setdefault(name, [])
+                if len(keep) < REVEAL_CAP:
+                    keep.append("&".join(f"{p}={v}" for p, v in steps))
+
+    want = {side: set(hidden[side]) for side in SIDES}
+    for prop, values in props:
+        for value in values:
+            note(want, [(prop, value)])
+    left = {side: want[side] - set(out[side]) for side in SIDES}
+    for i, (a, avals) in enumerate(props if any(left.values()) else ()):
+        for b, bvals in props[i + 1:]:
+            for x in avals:
+                for y in bvals:
+                    note(left, [(a, x), (b, y)])
+    return out
 
 
 def node_trees():
@@ -165,8 +257,12 @@ def nodes():
                 # label: what nodes.new names it ("Principled BSDF"), so nodes["..."] can be typed.
                 out[kind][idname] = {"label": n.bl_label, "inputs": sockets(n.inputs),
                                      "outputs": sockets(n.outputs), "dynamic": dyn}
+                hidden = _hidden(n)
                 live_enums(n)
                 tree.nodes.remove(n)
+                # reveal: the settings that make a socket unavailable here available (its own node, removed again).
+                out[kind][idname]["reveal"] = reveal(tree, idname, hidden) if any(hidden.values()) else \
+                    {side: {} for side in SIDES}
                 break
     made = {i for k in out.values() for i in k}
     return out, sorted(tried - made), defaults
@@ -387,7 +483,13 @@ def main():
     with open(argv[0], "w", encoding="utf-8") as f:
         json.dump(d, f, separators=(",", ":"), sort_keys=True)
     n = sum(len(v) for v in node_info.values())
-    print("chimera-dump: wrote %s: %d classes, %d nodes, %d not made, %.1f s" % (argv[0], len(cls), n, len(node_failed), d["seconds"]))
+    entries = [(e, side) for t in node_info.values() for e in t.values() for side in SIDES]
+    hidden = sum(len({s[0] for s in e[side]} - {s[0] for s in e[side] if s[3]}) for e, side in entries)
+    shown = sum(len(e["reveal"][side]) for e, side in entries)
+    pairs = sum(1 for e, side in entries for v in e["reveal"][side].values() if all("&" in x for x in v))
+    print("chimera-dump: wrote %s: %d classes, %d nodes, %d not made; %d socket names unavailable on a fresh node, "
+          "%d revealed (%d only by a pair), %d never; %.1f s" % (argv[0], len(cls), n, len(node_failed), hidden, shown,
+                                                                pairs, hidden - shown, d["seconds"]))
 
 
 main()

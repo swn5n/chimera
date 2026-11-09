@@ -64,6 +64,18 @@ class FillTests(unittest.TestCase):
         self.assertIn("SETTINGS_s4 = {...}", T.fill(T.MODE_BLENDER, sid="s4"))
         self.assertEqual(T.fill("{title}: {summary}", title="{summary}", summary="x"), "{summary}: x")
 
+    def test_the_blender_rule_names_both_channels(self):
+        # Contract question 1, decided Nov 4: a values-only step hands its values on in ctx["values"], and the
+        # guard's ctx has it, as every ctx Chimera builds does (join.py's main() and alone_script).
+        rule = T.fill(T.MODE_BLENDER, sid="s4")
+        self.assertIn('End with if __name__ == "__main__": build_s4({"scene": bpy.context.scene, "collection": '
+                      'bpy.context.scene.collection, "objects": {}, "values": {}}). Chimera calls', rule)
+        self.assertIn('find what your dependencies list under provides. ctx["values"] is the same for plain values '
+                      'other steps use', rule)
+        self.assertIn('so they stay editable there (ctx["values"]["table_height"] = SETTINGS_s4["table_height"]). '
+                      'If one is missing because your piece runs alone, make a simple stand-in', rule)
+        self.assertNotIn("{sid}", rule)
+
 
 if __name__ == "__main__":
     unittest.main()

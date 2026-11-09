@@ -378,23 +378,40 @@ def literal(node) -> bool:
         return False
 
 
-def ctx_keys(tree):
-    """(written, read): the literal keys a piece stores into / reads from ctx["objects"]."""
-    written, read = [], []
+CTX_CHANNELS = ("objects", "values")  # the ctx dicts steps hand things on in (the blender mode rule)
 
-    def objects_sub(n):
+
+def ctx_keys(tree, channel):
+    """(written, read, opaque): the literal keys a piece stores into / reads from ctx[channel] ("objects" or
+    "values"; a store or setdefault writes, a load or get reads), and whether it also writes ctx[channel] in a way
+    whose keys can't be read: the whole dict assigned (=, an augmented assignment, |= included), update(), a key
+    that isn't a literal string, or setdefault with one. join._ctx_key_seams stops judging a channel from such a
+    write on, because `ctx["values"].update(SETTINGS_s1)` followed by a literal reader gave 2 false seams, and 22
+    of the 72 stored pieces with an improvised values channel write it that way. Names bound to ctx[channel]
+    aren't followed here (33 of those 72 go through one): join._bound_writes follows them for the seams only, so
+    provides_missing asks nothing new of an alias writer."""
+    written, read, opaque = [], [], False
+
+    def channel_sub(n):
         return (isinstance(n, ast.Subscript) and isinstance(n.value, ast.Name) and n.value.id == "ctx"
-                and isinstance(n.slice, ast.Constant) and n.slice.value == "objects")
+                and isinstance(n.slice, ast.Constant) and n.slice.value == channel)
+
+    def str_key(n):
+        return isinstance(n, ast.Constant) and isinstance(n.value, str)
 
     for n in ast.walk(tree):
-        if isinstance(n, ast.Subscript) and objects_sub(n.value) and isinstance(n.slice, ast.Constant) \
-                and isinstance(n.slice.value, str):
+        if isinstance(n, ast.Subscript) and isinstance(n.ctx, ast.Store) and (
+                channel_sub(n) or channel_sub(n.value) and not str_key(n.slice)):
+            opaque = True
+        elif isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and channel_sub(n.func.value) and (
+                n.func.attr == "update" or n.func.attr == "setdefault" and n.args and not str_key(n.args[0])):
+            opaque = True
+        if isinstance(n, ast.Subscript) and channel_sub(n.value) and str_key(n.slice):
             (written if isinstance(n.ctx, ast.Store) else read).append(n.slice.value)
         elif isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr in ("get", "setdefault") \
-                and objects_sub(n.func.value) and n.args and isinstance(n.args[0], ast.Constant) \
-                and isinstance(n.args[0].value, str):
+                and channel_sub(n.func.value) and n.args and str_key(n.args[0]):
             (written if n.func.attr == "setdefault" else read).append(n.args[0].value)
-    return list(dict.fromkeys(written)), list(dict.fromkeys(read))
+    return list(dict.fromkeys(written)), list(dict.fromkeys(read)), opaque
 
 
 # "Don't open, load or save .blend files, render or quit" (the blender mode rule).
@@ -727,12 +744,12 @@ def _blender_top_level(p):
         _err(p, code, "%s %s; the mode rule leaves that to Chimera (SETTINGS_%s[\"output\"])" % (name, what, sid)
              if code == "saves_or_renders" else "%s %s; other steps' work is in the scene too" % (name, what),
              at + line)
-    written, _ = ctx_keys(p.tree)
-    if p.handoff is not None:
+    for channel in CTX_CHANNELS if p.handoff is not None else ():
+        written, _, _ = ctx_keys(p.tree, channel)
         missing = [k for k in written if k not in p.handoff.provides]
         if missing:
-            _err(p, "provides_missing", "registers ctx[\"objects\"] key(s) %s that provides doesn't list"
-                 % ", ".join(missing), level="warn")
+            _err(p, "provides_missing", "registers ctx[\"%s\"] key(s) %s that provides doesn't list"
+                 % (channel, ", ".join(missing)), level="warn")
 
 
 def _script_top_level(p):

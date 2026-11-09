@@ -58,6 +58,9 @@ func main() {
 	blenderNames := flags.Bool("blender-names", false, "print the Blender names long tasks' workers get, and quit")
 	workerRequest := flags.Bool("hydra-worker-request", false, "read a step as JSON on stdin, print the request a worker gets under the sub-agent contract, and exit")
 	assemble := flags.Bool("hydra-assemble", false, "read a plan and its pieces as JSON on stdin, print what joining them under the sub-agent contract gives, and exit")
+	planReq := flags.Bool("hydra-plan-request", false, "read a task as JSON on stdin, print the request a long task's planner gets, and exit")
+	reviewReq := flags.Bool("hydra-review-request", false, "read a task and its result as JSON on stdin, print the request the looping reviewer gets, and exit")
+	readReply := flags.Bool("hydra-read-reply", false, "read a planner's or reviewer's reply as JSON on stdin, print what a long task makes of it, and exit")
 	checkGoal := flags.String("check-goal", "", "with --check-result: the task's goal (a Blender version named there is taken into account)")
 	_ = flags.Parse(args)
 
@@ -76,6 +79,18 @@ func main() {
 
 	if *assemble {
 		os.Exit(runAssemble(os.Stdin, os.Stdout))
+	}
+
+	if *planReq {
+		os.Exit(runPlanRequest(os.Stdin, os.Stdout))
+	}
+
+	if *reviewReq {
+		os.Exit(runReviewRequest(os.Stdin, os.Stdout))
+	}
+
+	if *readReply {
+		os.Exit(runReadReply(os.Stdin, os.Stdout))
 	}
 
 	dir := *dataDir

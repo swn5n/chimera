@@ -432,10 +432,11 @@ func aloneScript(p *workerPiece, keepCtx bool, ctxName string, also []string) st
 	if _, ok := imports.origin[importKey{name: "bpy"}]; !ok {
 		tail = append(tail, "import bpy")
 	}
-	fresh := `{"scene": bpy.context.scene, "collection": bpy.context.scene.collection, "objects": {}}`
+	fresh := `{"scene": bpy.context.scene, "collection": bpy.context.scene.collection, "objects": {}, "values": {}}`
 	if keepCtx {
 		c := ctxName
 		tail = append(tail, fmt.Sprintf(`ctx = %s if isinstance(globals().get("%s"), dict) and isinstance(%s.get("objects"), dict) and "collection" in %s else %s`, c, c, c, c, fresh))
+		tail = append(tail, `ctx.setdefault("values", {})`) // a ctx from before ctx["values"]
 	} else {
 		tail = append(tail, "ctx = "+fresh)
 	}
@@ -657,7 +658,7 @@ func joinScript(plan hydraPlan, pieces []*workerPiece, mode string) (string, *li
 		lines := []string{"    scene = bpy.context.scene",
 			"    collection = bpy.data.collections.new(\"chimera_" + planSlug(plan.Title) + "\")",
 			"    scene.collection.children.link(collection)",
-			"    ctx = {\"scene\": scene, \"collection\": collection, \"objects\": {}}"}
+			"    ctx = {\"scene\": scene, \"collection\": collection, \"objects\": {}, \"values\": {}}"}
 		for _, sid := range order {
 			lines = append(lines, "    build_"+sid+"(ctx)")
 		}
@@ -734,24 +735,106 @@ func duplicateNames(pieces []*workerPiece) []pieceIssue {
 	return seams
 }
 
-// ctxKeySeams finds a ctx["objects"] key a step reads that no earlier step writes: in
-// the joined run it would make a stand-in, which counts as a failure.
-func ctxKeySeams(pieces []*workerPiece, failed []string) []pieceIssue {
-	var seams []pieceIssue
-	written := map[string]bool{}
-	for _, p := range pieces {
-		w, r := ctxKeys(p.Tree)
-		for _, k := range r {
-			if !written[k] && !slices.Contains(w, k) {
-				why := ""
-				if len(failed) > 0 {
-					why = " (the step that should have made it failed)"
-				}
-				seams = append(seams, seam("ctx_key_missing", fmt.Sprintf("%s reads ctx[\"objects\"][%s], which no earlier step registers%s", p.Sid, pyRepr(k), why), p.Sid))
+// ctxDict says n is ctx[channel], ctx.get(channel, ...) or ctx.setdefault(channel, ...):
+// the dict itself.
+func ctxDict(n *pyNode, channel string) bool {
+	if n.kind == "Subscript" {
+		return n.value.kind == "Name" && n.value.name == "ctx" && isStrConstant(n.slice) && n.slice.str == channel
+	}
+	return n.kind == "Call" && n.fn.kind == "Attribute" && (n.fn.name == "get" || n.fn.name == "setdefault") &&
+		n.fn.value.kind == "Name" && n.fn.value.name == "ctx" && len(n.args) > 0 && isStrConstant(n.args[0]) &&
+		n.args[0].str == channel
+}
+
+// ctxBoundWrites gives the writes into ctx[channel] that ctxKeys doesn't follow: through
+// a name every plain binding of which (name = ..., name: T = ...) is the dict itself
+// (ctxDict: vals = ctx.setdefault("values", {}), objs = ctx["objects"]), or straight into
+// ctx.get(channel)[k] or ctx.setdefault(channel, {})[k]. A literal key stored or
+// setdefault() through one is written; a computed key, update() or an augmented
+// assignment to the name (|=) is opaque. Reads through one stay unrecorded, so this only
+// takes seams away. A values step writing v = ctx["values"]; v["sofa_width"] = ... gave
+// each of its readers a false ctx_key_missing in the real gate, which fails them though
+// the joined script runs; 181 of 343 stored data-generation pieces that write
+// ctx["objects"] do it only through a bound name. On the stored joins it changes no
+// seam: 0 of 111 as they ran, 0 of 412 with a step failed in turn.
+func ctxBoundWrites(tree *pyNode, channel string) (written []string, opaque bool) {
+	seen := map[string][]*pyNode{}
+	for _, n := range pyWalk(tree) {
+		switch {
+		case n.kind == "Assign" && len(n.elts) == 1 && n.elts[0].kind == "Name":
+			seen[n.elts[0].name] = append(seen[n.elts[0].name], n.value)
+		case n.kind == "AnnAssign" && n.target.kind == "Name" && n.value != nil:
+			seen[n.target.name] = append(seen[n.target.name], n.value)
+		}
+	}
+	names := map[string]bool{}
+	for k, values := range seen {
+		names[k] = true
+		for _, v := range values {
+			if !ctxDict(v, channel) {
+				names[k] = false
 			}
 		}
-		for _, k := range w {
-			written[k] = true
+	}
+	through := func(n *pyNode) bool {
+		return n.kind == "Name" && names[n.name] || n.kind == "Call" && ctxDict(n, channel)
+	}
+	add := func(key string) {
+		if !slices.Contains(written, key) {
+			written = append(written, key)
+		}
+	}
+	for _, n := range pyWalk(tree) {
+		switch {
+		case n.kind == "Subscript" && n.store && through(n.value):
+			if isStrConstant(n.slice) {
+				add(n.slice.str)
+			} else {
+				opaque = true
+			}
+		case n.kind == "Call" && n.fn.kind == "Attribute" && through(n.fn.value):
+			if n.fn.name == "update" || n.fn.name == "setdefault" && len(n.args) > 0 && !isStrConstant(n.args[0]) {
+				opaque = true
+			} else if n.fn.name == "setdefault" && len(n.args) > 0 {
+				add(n.args[0].str)
+			}
+		case n.kind == "AugAssign" && n.target.kind == "Name" && names[n.target.name]:
+			opaque = true
+		}
+	}
+	return written, opaque
+}
+
+// ctxKeySeams finds a ctx["objects"] or ctx["values"] key a step reads that no earlier
+// step writes: in the joined run it would make a stand-in, which counts as a failure.
+// After a step that writes keys that can't be read (opaque), that channel isn't judged.
+// Writes through a name bound to the channel count too (ctxBoundWrites), here only:
+// provides_missing still reads ctxKeys alone.
+func ctxKeySeams(pieces []*workerPiece, failed []string) []pieceIssue {
+	var seams []pieceIssue
+	for _, channel := range ctxChannels {
+		written, unknown := map[string]bool{}, false
+		for _, p := range pieces {
+			w, r, opaque := ctxKeys(p.Tree, channel)
+			bw, bopaque := ctxBoundWrites(p.Tree, channel)
+			for _, k := range bw {
+				if !slices.Contains(w, k) {
+					w = append(w, k)
+				}
+			}
+			unknown = unknown || opaque || bopaque
+			for _, k := range r {
+				if !unknown && !written[k] && !slices.Contains(w, k) {
+					why := ""
+					if len(failed) > 0 {
+						why = " (the step that should have made it failed)"
+					}
+					seams = append(seams, seam("ctx_key_missing", fmt.Sprintf("%s reads ctx[%q][%s], which no earlier step registers%s", p.Sid, channel, pyRepr(k), why), p.Sid))
+				}
+			}
+			for _, k := range w {
+				written[k] = true
+			}
 		}
 	}
 	return seams
@@ -832,22 +915,607 @@ func usesNames(chunk string) []string {
 	return out
 }
 
-type usesChunk struct{ step, text string }
+// ---------- uses lines ----------
+//
+// A uses line is read as a list of items (cut at "," and ";" outside brackets), each given to the
+// step id in it, or after it ("X from s1", "X (s1)"), or to an "sN:" lead before it, as the user
+// decided on Nov 5 (contract question 4). Until then the line was cut at each id and the text
+// before an id's successor was that id's, so "a from s1, b from s2" read b as s1's. Ids joined by
+// "and", "/", "," and the like are one group, and "s2-s6" a range; a group is judged as one. Text
+// no id comes after, in its ;-group, is no step's. A second round the same day (round 8, the
+// user's yes) fixed the two forms the first read worse than the reader before it: two ids in one
+// item after a lead word, read as "<id>'s name" or "<id> name" pairs ("Uses s1's a with s2's b",
+// rule 5b), and a list broken by plus after "with its" or "with their" ("a from s1 with its b plus
+// c from s2", rules 6b and 7); and usesSeams judges a SETTINGS_sN name, and a key the line has
+// only in its subscripts, against sN. Round 8's other changes (arrows, the full stop, "|", also and
+// then as breaks, second lists, failure words) were taken out the same day, and these two
+// narrowed: a pair item's runs are forward but it is no prefix item for rule 10, so the items
+// around it read as before; an item with a name between one pair and the next id is no pair
+// item; and a bare "with" lets no break cut. The wider forms read lines worse than round 7's
+// reader.
+// The rules (1-11, with 5b and 6b, in the comments below) are written out in
+// worker-model/contract/join.py's _uses_chunks, which gives the same chunks on every line
+// (check_join_parity). Positions are byte offsets of whole runes, where Python's are code points;
+// every character the rules compare is one rune, the brackets, separators, quotes, "/" and "." are
+// ASCII, and every rune rules 5b, 6b and 7's cue compare is ASCII but white space (isPySpace), \w
+// (isPyWord) and the ’ of ’s, so their words are matched in ASCII case only (asciiFold, not
+// strings.EqualFold, which folds ſ with s and K with k).
 
-// usesChunks splits a uses line at each step it names. Text before the first goes with
-// the first.
+// isPyWord is re's \w for one character, as wholeWord's isWord.
+func isPyWord(r rune) bool { return r == '_' || unicode.IsLetter(r) || unicode.IsNumber(r) }
+
+const usesRangeMax = 9 // a range's span at most this; past it only its two ends
+
+var (
+	usesConnectRe  = regexp.MustCompile(`^(?:(?:` + pyS + `|[,/&+]|and|or)*|[-–—])$`)
+	usesPrefixRe   = regexp.MustCompile(`^` + notWord + `*(?:(?:[Ff]rom|[Ss]teps?)` + notWord + `+)?$`)
+	usesOpenRe     = regexp.MustCompile(`^` + pyS + `*[)\]}]*` + pyS + `*(?::|：|->|=>|→|[-–—]` + pyS + `)`)
+	usesBareRe     = regexp.MustCompile(`^(?:` + pyS + `|[,/&+.\-–—]|and|or)*$`)
+	usesEndsRe     = regexp.MustCompile(`^[` + pySpaceChars + `.]*$`)
+	settingsNameRe = regexp.MustCompile(`^SETTINGS_(s[1-9][0-9]?)$`) // a name the step it names judges (round 8)
+	settingsSubRe  = regexp.MustCompile(notWord + `(SETTINGS_s[1-9][0-9]?(?:` + pyS + `*\[` + pyS + `*['"][^'"]+['"]` + pyS + `*\])+)`)
+	settingsSidRe  = regexp.MustCompile(`^SETTINGS_(s[1-9][0-9]?)`)
+)
+
+var (
+	usesBreakWords = []string{"plus"}                   // rule 6b
+	usesSkipWords  = []string{"plus", "the", "a", "an"} // rule 6b: passed on the way to the name
+	usesCue        = []string{"with"}                   // rule 7: the word after a suffix run that lets a break cut
+	usesCueOwners  = []string{"its", "their"}           // rule 7: the word after the cue
+)
+
+type usesChunk struct {
+	steps []string
+	text  string
+}
+
+type usesGroup struct{ steps []string }
+
+type usesRef struct {
+	start, end int
+	sid        string
+}
+
+type usesRun struct {
+	steps      []string
+	start, end int
+}
+
+type usesItem struct {
+	start, end, semi                                 int
+	owner                                            []*usesGroup // per byte of the item; nil: no owner (or no owners at all)
+	hasRef, prefix, pair, lastOpen, endsWithID, bare bool
+	first, last                                      *usesGroup
+}
+
+func isDash(r rune) bool { return r == '-' || r == '–' || r == '—' }
+
+// usesRuns joins refs into runs (rule 4).
+func usesRuns(uses string, refs []usesRef) []usesRun {
+	var runs []usesRun
+	for _, r := range refs {
+		if n := len(runs); n > 0 {
+			last := &runs[n-1]
+			gap := uses[last.end:r.start]
+			if usesConnectRe.MatchString(gap) || (len(last.steps) == 1 && last.steps[0] == r.sid) {
+				if gap == "-" || gap == "–" || gap == "—" {
+					a, b := stepNumber(last.steps[len(last.steps)-1]), stepNumber(r.sid)
+					if a < b && b <= a+usesRangeMax {
+						for k := a + 1; k < b; k++ {
+							if s := fmt.Sprintf("s%d", k); !slices.Contains(last.steps, s) {
+								last.steps = append(last.steps, s)
+							}
+						}
+					}
+				}
+				if !slices.Contains(last.steps, r.sid) {
+					last.steps = append(last.steps, r.sid)
+				}
+				last.end = r.end
+				continue
+			}
+		}
+		runs = append(runs, usesRun{[]string{r.sid}, r.start, r.end})
+	}
+	return runs
+}
+
+// usesBracketEnd is just after the closer of the bracket opened at o (the first closer after o of depth level), else b.
+func usesBracketEnd(kind []byte, depth []int, o, b, level int) int {
+	for c := o + 1; c < b; c++ {
+		if kind[c] == 'c' && depth[c] == level {
+			return c + 1
+		}
+	}
+	return b
+}
+
+// usesMarks is rule 6: the starts of the marks in [a, b).
+func usesMarks(uses string, kind []byte, depth []int, a, b, level int) []int {
+	var out []int
+	for i := a; i < b; {
+		r, size := utf8.DecodeRuneInString(uses[i:])
+		if kind[i] == 'x' && depth[i] <= level {
+			if r == 'a' && i+3 <= b && strings.HasPrefix(uses[i:], "and") {
+				p, _ := utf8.DecodeLastRuneInString(uses[:i])
+				q, _ := utf8.DecodeRuneInString(uses[i+3:])
+				if (i == 0 || !isPyWord(p)) && (i+3 == len(uses) || !isPyWord(q)) {
+					out = append(out, i)
+				}
+			} else if isDash(r) && i > 0 && i+size < len(uses) {
+				p, _ := utf8.DecodeLastRuneInString(uses[:i])
+				q, _ := utf8.DecodeRuneInString(uses[i+size:])
+				if isPySpace(p) && isPySpace(q) {
+					out = append(out, i)
+				}
+			}
+		}
+		i += size
+	}
+	return out
+}
+
+// asciiFold says whether s is w (lower-case ASCII letters) in any ASCII case; a byte of a longer rune never matches.
+func asciiFold(s, w string) bool {
+	if len(s) != len(w) {
+		return false
+	}
+	for k := 0; k < len(w); k++ {
+		c := s[k]
+		if 'A' <= c && c <= 'Z' {
+			c += 'a' - 'A'
+		}
+		if c != w[k] {
+			return false
+		}
+	}
+	return true
+}
+
+// usesWordAt is the word of words at i, in any ASCII case, ending by b, with no \w character just
+// before or just after it; else "".
+func usesWordAt(uses string, i, b int, words []string) string {
+	for _, w := range words {
+		e := i + len(w)
+		if e > b || !asciiFold(uses[i:e], w) {
+			continue
+		}
+		if p, _ := utf8.DecodeLastRuneInString(uses[:i]); i > 0 && isPyWord(p) {
+			continue
+		}
+		if q, _ := utf8.DecodeRuneInString(uses[e:]); e < len(uses) && isPyWord(q) {
+			continue
+		}
+		return w
+	}
+	return ""
+}
+
+// usesNameWord is rules 5b and 6b: the word at j (the runes up to the next white space, or b) holds a name.
+func usesNameWord(uses string, j, b int) bool {
+	k := j
+	for k < b {
+		r, size := utf8.DecodeRuneInString(uses[k:])
+		if isPySpace(r) {
+			break
+		}
+		k += size
+	}
+	return k > j && len(usesNames(uses[j:k])) > 0
+}
+
+// usesBreaks is rule 6b: the starts of the breaks in [a, b), each a break word before a word with a name.
+func usesBreaks(uses string, kind []byte, depth []int, a, b, level int) []int {
+	var out []int
+	memo := map[int]bool{}
+	namedFrom := func(j int) bool { // past white space, break words and articles, the next word holds a name
+		var passed []int
+		var r bool
+		for {
+			for j < b {
+				c, size := utf8.DecodeRuneInString(uses[j:])
+				if !isPySpace(c) {
+					break
+				}
+				j += size
+			}
+			if v, ok := memo[j]; ok {
+				r = v
+				break
+			}
+			w := usesWordAt(uses, j, b, usesSkipWords)
+			if w == "" {
+				r = usesNameWord(uses, j, b)
+				memo[j] = r
+				break
+			}
+			passed = append(passed, j)
+			j += len(w)
+		}
+		for _, x := range passed {
+			memo[x] = r
+		}
+		return r
+	}
+	for i := a; i < b; {
+		_, size := utf8.DecodeRuneInString(uses[i:])
+		if kind[i] == 'x' && depth[i] <= level {
+			if w := usesWordAt(uses, i, b, usesBreakWords); w != "" && namedFrom(i+len(w)) {
+				out = append(out, i)
+			}
+		}
+		i += size
+	}
+	return out
+}
+
+// usesCued is rule 7: the first word after a suffix run's end lo (past white space and closers, before hi) is "with",
+// and the word after it (past white space) "its" or "their".
+func usesCued(uses string, lo, hi int) bool {
+	j := lo
+	for j < hi {
+		r, size := utf8.DecodeRuneInString(uses[j:])
+		if !isPySpace(r) && r != ')' && r != ']' && r != '}' {
+			break
+		}
+		j += size
+	}
+	w := usesWordAt(uses, j, hi, usesCue)
+	if w == "" {
+		return false
+	}
+	j += len(w)
+	for j < hi {
+		r, size := utf8.DecodeRuneInString(uses[j:])
+		if !isPySpace(r) {
+			break
+		}
+		j += size
+	}
+	return usesWordAt(uses, j, hi, usesCueOwners) != ""
+}
+
+// usesPair is rule 5b for the run [s, e): 's or ’s right after it with no \w after that, or white space
+// and a word with a name, unless the word just before the run is "from".
+func usesPair(uses string, a, b, s, e int) bool {
+	for _, p := range []string{"'s", "’s"} {
+		if strings.HasPrefix(uses[e:b], p) {
+			if q, _ := utf8.DecodeRuneInString(uses[e+len(p):]); e+len(p) == len(uses) || !isPyWord(q) {
+				return true
+			}
+		}
+	}
+	j := e
+	for j < b {
+		r, size := utf8.DecodeRuneInString(uses[j:])
+		if !isPySpace(r) {
+			break
+		}
+		j += size
+	}
+	if j == e || j == b || !usesNameWord(uses, j, b) {
+		return false
+	}
+	k := s
+	for k > a {
+		r, size := utf8.DecodeLastRuneInString(uses[:k])
+		if !isPySpace(r) {
+			break
+		}
+		k -= size
+	}
+	w := k
+	for w > a {
+		r, size := utf8.DecodeLastRuneInString(uses[:w])
+		if !isPyWord(r) {
+			break
+		}
+		w -= size
+	}
+	return !(k < s && asciiFold(uses[w:k], "from"))
+}
+
+// usesQuiet is rule 5b's gap: between a run's end e and the next run's start s, past 's or ’s right after the run,
+// white space and the word after it (the runes up to the next white space), usesNames finds no name.
+func usesQuiet(uses string, e, s int) bool {
+	j := e
+	for _, p := range []string{"'s", "’s"} {
+		if strings.HasPrefix(uses[j:s], p) {
+			j += len(p)
+			break
+		}
+	}
+	for j < s {
+		r, size := utf8.DecodeRuneInString(uses[j:])
+		if !isPySpace(r) {
+			break
+		}
+		j += size
+	}
+	for j < s {
+		r, size := utf8.DecodeRuneInString(uses[j:])
+		if isPySpace(r) {
+			break
+		}
+		j += size
+	}
+	return len(usesNames(uses[j:s])) == 0
+}
+
+func usesRead(uses string, it *usesItem, refs []usesRef, kind []byte, depth []int) {
+	a, b := it.start, it.end
+	it.hasRef = true
+	it.endsWithID = usesEndsRe.MatchString(uses[refs[len(refs)-1].end:b])
+	var rest strings.Builder // rule 9's text
+	for i, k := a, 0; i < b; {
+		r, size := utf8.DecodeRuneInString(uses[i:])
+		for k < len(refs) && refs[k].end <= i {
+			k++
+		}
+		if !(k < len(refs) && refs[k].start <= i) && kind[i] == 'x' && depth[i] == 0 {
+			rest.WriteRune(r)
+		}
+		i += size
+	}
+	it.bare = usesBareRe.MatchString(rest.String())
+	dmin := depth[refs[0].start]
+	for _, r := range refs {
+		dmin = min(dmin, depth[r.start])
+	}
+	var shallow, deep []usesRef
+	for _, r := range refs {
+		if depth[r.start] == dmin {
+			shallow = append(shallow, r)
+		} else {
+			deep = append(deep, r)
+		}
+	}
+	runs := usesRuns(uses, shallow)
+	it.prefix = usesPrefixRe.MatchString(uses[a:runs[0].start])
+	if !it.prefix && len(runs) >= 2 && len(usesNames(uses[a:runs[0].start])) == 0 { // rule 5b
+		it.pair = !slices.ContainsFunc(runs, func(r usesRun) bool { return !usesPair(uses, a, b, r.start, r.end) })
+		for k := 0; it.pair && k+1 < len(runs); k++ {
+			it.pair = usesQuiet(uses, runs[k].end, runs[k+1].start)
+		}
+	}
+	opened := make([]bool, len(runs))
+	for k, r := range runs {
+		opened[k] = usesOpenRe.MatchString(uses[r.end:b])
+	}
+	marks := usesMarks(uses, kind, depth, a, b, dmin)
+	breaks := usesBreaks(uses, kind, depth, a, b, dmin)
+	groups := make([]*usesGroup, len(runs))
+	for k, r := range runs {
+		groups[k] = &usesGroup{r.steps}
+	}
+	var cuts []int
+	for k := 0; k+1 < len(runs); k++ { // rule 7
+		lo, hi := runs[k].end, runs[k+1].start
+		var ms, bs []int
+		for _, m := range marks {
+			if lo <= m && m < hi {
+				ms = append(ms, m)
+			}
+		}
+		for _, x := range breaks {
+			if lo <= x && x < hi {
+				bs = append(bs, x)
+			}
+		}
+		switch {
+		case it.prefix || it.pair || opened[k]:
+			if len(ms) > 0 {
+				cuts = append(cuts, ms[len(ms)-1])
+			} else {
+				cuts = append(cuts, hi)
+			}
+		case len(ms) > 0:
+			cuts = append(cuts, ms[0])
+		case len(bs) > 0 && usesCued(uses, lo, hi):
+			cuts = append(cuts, bs[0])
+		default:
+			j := lo
+			for j < hi && kind[j] == 'x' {
+				r, size := utf8.DecodeRuneInString(uses[j:])
+				if !isPySpace(r) {
+					break
+				}
+				j += size
+			}
+			if j < hi && kind[j] == 'o' && depth[j] == dmin+1 {
+				cuts = append(cuts, usesBracketEnd(kind, depth, j, b, dmin))
+			} else {
+				cuts = append(cuts, lo)
+			}
+		}
+	}
+	owner := make([]*usesGroup, b-a)
+	starts := append([]int{a}, cuts...)
+	ends := append(append([]int(nil), cuts...), b)
+	for k, g := range groups {
+		for i := starts[k]; i < ends[k]; i++ {
+			owner[i-a] = g
+		}
+	}
+	for o := a; len(deep) > 0 && o < b; { // rule 8
+		if kind[o] == 'o' && depth[o] == dmin+1 {
+			e := usesBracketEnd(kind, depth, o, b, dmin)
+			var held []usesRef
+			for _, r := range deep {
+				if o < r.start && r.start < e {
+					held = append(held, r)
+				}
+			}
+			if held != nil {
+				var steps []string
+				for _, r := range usesRuns(uses, held) {
+					for _, s := range r.steps {
+						if !slices.Contains(steps, s) {
+							steps = append(steps, s)
+						}
+					}
+				}
+				g := &usesGroup{steps}
+				for i := o; i < e; i++ {
+					owner[i-a] = g
+				}
+			}
+			o = e
+		} else {
+			o++
+		}
+	}
+	it.owner = owner
+	it.first, it.last, it.lastOpen = groups[0], groups[len(groups)-1], opened[len(opened)-1]
+}
+
+// usesChunks reads a uses line into chunks, each with the steps it was taken from, in the
+// line's order: items (rules 1-3), runs of ids, pairs, marks and breaks (4-8, with 5b and 6b),
+// bare items and items with no id (9, 10), then the chunks, cut where the steps change and just
+// before each id (11). No id: none.
 func usesChunks(uses string) []usesChunk {
-	refs := pyMatches(stepRefRe, uses)
+	var refs []usesRef
+	for _, m := range pyMatches(stepRefRe, uses) {
+		refs = append(refs, usesRef{m[0], m[1], uses[m[0]:m[1]]})
+	}
+	if refs == nil {
+		return nil
+	}
+	n := len(uses)
+	kind, depth := make([]byte, n), make([]int, n) // rule 1, per byte of each rune
+	var cuts []int
+	for i, d := 0, 0; i < n; {
+		r, size := utf8.DecodeRuneInString(uses[i:])
+		k := byte('x')
+		switch {
+		case r == '(' || r == '[' || r == '{':
+			d++
+			k = 'o'
+		case (r == ')' || r == ']' || r == '}') && d > 0:
+			d--
+			k = 'c'
+		}
+		if k == 'x' && d == 0 && (r == ',' || r == ';') {
+			cuts = append(cuts, i)
+		}
+		for j := i; j < i+size; j++ {
+			kind[j], depth[j] = k, d
+		}
+		i += size
+	}
+	var items []*usesItem
+	start, semi := 0, 0
+	for _, at := range append(cuts, n) { // rule 2
+		if pyTrim(uses[start:at]) != "" {
+			it := &usesItem{start: start, end: at, semi: semi}
+			var mine []usesRef
+			for _, r := range refs {
+				if start <= r.start && r.end <= at {
+					mine = append(mine, r)
+				}
+			}
+			if mine != nil {
+				usesRead(uses, it, mine, kind, depth)
+			}
+			items = append(items, it)
+		}
+		if at < n && uses[at] == ';' {
+			semi++
+		}
+		start = at + 1
+	}
+	for k := 1; k < len(items); k++ { // rule 9
+		it, prev := items[k], items[k-1]
+		if it.hasRef && it.bare && prev.hasRef && prev.endsWithID && prev.semi == it.semi {
+			shared := prev.last
+			for _, g := range it.owner {
+				if g != shared {
+					for _, s := range g.steps {
+						if !slices.Contains(shared.steps, s) {
+							shared.steps = append(shared.steps, s)
+						}
+					}
+				}
+			}
+			for i := range it.owner {
+				it.owner[i] = shared
+			}
+			it.first, it.last = shared, shared
+		}
+	}
+	for k, it := range items { // rule 10
+		if it.hasRef {
+			continue
+		}
+		var before, after *usesItem
+		for j := k - 1; j >= 0 && before == nil; j-- {
+			if items[j].hasRef && items[j].semi == it.semi {
+				before = items[j]
+			}
+		}
+		for j := k + 1; j < len(items) && after == nil; j++ {
+			if items[j].hasRef && items[j].semi == it.semi {
+				after = items[j]
+			}
+		}
+		var g *usesGroup
+		switch {
+		case before != nil && (before.prefix || before.lastOpen):
+			g = before.last
+		case after != nil && !after.prefix:
+			g = after.first
+		}
+		if g != nil {
+			it.owner = make([]*usesGroup, it.end-it.start)
+			for i := range it.owner {
+				it.owner[i] = g
+			}
+		}
+	}
+	cutAt := map[int]bool{} // rule 11
+	for _, r := range refs {
+		s, e := r.start, r.end
+		if s > 0 && (uses[s-1] == '/' || uses[s-1] == '.') {
+			continue
+		}
+		if s > 0 && e < n && uses[s-1] == uses[e] && strings.IndexByte("\"'`", uses[e]) >= 0 {
+			cutAt[s-1] = true
+			for _, it := range items {
+				if it.start <= s && s < it.end {
+					if it.owner != nil && it.start <= s-1 {
+						it.owner[s-1-it.start] = it.owner[s-it.start]
+					}
+					break
+				}
+			}
+		} else {
+			cutAt[s] = true
+		}
+	}
 	var out []usesChunk
-	for k, m := range refs {
-		start, end := m[0], len(uses)
-		if k == 0 {
-			start = 0
+	for _, it := range items {
+		if it.owner == nil {
+			continue
 		}
-		if k+1 < len(refs) {
-			end = refs[k+1][0]
+		var cur *usesGroup
+		s := it.start
+		for i := it.start; i <= it.end; {
+			var g *usesGroup
+			size := 1
+			if i < it.end {
+				g = it.owner[i-it.start]
+				_, size = utf8.DecodeRuneInString(uses[i:])
+			}
+			if i < it.end && g == cur && !cutAt[i] {
+				i += size
+				continue
+			}
+			if cur != nil && i > s {
+				out = append(out, usesChunk{append([]string(nil), cur.steps...), uses[s:i]})
+			}
+			cur, s = g, i
+			i += size
 		}
-		out = append(out, usesChunk{uses[m[0]:m[1]], uses[start:end]})
 	}
 	return out
 }
@@ -879,8 +1547,111 @@ func wholeWord(hay, x string) bool {
 	return false
 }
 
+// usesHay is what a step's piece offers a uses line: its provides line, code, files and
+// section (else body).
+func usesHay(d *workerPiece) string {
+	var hay strings.Builder
+	if d.Handoff != nil {
+		hay.WriteString(d.Handoff.Provides)
+	}
+	hay.WriteString("\n" + d.Code + "\n")
+	for i, f := range d.Files {
+		if i > 0 {
+			hay.WriteString("\n")
+		}
+		hay.WriteString(f.Path + "\n" + f.Body)
+	}
+	hay.WriteString("\n")
+	if d.Section != "" {
+		hay.WriteString(d.Section)
+	} else {
+		hay.WriteString(d.Body)
+	}
+	return hay.String()
+}
+
+// usesFound says whether a hay holds a name a uses line gives.
+func usesFound(name, hay string) bool {
+	if strings.Contains(name, "/") || (shortExtRe.MatchString(name) && !dottedRe.MatchString(name)) {
+		return strings.Contains(hay, name) // a path
+	}
+	for _, x := range strings.Split(name, ".") { // a name, or a dotted one (Store.all: class Store with a method all)
+		if !wholeWord(hay, x) {
+			return false
+		}
+	}
+	return true
+}
+
+// settingsKeys maps each key a uses line has only in subscripts of SETTINGS_sN, all of one step, to
+// that step (SETTINGS_s1["width"]: width is s1's; round 8). A key usesNames also finds elsewhere in the
+// line, or in chains of two steps, isn't in it ("width_m from s2 (overrides SETTINGS_s1["width_m"])"
+// keeps width_m with s2). Elsewhere is read twice, with every such chain blanked out (one space each):
+// on the whole line, which also holds the text no chunk reaches, and on each of the line's chunks
+// (usesChunks(text), which usesSeams passes in), the pieces the seams read. A quote span on the whole
+// line can hide a plain use its chunk shows: in "Uses s2's seat_h; SETTINGS_s1['seat_h'] is s1's
+// default" the blanked line gives one quoted name, "s seat_h;   is s1", and the chunk "s2's seat_h"
+// gives seat_h, so seat_h stays with s2 (Nov 5, round 8's re-check; before it the key went to s1,
+// whose dict held it, and s2 went unchecked).
+func settingsKeys(text string, chunks []usesChunk) map[string]string {
+	ms := pyMatches(settingsSubRe, text)
+	if ms == nil {
+		return nil
+	}
+	stepsOf := map[string][]string{}
+	for _, m := range ms {
+		chain := text[m[0]:m[1]]
+		sid := settingsSidRe.FindStringSubmatch(chain)[1]
+		for _, k := range keyInRe.FindAllStringSubmatch(chain[len("SETTINGS_")+len(sid):], -1) {
+			if !slices.Contains(stepsOf[k[1]], sid) {
+				stepsOf[k[1]] = append(stepsOf[k[1]], sid)
+			}
+		}
+	}
+	others := usesNames(blankChains(text, ms))
+	for _, c := range chunks {
+		others = append(others, usesNames(blankChains(c.text, pyMatches(settingsSubRe, c.text)))...)
+	}
+	out := map[string]string{}
+	for k, steps := range stepsOf {
+		if len(steps) == 1 && !slices.Contains(others, k) {
+			out[k] = steps[0]
+		}
+	}
+	return out
+}
+
+// blankChains is text with each of its settingsSubRe matches ms replaced by one space (Python's
+// _SETTINGS_SUB.sub(" ", text)).
+func blankChains(text string, ms [][2]int) string {
+	var b strings.Builder
+	at := 0
+	for _, m := range ms {
+		b.WriteString(text[at:m[0]])
+		b.WriteString(" ")
+		at = m[1]
+	}
+	b.WriteString(text[at:])
+	return b.String()
+}
+
 // usesSeams checks that every "uses" matches a "provides": each code-like name a uses
-// line gives for a step must appear in that step's provides line or its piece.
+// line gives for a step must appear in that step's provides line or its piece. The steps
+// are usesChunks'. A group is skipped when one of its steps failed or isn't in the join
+// (it may have made the name), else a name none of them holds is a seam, written with the
+// group as s1/s2; one per piece, steps and name. One step's message is as before Nov 5.
+// Since round 8 (Nov 5) a SETTINGS_sN name, and a key the line has only in subscripts of one
+// step's SETTINGS_sN (settingsKeys), is judged against sN alone, wherever it is in the line (the
+// contract gives each step one dict SETTINGS_{sid}, so the name carries its step), and skipped
+// only when sN failed or isn't in the join: in a chunk, and, after the chunks, in text that goes
+// to no step and in a line with no step id ("SETTINGS_s1, panel_array"). So it also judges a
+// SETTINGS_sN the line says it doesn't use, in text no chunk reaches ("table_top from s1, not
+// SETTINGS_s2", "SETTINGS_s2 (unused)") and inside a chunk whose group has a failed step
+// ("lamp_shade (not SETTINGS_s1) from s2" with s2 failed), where round 7's reader judged nothing:
+// the name is a seam only when sN has no SETTINGS_sN dict (in Blender mode a contract breach), a
+// key ("not SETTINGS_s2['width']") whenever sN's piece lacks it, with no breach. Accepted as it is
+// (Nov 5, the main session's decision): it follows the approved "wherever it is in the line", no
+// stored line has either, and the narrowings tried read more lines worse than they fixed.
 func usesSeams(pieces []*workerPiece, failed []string) []pieceIssue {
 	var seams []pieceIssue
 	find := func(sid string) *workerPiece {
@@ -894,41 +1665,56 @@ func usesSeams(pieces []*workerPiece, failed []string) []pieceIssue {
 		if p.Handoff == nil || p.Handoff.Uses == "" {
 			continue
 		}
-		for _, c := range usesChunks(p.Handoff.Uses) {
-			d := find(c.step)
-			if slices.Contains(failed, c.step) || d == nil {
+		seen := map[string]bool{}
+		hays := map[string]string{}
+		hay := func(s string) string {
+			h, ok := hays[s]
+			if !ok {
+				h = usesHay(find(s))
+				hays[s] = h
+			}
+			return h
+		}
+		absent := func(s string) bool { return slices.Contains(failed, s) || find(s) == nil }
+		chunks := usesChunks(p.Handoff.Uses)
+		keys := settingsKeys(p.Handoff.Uses, chunks)
+		for _, c := range chunks {
+			skip := slices.ContainsFunc(c.steps, absent)
+			for _, name := range usesNames(c.text) {
+				steps := c.steps
+				one, ok := keys[name]
+				if m := settingsNameRe.FindStringSubmatch(name); m != nil {
+					one, ok = m[1], true
+				}
+				if ok { // SETTINGS_sN and its keys are sN's, whatever chunk they are in
+					steps = []string{one}
+					if absent(one) {
+						continue
+					}
+				} else if skip {
+					continue
+				}
+				dep := strings.Join(steps, "/")
+				if seen[dep+"\x00"+name] {
+					continue
+				}
+				seen[dep+"\x00"+name] = true
+				if !slices.ContainsFunc(steps, func(s string) bool { return usesFound(name, hay(s)) }) {
+					seams = append(seams, seam("uses_unmatched", fmt.Sprintf("%s uses %s from %s, which %s doesn't provide", p.Sid, pyRepr(name), dep, dep), p.Sid))
+				}
+			}
+		}
+		for _, name := range usesNames(p.Handoff.Uses) { // text no chunk reaches, and a line with no step id
+			one, ok := keys[name]
+			if m := settingsNameRe.FindStringSubmatch(name); m != nil {
+				one, ok = m[1], true
+			}
+			if !ok || absent(one) || seen[one+"\x00"+name] {
 				continue
 			}
-			var hay strings.Builder
-			if d.Handoff != nil {
-				hay.WriteString(d.Handoff.Provides)
-			}
-			hay.WriteString("\n" + d.Code + "\n")
-			for i, f := range d.Files {
-				if i > 0 {
-					hay.WriteString("\n")
-				}
-				hay.WriteString(f.Path + "\n" + f.Body)
-			}
-			hay.WriteString("\n")
-			if d.Section != "" {
-				hay.WriteString(d.Section)
-			} else {
-				hay.WriteString(d.Body)
-			}
-			text := hay.String()
-			for _, name := range usesNames(c.text) {
-				found := true
-				if strings.Contains(name, "/") || (shortExtRe.MatchString(name) && !dottedRe.MatchString(name)) {
-					found = strings.Contains(text, name) // a path
-				} else { // a name, or a dotted one (Store.all: class Store with a method all)
-					for _, x := range strings.Split(name, ".") {
-						found = found && wholeWord(text, x)
-					}
-				}
-				if !found {
-					seams = append(seams, seam("uses_unmatched", fmt.Sprintf("%s uses %s from %s, which %s doesn't provide", p.Sid, pyRepr(name), c.step, c.step), p.Sid))
-				}
+			seen[one+"\x00"+name] = true
+			if !usesFound(name, hay(one)) {
+				seams = append(seams, seam("uses_unmatched", fmt.Sprintf("%s uses %s from %s, which %s doesn't provide", p.Sid, pyRepr(name), one, one), p.Sid))
 			}
 		}
 	}

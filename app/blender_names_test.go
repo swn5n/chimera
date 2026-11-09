@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestTheSheetIsOnlyForBlenderTasks(t *testing.T) {
@@ -61,5 +62,21 @@ func TestRealBlenderPrintsItsNames(t *testing.T) {
 	}
 	if len(sheet) > 4000 {
 		t.Fatalf("too long for every worker's prompt: %d", len(sheet))
+	}
+	// Blender 5's inputs[name] can't find a socket it keeps unavailable, so the sheet
+	// doesn't offer one: the shaders' Weight never shows, Map Range's Steps only when
+	// stepped. Blender 3's Principled has Subsurface IOR for its default method,
+	// Blender 5's only for Random Walk (Skin).
+	old := strings.HasPrefix(runOut(10*time.Second, path, "--version"), "Blender 3.")
+	for _, l := range strings.Split(sheet, "\n") {
+		_, list, ok := strings.Cut(l, " inputs: ")
+		for _, name := range strings.Split(list, ", ") {
+			if ok && (name == "Weight" || name == "Steps" || name == "Subsurface IOR" && !old) {
+				t.Errorf("%s isn't available on a new node: %q", name, l)
+			}
+		}
+	}
+	if !strings.Contains(sheet, "ShaderNodeEmission inputs: Color, Strength\n") {
+		t.Errorf("Emission is its colour and strength:\n%s", sheet)
 	}
 }

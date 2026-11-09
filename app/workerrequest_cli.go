@@ -8,8 +8,9 @@ package main
 // The input: plan, as the planner wrote it (it's cleaned here); index, the step from 0;
 // outputs, each step's reply by plan id: a string, null for a failed step, or
 // {"output": ..., "status": ...}, and a step left out counts as failed; goal; refs;
-// names, the names sheet; prev_result and critique, from round 2 on; crash and piece,
-// for a repair; room, the reply room.
+// names, the names sheet; names_gate, true to give the sheet only to a step namesBlock
+// would give it to (else it goes to any step); prev_result and critique, from round 2
+// on; crash and piece, for a repair; room, the reply room.
 
 import (
 	"encoding/json"
@@ -25,6 +26,7 @@ type workerRequestInput struct {
 	Goal       string                     `json:"goal"`
 	Refs       []LibEntry                 `json:"refs"`
 	Names      string                     `json:"names"`
+	NamesGate  bool                       `json:"names_gate"`
 	PrevResult *string                    `json:"prev_result"`
 	Critique   string                     `json:"critique"`
 	Piece      string                     `json:"piece"`
@@ -86,6 +88,9 @@ func runWorkerRequest(in io.Reader, out io.Writer) int {
 		}
 	}
 	ask := workerAsk{Goal: r.Goal, Refs: r.Refs, Names: r.Names, PrevResult: r.PrevResult, Critique: r.Critique, Room: contractRoom}
+	if r.NamesGate && !namesApply(plan.Steps[r.Index].Kind, plan, r.Goal) {
+		ask.Names = ""
+	}
 	if r.Room != nil {
 		ask.Room = *r.Room
 	}

@@ -10,10 +10,29 @@ type (a parameter, a tuple, an unknown call) is left alone in that scope.
 Findings:
 - error: the name exists in neither version (a crash in both): attributes, node input/output
   names, node type ids, modifier/light types, enum values, mathutils/bmesh/bpy module names,
-  bpy.ops operators, bpy.types classes, from-imports.
+  bpy.ops operators, bpy.types classes, from-imports. Also a node input Blender never makes
+  available to a script (usable(): the shaders' Weight), which inputs['Weight'] can't find.
 - warn: it exists in only one of the versions.
 - syntax: the script doesn't parse.
 Each finding says what does exist nearby (difflib), for the teacher's repair turn.
+
+An attribute read that can't run without the name being there is no finding (guards(), Nov 5): one behind
+hasattr(x, "name"), or getattr(x, "name", <a falsy default>), on the same expression (an if or elif test, a while
+test, an and, an or after a not, a conditional expression, a comprehension's if, an assert, or an early return,
+continue, break or raise when it is missing), and anything in the body behind hasattr(x, "name") where no version's
+x has the name, a branch no version can reach. A try around an access is no guard (the hidden-errors check,
+datagen/silent.py, holds such a piece to what it caught). After the independent checks (Nov 6) three things are no
+guard either: a hasattr or getattr on bpy.ops or one of its groups (it answers any name, so it is always true and
+the dead operator behind it runs), the elif or else behind a hasattr whose name every version's x has (x may be
+None: scene.camera, a .get(), the active object), and an assert or a raise when it is missing on a name no version
+has (that is a certain crash, so its finding, and the fix the teacher hears on it, stay).
+n-blender-0000-01 r2 s3 c5 of the fourth smoke was dropped for `elif hasattr(act, "fcurves") and act.fcurves:`
+behind a working channelbag path, though it runs clean in both Blenders. Whether a guard then skipped what the step
+asks for is the gate's to judge (datagen/silent.py's attr_miss).
+The rule is data generation's only (decided Nov 6): it is on in a Linter made with guards=True, which the data
+generator's linters are (datagen/run.py, datagen.blender_gate.BlenderGate's own), and off by default, so the worker
+eval (runner/score.py, step_eval.py, task_eval.py and freeze.py's verify, a pass/fail gate on W1's frozen inputs),
+tools/rna_dump.py's lint command and lint_source() lint exactly as before Nov 5.
 """
 from __future__ import annotations
 
@@ -37,8 +56,52 @@ GROUPISH = ("Group", "GroupInput", "GroupOutput", "CustomGroup")
 # Structs Blender makes per node group at run time: in 5.2.2 a geometry-nodes modifier's `properties` is a
 # GeometryNodesModifierInterface (inputs, outputs, panels) made for its group, while the dump sees only the empty
 # static type. Their attributes (and their subclasses') are never checked.
-DYNAMIC_STRUCTS = ("NodesModifierProperties", "SequencerCompositorModifierProperties")
+DYNAMIC_STRUCTS = ("NodesModifierProperties", "SequencerCompositorModifierProperties", "AddonPreferences")
 SIDES = ("inputs", "outputs")
+
+
+def usable(info, side, sock):
+    """Whether a script can reach socket sock (a dump's [name, identifier, socket type, available]) of the node whose
+    dump entry is info: always for an output (5.0.1's Render Layers passes come from the view layer, not the node, and
+    a script reads outputs to link them) and for an old dump's three-field socket; else when it is available on a
+    fresh node, when a setting the dump measured reveals its name (info["reveal"], tools/rna_dump_blender.py: Noise's
+    W with noise_dimensions 1D or 4D, Map Range's Steps with interpolation_type STEPPED, Mesh Line's Resolution with a
+    pair), or when another socket of its name is available (Mix's A_Vector is its A input once data_type is VECTOR).
+    inputs[name] finds only an available socket, so one none of these reach raises KeyError whatever the script sets:
+    in 5.2.2 and 5.0.1 that is the Weight input of 22 shader nodes (the Principled BSDF's, Emission's, Glass's) and
+    nothing else. The lint and the teacher's facts (datagen.hints) use this one rule, on Facts.node's entry."""
+    if side == "outputs" or len(sock) < 4 or sock[3]:
+        return True
+    if sock[0] in info.get("reveal", {}).get(side, {}):
+        return True
+    return any(len(s) > 3 and s[3] and s[0] == sock[0] for s in info.get(side, ()))
+
+
+def _merged(first, other):
+    """first (a node type's entry in the first tree type the dump made it in) with what other (its entry in a later
+    tree type) adds: a socket available in either is available, and a name that is then available leaves the reveal.
+    5.2.2's compositor makes Object Info with As Instance and Geometry unavailable, while a geometry tree has both;
+    Facts.node gives the compositor's entry first (the dump's keys are sorted), so without this the lint would call
+    a geometry script's inputs['As Instance'] never available. first itself when nothing changes, so an old dump's
+    entries (three fields) are what they were."""
+    flip = {side: {(s[0], s[1]) for s in other.get(side, ()) if len(s) > 3 and s[3]} for side in SIDES}
+    if not any(len(s) > 3 and not s[3] and (s[0], s[1]) in flip[side] for side in SIDES for s in first.get(side, ())):
+        return first
+    out = dict(first)
+    reveal = {}
+    for side in SIDES:
+        out[side] = [list(s[:3]) + [True] + list(s[4:]) if len(s) > 3 and not s[3] and (s[0], s[1]) in flip[side]
+                     else s for s in first.get(side, ())]
+        shown = {s[0] for s in out[side] if len(s) > 3 and s[3]}
+        got = {}
+        for e in (first, other):
+            for name, settings in e.get("reveal", {}).get(side, {}).items():
+                if name not in shown:
+                    got.setdefault(name, [])
+                    got[name] += [x for x in settings if x not in got[name]]
+        reveal[side] = got
+    out["reveal"] = reveal
+    return out
 
 
 class Facts:
@@ -53,14 +116,21 @@ class Facts:
         self._sub = None
         self.labels = {}
         self.node_ids = set()
+        # sockets_all: the names and identifiers a script can reach on some node type (usable); sockets_seen also
+        # those it can't (the shaders' Weight), which an old dump never has.
         self.sockets_all = {s: set() for s in SIDES}
-        for d in dumps.values():
+        self.sockets_seen = {s: set() for s in SIDES}
+        self._nodes = {}  # version -> {idname: its entry, merged over the tree types it is made in (_merged)}
+        for v, d in dumps.items():
+            merged = self._nodes.setdefault(v, {})
             for tree in d["nodes"].values():
                 for idname, n in tree.items():
                     self.node_ids.add(idname)
                     self.labels.setdefault(n["label"], set()).add(idname)
+                    merged[idname] = _merged(merged[idname], n) if idname in merged else n
                     for s in SIDES:
-                        self.sockets_all[s].update(x for sock in n[s] for x in sock[:2])
+                        self.sockets_all[s].update(x for sock in n[s] if usable(n, s, sock) for x in sock[:2])
+                        self.sockets_seen[s].update(x for sock in n[s] for x in sock[:2])
             for tree in d.get("default_trees", {}).values():
                 for name, idname in tree:
                     self.labels.setdefault(name, set()).add(idname)
@@ -155,10 +225,8 @@ class Facts:
         return out
 
     def node(self, idname, v):
-        for tree in self.dumps[v]["nodes"].values():
-            if idname in tree:
-                return tree[idname]
-        return None
+        """idname's entry in v: the first tree type's, with what its other tree types make available (_merged)."""
+        return self._nodes[v].get(idname)
 
     def is_node(self, idname):
         return [v for v in self.versions if self.node(idname, v) is not None]
@@ -529,14 +597,226 @@ def script_defined(tree):
     return {"sockets": sockets, "props": props, "groupish": groupish}
 
 
+# ---------- guarded accesses ----------
+
+_EXITS = (ast.Return, ast.Raise, ast.Continue, ast.Break)
+_SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+
+
+def _falsy(node):
+    """Whether node is a literal that is false: None, False, 0, "", (), [], {}."""
+    if isinstance(node, ast.Constant):
+        return not node.value
+    if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
+        return not node.elts
+    return isinstance(node, ast.Dict) and not node.keys
+
+
+def _probe(test):
+    """(x, name) when test is hasattr(x, "name") or getattr(x, "name", <falsy>) (true only when x has name)."""
+    if isinstance(test, ast.Call) and isinstance(test.func, ast.Name) and not test.keywords:
+        a = test.args
+        if test.func.id == "hasattr" and len(a) == 2 and literal(a[1]) is not None:
+            return a[0], literal(a[1])
+        if test.func.id == "getattr" and len(a) == 3 and literal(a[1]) is not None and _falsy(a[2]):
+            return a[0], literal(a[1])
+    return None
+
+
+def _facts(test):
+    """(if true, if false): what test being true or false says of which attributes exist, as
+    [(receiver, name, exists, hard)]. hasattr and a getattr with a falsy default say it both ways (a getattr only
+    one: a false value may be the attribute's own); not swaps them; and says its parts' when true, or theirs when
+    false. hard is False here: guards() sets it for a fact that holds only because an assert or a raise stops the
+    script where it doesn't (_hardened)."""
+    p = _probe(test)
+    if p is not None:
+        fact = (p[0], p[1], True, False)
+        no = (p[0], p[1], False, False)
+        return [fact], ([no] if test.func.id == "hasattr" else [])
+    if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
+        t, f = _facts(test.operand)
+        return f, t
+    if isinstance(test, ast.BoolOp):
+        parts = [_facts(v) for v in test.values]
+        if isinstance(test.op, ast.And):
+            return [x for t, _ in parts for x in t], []
+        return [], [x for _, f in parts for x in f]
+    return [], []
+
+
+def _ends(body):
+    """Whether a block always leaves where it is: its last statement returns, raises, continues or breaks."""
+    return bool(body) and isinstance(body[-1], _EXITS)
+
+
+def _hardened(facts, body=None):
+    """facts as holding only because the script stops where they don't (an assert, or a branch ending in a raise):
+    hard, so Linter._guarded keeps a finding they would excuse on a name no version has."""
+    if body is not None and not isinstance(body[-1], ast.Raise):
+        return facts
+    return [(x, name, exists, True) for x, name, exists, _ in facts]
+
+
+def _root(node):
+    while isinstance(node, (ast.Attribute, ast.Subscript, ast.Call)):
+        node = node.func if isinstance(node, ast.Call) else node.value
+    return node.id if isinstance(node, ast.Name) else None
+
+
+def _bound(stmt):
+    """The names a statement binds where it is (not inside nested scopes)."""
+    out = set()
+    targets = []
+    if isinstance(stmt, ast.Assign):
+        targets = stmt.targets
+    elif isinstance(stmt, (ast.AugAssign, ast.AnnAssign)):
+        targets = [stmt.target]
+    elif isinstance(stmt, (ast.For, ast.AsyncFor)):
+        targets = [stmt.target]
+    elif isinstance(stmt, (ast.With, ast.AsyncWith)):
+        targets = [i.optional_vars for i in stmt.items if i.optional_vars is not None]
+    for t in targets:
+        for n in ast.walk(t):
+            if isinstance(n, ast.Name):
+                out.add(n.id)
+    return out
+
+
+def guards(tree):
+    """{id(attribute node): [(receiver, name, exists, hard), ...]}: what must hold for each attribute read in tree to
+    run at all, from the hasattr and getattr tests around it (_facts), for the lint's guarded-access rule. A fact holds
+    from its test to the end of what the test guards, and after an if whose branch leaves (`if not hasattr(x, "a"):
+    return`) to the end of that block, until a statement there binds the receiver's name again; a nested function,
+    lambda or class starts with none (it runs later). hard: the fact holds after an assert, or after a branch that
+    raises where it doesn't (_hardened), and, since the second checks (Nov 6), in the other branch of an if whose one
+    branch raises, and in an assert's later operands or those of a raising if's test that lead past the raise."""
+    out = {}
+
+    def key(fact):
+        return (ast.dump(fact[0]), fact[1], fact[2], fact[3])
+
+    def expr(n, known, hard=()):
+        """hard: the BoolOp operators (ast.And, ast.Or) whose later operands run only where the script stops if
+        the earlier ones say otherwise (an assert's and, an if that raises): their facts are hard there."""
+        if n is None:
+            return
+        if isinstance(n, _SCOPES):
+            scope(n)
+            return
+        if isinstance(n, ast.BoolOp):
+            so_far = list(known)
+            for v in n.values:
+                expr(v, so_far)
+                t, f = _facts(v)
+                new = t if isinstance(n.op, ast.And) else f
+                so_far = so_far + (_hardened(new) if isinstance(n.op, hard) else new)
+            return
+        if isinstance(n, ast.IfExp):
+            t, f = _facts(n.test)
+            expr(n.test, known)
+            expr(n.body, known + t)
+            expr(n.orelse, known + f)
+            return
+        if isinstance(n, (ast.ListComp, ast.SetComp, ast.GeneratorExp, ast.DictComp)):
+            so_far = list(known)
+            for g in n.generators:
+                expr(g.iter, so_far)
+                for c in g.ifs:
+                    expr(c, so_far)
+                    so_far = so_far + _facts(c)[0]
+            for part in ((n.key, n.value) if isinstance(n, ast.DictComp) else (n.elt,)):
+                expr(part, so_far)
+            return
+        if isinstance(n, ast.Attribute) and known:
+            out[id(n)] = list({key(f): f for f in known}.values())
+        for c in ast.iter_child_nodes(n):
+            expr(c, known)
+
+    def block(stmts, known):
+        known = list(known)
+        for s in stmts:
+            stmt(s, known)
+            bound = _bound(s)
+            if bound:
+                known = [f for f in known if _root(f[0]) not in bound]
+            if isinstance(s, ast.If):
+                t, f = _facts(s.test)
+                if _ends(s.body) and not _ends(s.orelse):
+                    known = known + _hardened(f, s.body)
+                elif s.orelse and _ends(s.orelse) and not _ends(s.body):
+                    known = known + _hardened(t, s.orelse)
+            elif isinstance(s, ast.Assert):
+                known = known + _hardened(_facts(s.test)[0])
+
+    def stmt(s, known):
+        if isinstance(s, _SCOPES):
+            for d in getattr(s, "decorator_list", []):
+                expr(d, known)
+            if not isinstance(s, ast.ClassDef):
+                for d in s.args.defaults + s.args.kw_defaults:
+                    expr(d, known)
+            scope(s)
+        elif isinstance(s, (ast.If, ast.While)):
+            t, f = _facts(s.test)
+            # an if whose branch raises: the other branch, and the test's later operands that lead to it, run only
+            # where the script doesn't stop (if not hasattr(a, "x"): raise ... else: a.x; if not hasattr(a, "x") or
+            # not a.x: raise; the second checks, Nov 6)
+            body_raises = isinstance(s, ast.If) and bool(s.body) and isinstance(s.body[-1], ast.Raise)
+            else_raises = isinstance(s, ast.If) and bool(s.orelse) and isinstance(s.orelse[-1], ast.Raise)
+            expr(s.test, known, (ast.Or,) * body_raises + (ast.And,) * else_raises)
+            block(s.body, known + (_hardened(t) if else_raises else t))
+            block(s.orelse, known + (_hardened(f) if body_raises else f))
+        elif isinstance(s, ast.Assert):  # its and's later operands run only where it holds so far
+            expr(s.test, known, (ast.And,))
+            expr(s.msg, known)
+        elif isinstance(s, (ast.For, ast.AsyncFor)):
+            expr(s.target, known)
+            expr(s.iter, known)
+            block(s.body, known)
+            block(s.orelse, known)
+        elif isinstance(s, (ast.With, ast.AsyncWith)):
+            for i in s.items:
+                expr(i.context_expr, known)
+                expr(i.optional_vars, known)
+            block(s.body, known)
+        elif isinstance(s, ast.Try) or (hasattr(ast, "TryStar") and isinstance(s, ast.TryStar)):
+            block(s.body, known)
+            for h in s.handlers:
+                expr(h.type, known)
+                block(h.body, known)
+            block(s.orelse, known)
+            block(s.finalbody, known)
+        elif hasattr(ast, "Match") and isinstance(s, ast.Match):
+            expr(s.subject, known)
+            for c in s.cases:
+                expr(c.guard, known)
+                block(c.body, known)
+        else:
+            expr(s, known)
+
+    def scope(n):
+        if isinstance(n, ast.Lambda):
+            expr(n.body, [])
+        else:
+            block(n.body, [])
+
+    block(tree.body, [])
+    return out
+
+
 def near(name, options, n=3):
     m = difflib.get_close_matches(name, sorted(options), n=n, cutoff=0.6)
     return f" (has: {', '.join(repr(x) for x in m)})" if m else ""
 
 
 class Linter:
-    def __init__(self, facts):
+    def __init__(self, facts, guards=False):
+        """facts: a Facts. guards: the guarded-read rule (guards(), _guarded), data generation's only: datagen/run.py
+        and BlenderGate's linter pass True; the eval, freeze's verify, rna_dump's lint and lint_source() keep the
+        default, False, and lint as before Nov 5 (decided Nov 6)."""
         self.f = facts
+        self.use_guards = guards
         self.dynamic = set().union(*(facts.subclasses(c) for c in DYNAMIC_STRUCTS))
 
     def lint(self, src, filename="script.py"):
@@ -546,6 +826,7 @@ class Linter:
             return [{"level": "error", "kind": "syntax", "line": e.lineno or 0, "name": "",
                      "message": f"doesn't parse: {e.msg}"}]
         self.defs = script_defined(tree)
+        self.guards = guards(tree) if self.use_guards else {}
         self.typer = Typer(self.f, self.defs)
         root = Scope(tree, None)
         collect(root, tree.body)
@@ -607,12 +888,73 @@ class Linter:
         elif isinstance(n, ast.ImportFrom) and n.module:
             self._check_from_import(n)
 
+    def _guarded(self, n, scope):
+        """Whether attribute read n can't run unless its name is there (guards(); only in a Linter made with
+        guards=True, the data generator's): a fact around it says its own
+        receiver has it, or one says a name exists that no version's type of its receiver has, so its branch never
+        runs. Not a fact on bpy.ops or one of its groups (_ops: hasattr and getattr are always true there), nor a hard
+        one (an assert's, or a raise's when the name is missing) on a name no version has: the script stops there in
+        every version, a certain crash the finding names. The else behind a hasattr whose name every version has is no
+        branch no version reaches: its receiver may be None (scene.camera, a .get())."""
+        facts = self.guards.get(id(n))
+        if not facts:
+            return False
+        recv = ast.dump(n.value)
+        for x, name, exists, hard in facts:
+            if self._ops(x, scope):
+                continue
+            have = self._everywhere(x, name, scope)
+            if hard and have is False:
+                continue
+            if exists and name == n.attr and ast.dump(x) == recv:
+                return True
+            if exists and have is False:
+                return True
+        return False
+
+    def _ops(self, node, scope):
+        """Whether node is bpy.ops or one of its groups (bpy.ops.wm): any name is there (an operator that doesn't exist
+        is made on the call and fails then), so a hasattr or a getattr on it guards nothing."""
+        base = self.typer.of(node, scope)
+        if base and any(t.startswith("ops:") or t == "module:bpy.ops" for t in base):
+            return True
+        parts = []
+        while isinstance(node, ast.Attribute):
+            parts.append(node.attr)
+            node = node.value
+        return isinstance(node, ast.Name) and node.id == "bpy" and len(parts) <= 2 and parts[-1:] == ["ops"]
+
+    def _everywhere(self, node, attr, scope):
+        """True when every version's every type node can be has attr, False when none has it, None when it can't
+        tell (an untyped, dynamic or partly known receiver, a name some versions have, a property the script
+        registers, bpy.context, whose members are filled in at run time: the second checks, Nov 6, found
+        hasattr(bpy.context, "active_object") read as a branch no version reaches)."""
+        f = self.f
+        base = self.typer.of(node, scope)
+        if not base or not all(f.has_class(t) for t in base) or any(t in self.dynamic for t in base) or \
+                "Context" in base:  # bpy.context's members are filled in at run time, no RNA property (_check_attr)
+            return None
+        for t in base:
+            for c in [t] + [b for v in f.versions for b in f._bases(t, v)]:
+                if attr in self.defs["props"].get(c, ()):
+                    return None
+        got = set()
+        for v in f.versions:
+            for t in base:
+                s = f.attrs(t, v)
+                if s is None:
+                    return None
+                got.add(attr in s)
+        return got.pop() if len(got) == 1 else None
+
     def _check_attr(self, n, scope):
         attr = n.attr
         if attr.startswith("__"):
             return
         base = self.typer.of(n.value, scope)
         if not base:
+            return
+        if self.use_guards and self._guarded(n, scope):
             return
         f = self.f
         if all(t.startswith("module:") for t in base) and len(base) == 1:
@@ -754,16 +1096,25 @@ class Linter:
             infos = {v: [f.node(t, v) for t in nodes] for v in f.versions}
             if any(i and i.get("dynamic") for v in infos for i in infos[v]):
                 return
-            missing, options = [], set()
+            missing, never, present, options = [], [], [], set()
             for v, lst in infos.items():
                 lst = [i for i in lst if i]
                 if not lst:
                     continue
-                names = {x for i in lst for sock in i[side] for x in sock[:2]}
-                options |= {sock[0] for i in lst for sock in i[side]}
+                present.append(v)
+                # Only what a script can reach (usable): inputs['Weight'] on a Principled BSDF raises KeyError though
+                # the node has that socket, and near() never offers it.
+                names = {x for i in lst for sock in i[side] if usable(i, side, sock) for x in sock[:2]}
+                options |= {sock[0] for i in lst for sock in i[side] if usable(i, side, sock)}
                 if key not in names:
                     missing.append(v)
+                    if any(key in sock[:2] for i in lst for sock in i[side]):
+                        never.append(v)
             label = "/".join(sorted(nodes)) if len(nodes) <= 3 else f"{len(nodes)} node types"
+            if never and missing == present:  # the node has it, but no version lets a script reach it
+                self._add("error", "socket", node, key, f"{side[:-1]} '{key}' on {label} is never available to a "
+                          f"script ({side}['{key}'] raises KeyError){near(key, options)}")
+                return
             self._report_missing(node, "socket", key, missing, f"no {side[:-1]} '{key}' on {label}", options, key)
             return
         if base is None:
@@ -771,7 +1122,8 @@ class Linter:
             if self.defs["groupish"] or key in self.defs["sockets"]:
                 return
             if key not in self.f.sockets_all[side]:
-                self._add("error", "socket", node, key, f"no node type has an {side[:-1]} '{key}' in Blender "
+                what = "a script can use " if key in self.f.sockets_seen[side] else ""
+                self._add("error", "socket", node, key, f"no node type has an {side[:-1]} '{key}' {what}in Blender "
                           f"{self._versions_text(f.versions)}{near(key, f.sockets_all[side])}")
 
     def _check_new(self, call, scope):

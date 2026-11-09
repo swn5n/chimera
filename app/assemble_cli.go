@@ -74,13 +74,14 @@ type assembleInput struct {
 	DoneReasons map[string]string          `json:"done_reasons"`
 	RejectCut   bool                       `json:"reject_cut"`
 
-	Validate  []pieceInput  `json:"validate"`
-	Alone     []aloneInput  `json:"alone"`
-	Locate    []locateInput `json:"locate"`
-	Merge     []mergeInput  `json:"merge"`
-	UsesNames []string      `json:"uses_names"`
-	Slug      []string      `json:"slug"`
-	Scan      []string      `json:"scan"`
+	Validate   []pieceInput  `json:"validate"`
+	Alone      []aloneInput  `json:"alone"`
+	Locate     []locateInput `json:"locate"`
+	Merge      []mergeInput  `json:"merge"`
+	UsesNames  []string      `json:"uses_names"`
+	UsesChunks []string      `json:"uses_chunks"`
+	Slug       []string      `json:"slug"`
+	Scan       []string      `json:"scan"`
 }
 
 // assembled is joinPlan's result as data.
@@ -196,6 +197,17 @@ func otherJobs(r assembleInput) map[string]any {
 			names = append(names, append([]string{}, usesNames(s)...))
 		}
 		out["uses_names"] = names
+	}
+	if r.UsesChunks != nil {
+		lines := [][][2]any{}
+		for _, s := range r.UsesChunks {
+			chunks := [][2]any{}
+			for _, c := range usesChunks(s) {
+				chunks = append(chunks, [2]any{c.steps, c.text})
+			}
+			lines = append(lines, chunks)
+		}
+		out["uses_chunks"] = lines
 	}
 	if r.Slug != nil {
 		slugs := []string{}

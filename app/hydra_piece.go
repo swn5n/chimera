@@ -443,10 +443,17 @@ func literalValue(n *pyNode) (hashable, ok bool) {
 	return true, ok && n.kind == "UnaryOp"
 }
 
-// ctxKeys gives the literal keys a piece stores into and reads from ctx["objects"].
-func ctxKeys(tree *pyNode) (written, read []string) {
+// ctxChannels are the ctx dicts steps hand things on in (the blender mode rule).
+var ctxChannels = []string{"objects", "values"}
+
+// ctxKeys gives the literal keys a piece stores into and reads from ctx[channel]
+// ("objects" or "values"), and opaque: it also writes ctx[channel] in a way whose keys
+// can't be read (the whole dict assigned, update(), a key that isn't a literal string).
+// Names bound to ctx[channel] aren't followed here: ctxBoundWrites follows them for the
+// seams only, so provides_missing asks nothing new of an alias writer.
+func ctxKeys(tree *pyNode, channel string) (written, read []string, opaque bool) {
 	objects := func(n *pyNode) bool {
-		return n.kind == "Subscript" && n.value.kind == "Name" && n.value.name == "ctx" && isStrConstant(n.slice) && n.slice.str == "objects"
+		return n.kind == "Subscript" && n.value.kind == "Name" && n.value.name == "ctx" && isStrConstant(n.slice) && n.slice.str == channel
 	}
 	add := func(list *[]string, key string) {
 		if !slices.Contains(*list, key) {
@@ -454,6 +461,13 @@ func ctxKeys(tree *pyNode) (written, read []string) {
 		}
 	}
 	for _, n := range pyWalk(tree) {
+		switch {
+		case n.kind == "Subscript" && n.store && (objects(n) || objects(n.value) && !isStrConstant(n.slice)):
+			opaque = true
+		case n.kind == "Call" && n.fn.kind == "Attribute" && objects(n.fn.value) &&
+			(n.fn.name == "update" || n.fn.name == "setdefault" && len(n.args) > 0 && !isStrConstant(n.args[0])):
+			opaque = true
+		}
 		switch {
 		case n.kind == "Subscript" && objects(n.value) && isStrConstant(n.slice):
 			if n.store {
@@ -470,7 +484,7 @@ func ctxKeys(tree *pyNode) (written, read []string) {
 			}
 		}
 	}
-	return written, read
+	return written, read, opaque
 }
 
 // What the blender mode rule forbids: "Don't open, load or save .blend files, render or
@@ -992,8 +1006,11 @@ func blenderTopLevel(p *workerPiece) {
 			p.err("saves_or_renders", f.name+" "+f.what+"; the mode rule leaves that to Chimera (SETTINGS_"+sid+"[\"output\"])", at+f.line)
 		}
 	}
-	written, _ := ctxKeys(p.Tree)
-	if p.Handoff != nil {
+	for _, channel := range ctxChannels {
+		if p.Handoff == nil {
+			break
+		}
+		written, _, _ := ctxKeys(p.Tree, channel)
 		var missing []string
 		for _, k := range written {
 			if !strings.Contains(p.Handoff.Provides, k) {
@@ -1001,7 +1018,7 @@ func blenderTopLevel(p *workerPiece) {
 			}
 		}
 		if len(missing) > 0 {
-			p.warn("provides_missing", "registers ctx[\"objects\"] key(s) "+strings.Join(missing, ", ")+" that provides doesn't list", 0)
+			p.warn("provides_missing", "registers ctx[\""+channel+"\"] key(s) "+strings.Join(missing, ", ")+" that provides doesn't list", 0)
 		}
 	}
 }

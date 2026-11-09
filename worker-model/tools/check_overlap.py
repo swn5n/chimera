@@ -7,10 +7,11 @@ Checks against three eval sets: helper-model/eval/ (v1.1), helper-model/eval-lon
 (the worker eval, eval/frozen/ included). A training line is flagged when it contains either canary
 string, repeats an eval text (after lower-casing and squashing punctuation and spaces), or contains at
 least --threshold of an eval text's word n-grams. It is also flagged when it carries one of this
-folder's own marks (MARKS): the test fixtures' and mock Ollama's code mark, or the scene probes'
-epilogue and output lines, all Claude-written. The approach and the helper sets' texts come from
-helper-model/tools/check_overlap.py, loaded by path as it is (helper-model stays off sys.path, and no
-bytecode is written into it); the worker set's texts come from evalset.texts().
+folder's own marks (MARKS): the test fixtures' and mock Ollama's code mark, the scene probes'
+epilogue and output lines, or the head of the data generator's teacher notes, all Claude-written.
+The approach and the helper sets' texts come from helper-model/tools/check_overlap.py, loaded by
+path as it is (helper-model stays off sys.path, and no bytecode is written into it); the worker
+set's texts come from evalset.texts().
 Exit status 1 when anything is flagged. Without --field, every string in the line is checked.
 """
 from __future__ import annotations
@@ -34,12 +35,17 @@ HELPER_PKG = os.path.join(evalset.HELPER, "helper")
 # Claude-written text from this folder that must never reach training either, by a fixed line it always carries
 # (tests/test_check_overlap.py checks each one against its source): the code mark of tests/contract_fixtures.py
 # and runner/mock_ollama.py, the epilogue that tools/scene_probe.py appends and the line it prints, and
-# eval/scene_probe.py's output line (the eval probe's own text carries the canary).
+# eval/scene_probe.py's output line (the eval probe's own text carries the canary). The last two are parts of
+# datagen/hints.HEAD, the line that opens the notes only the teacher's copy of a request carries
+# (tests/test_datagen_build.py checks them against it); no real reply or request has them. The notes' other
+# sentences are left to build's own check (hints.echoed_note), which drops one example instead of the build.
 MARKS = {
     "# test fixture, never training data": "mark:test-fixture",
     "# ---- chimera scene probe (worker-model/tools/scene_probe.py)": "mark:scene-probe-epilogue",
     "chimera-probe:": "mark:scene-probe-output",
     "CHIMERA_PROBE ": "mark:eval-probe-output",
+    "Notes for you, the teacher": "mark:teacher-notes",
+    "(Chimera doesn't send these)": "mark:teacher-notes-aside",
 }
 
 

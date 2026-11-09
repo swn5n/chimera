@@ -457,6 +457,31 @@ func TestNamesLineReadsAndIsCut(t *testing.T) {
 	}
 }
 
+// The hook binds Blender's collection class before the script runs, and that must
+// not stop a run on a bpy without it: hydra_test.py's stand-in Blender has no
+// bpy.types, and reading bpy.types.bpy_prop_collection straight off it made every
+// check there unsure (36 of its 133 checks failed). Such a bpy gets an empty tuple,
+// which isinstance never matches, so keys are read as before.
+func TestTheNamesHookRunsWithoutBpyTypes(t *testing.T) {
+	py, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("no python3 here")
+	}
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "bpy"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "bpy", "__init__.py"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code := "import sys\nsys.path.insert(0, " + fmt.Sprintf("%q", dir) + ")\nimport bpy\n" + blenderCrashNames +
+		"print(repr(_chimera_coll))\n"
+	out, err := exec.Command(py, "-I", "-B", "-c", code).CombinedOutput()
+	if err != nil || strings.TrimSpace(string(out)) != "()" {
+		t.Fatalf("%v: %s", err, out)
+	}
+}
+
 // Real Blender, when there's one here. CHIMERA_TEST_BLENDER picks a version.
 func TestRealBlenderListsTheRealNames(t *testing.T) {
 	path := os.Getenv("CHIMERA_TEST_BLENDER")
@@ -487,6 +512,9 @@ func TestRealBlenderListsTheRealNames(t *testing.T) {
 		{"the right collection of two", "import bpy\nm = bpy.data.materials.new('m')\nm.use_nodes = True\nb = m.node_tree.nodes['Principled BSDF']\no = m.node_tree.nodes['Material Output']\no.inputs['Surface'].default_value = b.inputs['Specular'].default_value\n", `"Specular IOR Level"`},
 		{"a loop header, not its body", "import bpy\nt = bpy.data.textures.new('n', type='NOISE')\nc = bpy.data.objects['Cube']\nif t.wrong_one:\n    c.wrong_one = 1\n", "NoiseTexture has no wrong_one"},
 		{"two statements on a line", "import bpy\nt = bpy.data.textures.new('n', type='NOISE')\nc = bpy.data.objects['Camera'].data\nt.wrong_one = 1; c.wrong_one = 2\n", "NoiseTexture has no wrong_one"},
+		{"a socket Blender keeps unavailable", "import bpy\nmat = bpy.data.materials.new('m')\nmat.use_nodes = True\nb = mat.node_tree.nodes['Principled BSDF']\nb.inputs['Weight'].default_value = 0.5\n", `"Subsurface Weight"`},
+		{"one a setting would bring", "import bpy\nmat = bpy.data.materials.new('m')\nmat.use_nodes = True\nb = mat.node_tree.nodes['Principled BSDF']\nb.inputs['Subsurface IOR'].default_value = 1.4\n", `"Subsurface Radius"`},
+		{"only what's there", "import bpy\nmat = bpy.data.materials.new('m')\nmat.use_nodes = True\ne = mat.node_tree.nodes.new('ShaderNodeEmission')\ne.inputs['Weight'].default_value = 1.0\n", `What it does have: "Color", "Strength".`},
 	} {
 		dir := t.TempDir()
 		script := filepath.Join(dir, "script.py")
@@ -514,6 +542,13 @@ func TestRealBlenderListsTheRealNames(t *testing.T) {
 		}
 		if !strings.Contains(names.line(), c.has) {
 			t.Errorf("%s: want %s in %q\n%s", c.name, c.has, names.line(), res.Output)
+		}
+		// keys() also lists the sockets Blender keeps unavailable, which inputs[name]
+		// can't find, so none of them is offered as a real name.
+		for _, x := range names.Names {
+			if names.Kind == "key" && (x == "Weight" || x == "Subsurface IOR") {
+				t.Errorf("%s: offers %q: %q", c.name, x, names.line())
+			}
 		}
 	}
 }
