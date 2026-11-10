@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/swn5n/chimera/releases/latest"><b>Download</b></a> ·
+  <a href="https://github.com/wo1fs-1fx/chimera/releases/latest"><b>Download</b></a> ·
   <a href="#quick-start">Quick start</a> ·
   <a href="#long-tasks">Long tasks</a> ·
   <a href="#heads">Heads</a> ·
@@ -83,7 +83,7 @@ Chimera is an app for macOS, Windows and Linux that links computers running [Oll
 
 ### 1. Install Chimera
 
-Download the file for your system from the [latest release](https://github.com/swn5n/chimera/releases/latest):
+Download the file for your system from the [latest release](https://github.com/wo1fs-1fx/chimera/releases/latest):
 
 - **Mac:** `Chimera-mac.zip`. Unzip it, move **Chimera.app** to your Applications folder and open it.
 - **Windows:** `Chimera-windows.zip`. Unzip it and run **Chimera.exe**.
@@ -229,7 +229,7 @@ Planning, reviewing and the "should a Head do this?" check run on **Hydra 1.0** 
 <details>
 <summary><b>No host to copy from? Download it from GitHub (for the first computer)</b></summary>
 
-Download both `.part` files and `Modelfile` from the [v0.7.0 release](https://github.com/swn5n/chimera/releases/tag/v0.7.0) into one folder. It comes in two parts because GitHub limits a release file to 2 GB. Then, with Ollama running:
+Download both `.part` files and `Modelfile` from the [v0.7.0 release](https://github.com/wo1fs-1fx/chimera/releases/tag/v0.7.0) into one folder. It comes in two parts because GitHub limits a release file to 2 GB. Then, with Ollama running:
 
 ```bash
 cat hydra-1.0-q5_k_m.gguf.part-* > hydra-1.0-q5_k_m.gguf
@@ -278,7 +278,7 @@ The Heads below are in the [`heads/`](heads/) folder of this repository. They ar
 - **`hunyuan3d-mesh/`** makes a 3D mesh (GLB or OBJ) from one picture through Hunyuan3D 2's API server. It's for Nvidia PCs and needs a Hunyuan3D 2 API server running (2.1's differs slightly).
 - **`TEMPLATE/`** is a skeleton to copy for a Head written by hand.
 
-`hunyuan3d-mac` has been run end to end on a real Mac. `comfyui-image` and `hunyuan3d-mesh` have only been tested against mock servers that imitate the real API, so if one trips on your setup, run it alone as described in [heads/README.md](heads/README.md) and [open an issue](https://github.com/swn5n/chimera/issues).
+`hunyuan3d-mac` has been run end to end on a real Mac. `comfyui-image` and `hunyuan3d-mesh` have only been tested against mock servers that imitate the real API, so if one trips on your setup, run it alone as described in [heads/README.md](heads/README.md) and [open an issue](https://github.com/wo1fs-1fx/chimera/issues).
 
 ## Your own big model and files
 
@@ -351,7 +351,7 @@ In order, most common first:
 2. **macOS Local Network permission.** System Settings → Privacy & Security → **Local Network** → Chimera must be on, on every Mac. If Chimera isn't listed, quit it from Settings, open it again and say **Allow** to the prompt.
 3. **Same Wi-Fi, really?** Some routers put 2.4 GHz and 5 GHz on separate networks, or have a guest or isolated mode that stops devices talking to each other. From the other computer, open `http://<host's address>:7480/v1/ping` in a browser. The host's address is under **Settings → Network → Addresses** on the host. You should see `{"app":"chimera-hub"…}`. If that page doesn't load, it's the network, not Chimera. Try a different Wi-Fi, or join by typing the address and invite code (**Settings → Network → Join a network**).
 4. **Firewall.** See the warnings under [Quick start](#quick-start).
-5. **Check the log.** `chimera.log` is in Chimera's data folder (below). If you [open an issue](https://github.com/swn5n/chimera/issues), attach the log from each computer.
+5. **Check the log.** `chimera.log` is in Chimera's data folder (below). If you [open an issue](https://github.com/wo1fs-1fx/chimera/issues), attach the log from each computer.
 
 </details>
 
@@ -415,7 +415,7 @@ Opening a newer Chimera replaces the older one that's still running. To check it
 
 ## Version history
 
-Newest first. Dates are given where the project's history records them. Every release has its downloads on the [Releases page](https://github.com/swn5n/chimera/releases).
+Newest first. Dates are given where the project's history records them. Every release has its downloads on the [Releases page](https://github.com/wo1fs-1fx/chimera/releases).
 
 | Version | Released | What changed, in a line |
 |---|---|---|
@@ -576,4 +576,4 @@ Chimera is meant to be copied. It's one Go program that uses only the standard l
 | [`docs/`](docs/) | Notes from real runs and design handoffs. |
 | [`scripts/`](scripts/) | An install script one computer's set of tools was set up with. Read it before running it. |
 
-Found a bug, or something in this README is confusing? [Open an issue](https://github.com/swn5n/chimera/issues).
+Found a bug, or something in this README is confusing? [Open an issue](https://github.com/wo1fs-1fx/chimera/issues).
